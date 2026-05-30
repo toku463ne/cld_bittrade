@@ -44,9 +44,13 @@ class OHLCV(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    product: Mapped[str] = mapped_column(String(32), index=True)
-    timeframe: Mapped[str] = mapped_column(String(8), index=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # No single-column indexes: the uq_ohlcv_bar composite index
+    # (product, timeframe, timestamp) covers every query path (filter by
+    # product+timeframe, ordered by timestamp). Single-column indexes here are
+    # redundant for reads and only add upsert/write overhead.
+    product: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     open: Mapped[float] = mapped_column(Float)
     high: Mapped[float] = mapped_column(Float)
     low: Mapped[float] = mapped_column(Float)
