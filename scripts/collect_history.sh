@@ -38,8 +38,8 @@ fi
   echo "=== $(date -Is) | history run (max_ticks=${MAX_TICKS}, tf=${TIMEFRAME}) ==="
   "${UV}" run --env-file .env.bt python -m src.data.history \
     --direction both --max-ticks "${MAX_TICKS}" --timeframe "${TIMEFRAME}"
-  # Keep the 5m series in sync from the same raw set.
+  # Keep the other timeframes in sync from the same raw execution set.
   "${UV}" run --env-file .env.bt python -c \
-    "from src.data.history import rebuild_ohlcv; from src.core.types import Timeframe; rebuild_ohlcv(Timeframe.M5)"
+    "from src.data.history import rebuild_ohlcv; from src.core.types import Timeframe; [rebuild_ohlcv(tf) for tf in (Timeframe.M5, Timeframe.H1)]"
   echo "=== $(date -Is) | done ==="
 } >>"${LOG_FILE}" 2>&1
