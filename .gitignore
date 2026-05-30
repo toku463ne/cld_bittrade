@@ -17,6 +17,8 @@ __pycache__/
 
 # Claude Code local (personal) settings — shared agents/commands ARE committed.
 .claude/settings.local.json
+# Transient harness state (scheduler locks etc.)
+.claude/scheduled_tasks.lock
 
 # Data / logs
 *.log
