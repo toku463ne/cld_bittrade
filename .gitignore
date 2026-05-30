@@ -1,0 +1,27 @@
+# Environments (never commit real credentials)
+.env
+.env.dev
+.env.bt
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# uv: commit uv.lock for reproducible app builds (not ignored).
+
+# Claude Code local (personal) settings — shared agents/commands ARE committed.
+.claude/settings.local.json
+
+# Data / logs
+*.log
+data/
+*.sqlite
+
+# OS
+.DS_Store
