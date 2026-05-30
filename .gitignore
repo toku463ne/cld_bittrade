@@ -20,6 +20,7 @@ __pycache__/
 
 # Data / logs
 *.log
+logs/
 data/
 *.sqlite
 
