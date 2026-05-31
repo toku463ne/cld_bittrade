@@ -150,6 +150,16 @@ score ranks fires even though the base DR is sub-0.5; a flag to watch, not
 trade. Role-reversal options exist but underperformed here. Re-evaluate (and
 A/B the options) once months of 1h history exist.
 
+**Dominant-level reference (`dominant_window`) — opt-in, default off.** Adds the
+long-horizon unbroken same-type extreme (~1 week) as a candidate level so price
+can bounce off a dominant weekly floor/ceiling even when nearer minor peaks
+exist (the expanding window otherwise stops early and matches a shallow recent
+level). On the interim 1h sample this is the **first toggle that helped**: full
+750-bar run 9→10 trades, net +0.0059→**+0.0230**, Sharpe +0.035→**+0.125**,
+win 44%→**50%**, same maxDD — it catches e.g. the 5/14 retest of the 5/08
+12,430,000 floor (score 0.98). Promising but tiny-sample; default off, sweep +
+A/B once history is deep before considering it the default.
+
 **ZS-band winsorize (`winsorize_k`) — opt-in, default off.** Added to cap an
 abnormally large recent zigzag leg from inflating TP/SL (MAD high-side clip).
 Tuner sweep (`--sweep-winsor`, size=10/mid=3) on this month is **neutral**: on

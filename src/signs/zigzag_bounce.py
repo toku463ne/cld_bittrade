@@ -49,16 +49,25 @@ class ZigzagBounceSign(Sign):
         n_legs: int = 6,
         reverse_levels: bool = False,
         require_break: bool = True,
+        dominant_window: int | None = None,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
         if not windows:
             raise ValueError("windows must be non-empty")
+        if dominant_window is not None and dominant_window <= 0:
+            raise ValueError("dominant_window must be > 0 when set")
         self.size = size
         self.mid_size = mid_size
         # Expanding lookback windows for the "outstanding" peak: try the first;
         # if no confirmed same-type peak is found, expand to the next.
         self.windows = tuple(sorted(windows))
+        # Optional "dominant level": the most-extreme same-type confirmed peak
+        # over this long lookback (~1 week on 1h) is added as a candidate even
+        # when nearer minor peaks exist, so price can bounce off a long-standing
+        # floor/ceiling (e.g. a weekly low retest). Nearest-in-price still wins.
+        # None (default) = today's expanding-window-only behavior.
+        self.dominant_window = dominant_window
         self.tol_pct = tol_pct
         # Optional volatility-scaled "near" band: when set, tolerance =
         # tol_leg_frac × EWA(recent zigzag legs) instead of tol_pct × price, so
@@ -71,9 +80,11 @@ class ZigzagBounceSign(Sign):
         # require_break they must have been crossed. A/B these once data is deep.
         self.reverse_levels = reverse_levels
         self.require_break = require_break
-        # Trailing window: widest lookback + left context for the early peak +
-        # the confirmed peaks' own right-context.
-        self.window = self.windows[-1] + 2 * size + mid_size + 5
+        # Trailing window: widest lookback (expanding or dominant, whichever is
+        # larger) + left context for the early peak + the confirmed peaks' own
+        # right-context.
+        widest = max(self.windows[-1], dominant_window or 0)
+        self.window = widest + 2 * size + mid_size + 5
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
 
     def _outstanding(
@@ -99,13 +110,17 @@ class ZigzagBounceSign(Sign):
           traded through it) to count. Both default OFF/strict because same-type
           matching was cleanest on the interim sample; flip them to A/B once
           there is enough data.
+        - **Dominant level** (only if ``dominant_window``): the most-extreme
+          same-type confirmed peak over the long lookback, added even when the
+          expanding window already found nearer minor peaks, so price can bounce
+          off a long-standing floor/ceiling. Nearest-in-price still wins overall.
         """
+        refs: list[Peak] = []
         for win in self.windows:
             lo = ep_idx - win
             cand = [p for p in peaks if p.is_confirmed and lo <= p.bar_index < ep_idx]
             if not cand:
                 continue
-            refs: list[Peak] = []
             same = [p for p in cand if p.is_high == is_high]
             if same:
                 refs.append(max(same, key=lambda p: p.price) if is_high
@@ -128,7 +143,23 @@ class ZigzagBounceSign(Sign):
                             continue
                     refs.append(p)
             if refs:
-                return min(refs, key=lambda p: abs(p.price - ep_price))
+                break  # first non-empty expanding window only (existing behavior)
+
+        # Dominant level: the same-type extreme over the long lookback. By being
+        # the extreme it is by definition unbroken since it formed, so it is the
+        # strongest standing support/resistance — included as an extra candidate.
+        if self.dominant_window is not None:
+            lo = ep_idx - self.dominant_window
+            dom = [
+                p for p in peaks
+                if p.is_confirmed and p.is_high == is_high and lo <= p.bar_index < ep_idx
+            ]
+            if dom:
+                refs.append(max(dom, key=lambda p: p.price) if is_high
+                            else min(dom, key=lambda p: p.price))
+
+        if refs:
+            return min(refs, key=lambda p: abs(p.price - ep_price))
         return None
 
     def _eval_end(

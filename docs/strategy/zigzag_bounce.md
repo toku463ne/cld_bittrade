@@ -79,6 +79,16 @@ check — *not* the indicator's mid-series early classification):
    options exist to **A/B once there is enough data** — the concept (polarity
    flip) is sound, the sample just didn't support it.
 
+   - optionally, a **dominant level** (`dominant_window`, opt-in): the most
+     extreme same-type confirmed peak over a long lookback (~1 week). Because it
+     is the extreme it is by definition *unbroken* since it formed — the
+     strongest standing support/resistance — so it is added as a candidate even
+     when the expanding window already found nearer minor peaks. Without it, the
+     expanding window stops at the first window with *any* same-type peak and a
+     deep, long-standing floor/ceiling is never consulted if a shallow recent
+     level exists (e.g. a clean retest of a weekly low gets matched to a minor
+     low 175k away and misses). Nearest-in-price still wins among all candidates.
+
    Direction is still set by the early peak's own type (below).
 
    The **"near" band** defaults to a fixed `tol_pct × price`, but can be made
@@ -138,6 +148,7 @@ regimes and tighten in quiet ones.
 | `size` | 10 | Confirmed-peak half-window |
 | `mid_size` | 3 | Early-peak right-window |
 | `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
+| `dominant_window` | `None` | If set, also reference the same-type extreme over this long lookback (~168 ≈ 1 week @ 1h) — a long-standing, unbroken floor/ceiling — even when nearer minor peaks exist. `None` = off. |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
 | `sl_mult` | 1.0 | SL = `sl_mult × band` |
@@ -228,3 +239,4 @@ Re-benchmark once the collector has accumulated more hourly history.
 |------|--------|
 | 2026-05-31 | Initial implementation (zigzag indicator, ZS TP/SL exit, strategy). Runs on 1h; not yet benchmarked. |
 | 2026-05-31 | Add opt-in `winsorize_k` (MAD high-side leg clipping) to the ZS band so a single abnormal leg can't inflate TP/SL. Default off. |
+| 2026-05-31 | Add opt-in `dominant_window` (reference the long-horizon unbroken same-type extreme as an extra candidate) so bounces off a dominant weekly floor/ceiling fire even when nearer minor peaks exist. Default off; on the interim 1h sample it improved net/Sharpe/win-rate (e.g. catches the 5/14 retest of the 5/08 floor). |

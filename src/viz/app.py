@@ -83,7 +83,10 @@ def _chart_tab() -> html.Div:
                 "No date range = most recent 600 bars.",
                 style={"fontSize": "12px", "color": "#888", "margin": "4px 0"},
             ),
-            dcc.Graph(id="chart-graph"),
+            # Explicit pixel height so the bare graph matches the Backtest tab's
+            # graph (whose flex row gives it a definite height); without it a
+            # block-level dcc.Graph collapses below the figure's declared height.
+            dcc.Graph(id="chart-graph", style={"height": "820px"}),
         ]
     )
 
@@ -114,7 +117,7 @@ def _backtest_tab() -> html.Div:
             dcc.Store(id="bt-ohlc-store"),
             html.Div(
                 [
-                    dcc.Graph(id="bt-graph", style={"flex": "3"}),
+                    dcc.Graph(id="bt-graph", style={"flex": "3", "height": "820px"}),
                     html.Div(
                         [
                             html.Pre(
