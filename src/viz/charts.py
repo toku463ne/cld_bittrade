@@ -123,8 +123,17 @@ def build_chart(
         # buried the candles); the spike line below still gives the datetime.
         hovermode="closest",
     )
-    # Vertical datetime crosshair spanning all panels on hover.
+    # Crosshair that follows the cursor: vertical (datetime, across all panels)
+    # + horizontal (price/value, within the hovered panel).
     fig.update_xaxes(
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikethickness=1,
+        spikedash="dot",
+        spikecolor="#666",
+    )
+    fig.update_yaxes(
         showspikes=True,
         spikemode="across",
         spikesnap="cursor",
