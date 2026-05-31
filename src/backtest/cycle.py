@@ -13,7 +13,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from loguru import logger
 
@@ -41,6 +41,8 @@ class CycleResult:
         per_period: Per-period breakdown rows.
         ship: Whether the pre-registered ship gate passed (Sharpe >= bench &
             >= 4/5 periods non-negative).
+        trades: All trades (in-sample + OOS), for charting — same trades the
+            metrics were computed from, so no extra simulation is needed.
     """
 
     strategy: str
@@ -49,6 +51,7 @@ class CycleResult:
     benchmark_return: float
     per_period: list[dict[str, float | str]]
     ship: bool
+    trades: list[Trade] = field(default_factory=list)
 
 
 def _per_period_breakdown(
@@ -130,7 +133,8 @@ def run_cycle(
         ship,
     )
     _flag_overfit(strategy_name, m_in, m_oos)
-    return CycleResult(strategy_name, m_in, m_oos, bench, per_period, ship)
+    trades = list(in_res.trades) + list(oos_res.trades)
+    return CycleResult(strategy_name, m_in, m_oos, bench, per_period, ship, trades)
 
 
 def _flag_overfit(name: str, m_in: PortfolioMetrics, m_oos: PortfolioMetrics) -> None:

@@ -82,6 +82,11 @@ class Simulator:
         # Precompute ATR over the full series for entry sizing.
         atr_vals = self._atr_series(bars)
 
+        # Fast path: if the strategy can precompute all signals over the full
+        # series (vectorised), look them up per bar in O(1) instead of running
+        # the O(N) on_bar buffer evaluation every bar (which is O(N^2) total).
+        precomputed = self.strategy.precompute(bars)
+
         trades: list[Trade] = []
         equity = 0.0
         equity_curve: list[float] = []
@@ -116,14 +121,17 @@ class Simulator:
                 pending = None
 
             # 3. Generate a new signal from the just-closed bar.
-            if pos is None:
+            if precomputed is not None:
+                signal = precomputed.get(bar.timestamp) if pos is None else None
+            elif pos is None:
                 signal = self.strategy.push(bar)
-                if signal is not None:
-                    pending = signal
-                    pending_atr = atr_vals[i]
             else:
                 # Keep the strategy buffer in sync even while in a position.
                 self.strategy.push(bar)
+                signal = None
+            if signal is not None:
+                pending = signal
+                pending_atr = atr_vals[i]
 
             equity_curve.append(equity)
 

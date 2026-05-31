@@ -17,6 +17,10 @@ benchmark and the live entries cannot drift apart (failure-mode §5.3).
 
 from __future__ import annotations
 
+from datetime import datetime
+
+import pandas as pd
+
 from src.core.types import Bar, ExitConfig, Signal
 from src.signs.ema_atr_breakout import EmaAtrBreakoutSign
 from src.strategy.base import Strategy
@@ -60,6 +64,32 @@ class EmaAtrBreakoutStrategy(Strategy):
             score=fire.score,
             reason=self._sign.name,
         )
+
+    def precompute(self, bars: list[Bar]) -> dict[datetime, Signal] | None:  # noqa: D102
+        # Vectorised fast path: detect over the full series once (same call the
+        # benchmark uses), keyed by bar timestamp for O(1) per-bar lookup.
+        if not bars:
+            return {}
+        df = pd.DataFrame(
+            {
+                "open": [b.open for b in bars],
+                "high": [b.high for b in bars],
+                "low": [b.low for b in bars],
+                "close": [b.close for b in bars],
+                "volume": [b.volume for b in bars],
+            },
+            index=pd.DatetimeIndex([b.timestamp for b in bars], name="timestamp"),
+        )
+        return {
+            fire.fired_at: Signal(
+                side=fire.side,
+                timestamp=fire.fired_at,
+                price=fire.price,
+                score=fire.score,
+                reason=self._sign.name,
+            )
+            for fire in self._sign.detect(df)
+        }
 
     def get_exit_rules(self) -> ExitConfig:  # noqa: D102 (inherited)
         return ExitConfig(

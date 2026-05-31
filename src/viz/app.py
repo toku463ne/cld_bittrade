@@ -143,6 +143,28 @@ def _maintenance_tab() -> html.Div:
     )
 
 
+def _is_zoom_relayout(relayout: dict[str, Any] | None) -> bool:
+    """Whether ``relayout`` represents a genuine x-zoom with a real datetime range.
+
+    Distinguishes a real user zoom/pan from a graph-mount event (``autosize`` or
+    the empty figure's numeric ``-1..6`` range), so the latter triggers a render
+    rather than a no-op autoscale.
+    """
+    if not isinstance(relayout, dict):
+        return False
+    for key, val in relayout.items():
+        if "xaxis" in key and key.endswith(".range[0]"):
+            try:
+                import pandas as pd
+
+                ts = pd.to_datetime(val)
+            except (ValueError, TypeError):
+                return False
+            # Numeric placeholders (e.g. -1) parse to ~1970; require a real date.
+            return bool(getattr(ts, "year", 0) > 2000)
+    return False
+
+
 def _autoscale_figure(
     relayout: dict[str, Any] | None,
     figure: dict[str, Any] | None,
@@ -278,25 +300,29 @@ def _register_callbacks(app: dash.Dash) -> None:
     )
     def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, relayout, figure):  # type: ignore[no-untyped-def]
         # Single owner of bt-graph so a graph-mount relayout can't race the render
-        # through a duplicate output. Branch on what triggered the callback.
+        # through a duplicate output. RENDER unless this is unambiguously a
+        # genuine zoom (bt-graph relayout alone, carrying a real datetime range);
+        # that keeps rendering deterministic regardless of which trigger Dash
+        # attributes when the tab mounts (tabs.value + relayout fire together).
         if active_tab != "backtest":
             raise PreventUpdate
 
-        if dash.ctx.triggered_id == "bt-graph":
-            # Zoom/pan on the backtest chart -> autoscale only, keep metrics.
+        triggered = {t["prop_id"].split(".")[0] for t in (dash.ctx.triggered or [])}
+        if triggered == {"bt-graph"} and _is_zoom_relayout(relayout):
             return _autoscale_figure(
                 relayout, figure, timeframe, show_bb=True, show_rsi=True
             ), dash.no_update
 
-        # Tab opened / timeframe / strategy / Run button -> (re)render results.
+        # Tab opened / timeframe / strategy / Run button / mount -> render results.
         tf = Timeframe(timeframe)
         cache = load_cache(tf)
         df = cache.to_frame()
         if df.empty or not strategy:
             return build_chart(df), "No data for this timeframe. Collect/backtest first."
-        sim = Simulator(get_strategy(strategy)).run(cache.bars)
+        # run_cycle already simulates in-sample + OOS; reuse its trades for the
+        # chart instead of a third full simulation.
         result = run_cycle(strategy, tf)
-        fig = build_chart(df, trades=sim.trades)
+        fig = build_chart(df, trades=result.trades)
         return fig, _format_metrics(result)
 
     @app.callback(
