@@ -111,18 +111,33 @@ def _backtest_tab() -> html.Div:
                 ],
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
             ),
+            dcc.Store(id="bt-ohlc-store"),
             html.Div(
                 [
                     dcc.Graph(id="bt-graph", style={"flex": "3"}),
-                    html.Pre(
-                        id="bt-metrics",
-                        style={
-                            "flex": "1",
-                            "background": "#f7f7f7",
-                            "padding": "12px",
-                            "overflowY": "auto",
-                            "maxHeight": "820px",
-                        },
+                    html.Div(
+                        [
+                            html.Pre(
+                                id="bt-ohlc",
+                                children="hover a bar for OHLC",
+                                style={
+                                    "background": "#eef",
+                                    "padding": "8px",
+                                    "marginBottom": "8px",
+                                    "fontSize": "12px",
+                                },
+                            ),
+                            html.Pre(
+                                id="bt-metrics",
+                                style={
+                                    "background": "#f7f7f7",
+                                    "padding": "12px",
+                                    "overflowY": "auto",
+                                    "maxHeight": "740px",
+                                },
+                            ),
+                        ],
+                        style={"flex": "1"},
                     ),
                 ],
                 style={"display": "flex", "gap": "12px"},
@@ -199,6 +214,75 @@ def _slice_window(
         assert end_ts is not None  # guaranteed: not both None (checked above)
         mask = naive < end_ts
     return df[mask]
+
+
+def _ohlc_store(df: pd.DataFrame) -> dict[str, list[float]]:
+    """Build a {naive-ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
+
+    Keyed by tz-naive wall-clock ISO (what Plotly emits in hover ``x``), parsed
+    the same way in the callback so keys match regardless of separator/seconds.
+    """
+    out: dict[str, list[float]] = {}
+    idx = df.index
+    naive = idx.tz_localize(None) if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None else idx
+    for ts, o, h, low, c in zip(naive, df["open"], df["high"], df["low"], df["close"], strict=False):
+        out[pd.Timestamp(ts).isoformat()] = [float(o), float(h), float(low), float(c)]
+    return out
+
+
+def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | None) -> dict[str, Any]:
+    """Draw horizontal TP/SL lines for a hovered entry marker.
+
+    Entry markers carry ``customdata = [tp_price, sl_price]`` (exactly length 2).
+    Replaces any prior TP/SL shapes with dashed lines at those levels on the
+    price panel; other shapes (e.g. the candle's OHLC customdata is length 4, and
+    RSI 30/70 reference lines) are left alone.
+
+    Raises:
+        PreventUpdate: If not hovering an entry marker, or the lines are already
+            drawn at these levels (avoids redundant redraws while hovering).
+    """
+    if not figure or not hoverdata:
+        raise PreventUpdate
+    points = hoverdata.get("points") or []
+    cd = points[0].get("customdata") if points else None
+    if not cd or len(cd) != 2:  # entry markers only (candle customdata is len 4)
+        raise PreventUpdate
+    tp, sl = cd[0], cd[1]
+
+    layout = figure["layout"]
+    new_levels = {round(v) for v in (tp, sl) if v is not None}
+    existing = {
+        round(s["y0"]) for s in layout.get("shapes", [])
+        if str(s.get("name", "")).startswith("tpsl_")
+    }
+    if new_levels and new_levels == existing:
+        raise PreventUpdate  # already showing this entry's lines
+
+    shapes = [
+        s for s in layout.get("shapes", []) if not str(s.get("name", "")).startswith("tpsl_")
+    ]
+    for level, color, tag, lbl in (
+        (tp, "#2ca02c", "tpsl_tp", "TP"),
+        (sl, "#d62728", "tpsl_sl", "SL"),
+    ):
+        if level is None:
+            continue
+        shapes.append(
+            {
+                "type": "line",
+                "xref": "x domain", "x0": 0, "x1": 1,
+                "yref": "y", "y0": level, "y1": level,
+                "line": {"color": color, "width": 1, "dash": "dash"},
+                "name": tag,
+                "label": {"text": f"{lbl} {level:,.0f}", "textposition": "end middle",
+                          "font": {"color": color, "size": 11}},
+            }
+        )
+    if not shapes:
+        raise PreventUpdate
+    layout["shapes"] = shapes
+    return figure
 
 
 def _is_zoom_relayout(relayout: dict[str, Any] | None) -> bool:
@@ -348,37 +432,43 @@ def _register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("bt-graph", "figure"),
         Output("bt-metrics", "children"),
+        Output("bt-ohlc-store", "data"),
         Input("tabs", "value"),
         Input("bt-run", "n_clicks"),
         Input("bt-timeframe", "value"),
         Input("bt-strategy", "value"),
         Input("bt-toggles", "value"),
         Input("bt-graph", "relayoutData"),
+        Input("bt-graph", "hoverData"),
         State("bt-graph", "figure"),
     )
-    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, toggles, relayout, figure):  # type: ignore[no-untyped-def]
+    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, toggles, relayout, hoverdata, figure):  # type: ignore[no-untyped-def]
         # Single owner of bt-graph so a graph-mount relayout can't race the render
         # through a duplicate output. RENDER unless this is unambiguously a
-        # genuine zoom (bt-graph relayout alone, carrying a real datetime range);
-        # that keeps rendering deterministic regardless of which trigger Dash
-        # attributes when the tab mounts (tabs.value + relayout fire together).
+        # zoom or an entry-marker hover; that keeps rendering deterministic
+        # regardless of which trigger Dash attributes when the tab mounts.
         if active_tab != "backtest":
             raise PreventUpdate
         toggles = toggles or []
         show_bb, show_rsi, show_zigzag = "bb" in toggles, "rsi" in toggles, "zigzag" in toggles
 
-        triggered = {t["prop_id"].split(".")[0] for t in (dash.ctx.triggered or [])}
-        if triggered == {"bt-graph"} and _is_zoom_relayout(relayout):
-            return _autoscale_figure(
-                relayout, figure, timeframe, show_bb=show_bb, show_rsi=show_rsi
-            ), dash.no_update
+        trig = {t["prop_id"] for t in (dash.ctx.triggered or [])}
+        if trig == {"bt-graph.hoverData"}:
+            # Hovering an entry marker -> draw its TP/SL lines (keep metrics/store).
+            return _draw_tpsl_lines(figure, hoverdata), dash.no_update, dash.no_update
+        if trig == {"bt-graph.relayoutData"} and _is_zoom_relayout(relayout):
+            return (
+                _autoscale_figure(relayout, figure, timeframe, show_bb=show_bb, show_rsi=show_rsi),
+                dash.no_update,
+                dash.no_update,
+            )
 
         # Tab opened / timeframe / strategy / toggles / Run button / mount -> render.
         tf = Timeframe(timeframe)
         cache = load_cache(tf)
         df = cache.to_frame()
         if df.empty or not strategy:
-            return build_chart(df), "No data for this timeframe. Collect/backtest first."
+            return build_chart(df), "No data for this timeframe. Collect/backtest first.", {}
         # run_cycle already simulates in-sample + OOS; reuse its trades for the
         # chart instead of a third full simulation.
         result = run_cycle(strategy, tf)
@@ -389,7 +479,33 @@ def _register_callbacks(app: dash.Dash) -> None:
             show_zigzag=show_zigzag,
             trades=result.trades,
         )
-        return fig, _format_metrics(result)
+        return fig, _format_metrics(result), _ohlc_store(df)
+
+    @app.callback(
+        Output("bt-ohlc", "children"),
+        Input("bt-graph", "hoverData"),
+        State("bt-ohlc-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _ohlc_readout(hoverdata, store):  # type: ignore[no-untyped-def]
+        # Look up the bar's OHLC by the hovered timestamp, regardless of which
+        # trace is closest (EMA, candle, ...) — they share the same x.
+        points = (hoverdata or {}).get("points") or []
+        if not points or not store:
+            raise PreventUpdate
+        try:
+            key = pd.to_datetime(points[0].get("x")).isoformat()
+        except (ValueError, TypeError):
+            raise PreventUpdate
+        ohlc = store.get(key)
+        if not ohlc:
+            raise PreventUpdate
+        o, h, low, c = ohlc
+        return (
+            f"{key.replace('T', '  ')}\n"
+            f"O {o:,.0f}   H {h:,.0f}\n"
+            f"L {low:,.0f}   C {c:,.0f}"
+        )
 
     @app.callback(
         Output("maint-status", "children"),

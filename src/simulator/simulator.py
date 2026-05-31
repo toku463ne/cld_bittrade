@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from src.core.types import Bar, ExitConfig, ExitReason, Signal, Trade
-from src.exit.rules import OpenPosition, evaluate_exit
+from src.exit.rules import OpenPosition, evaluate_exit, tp_sl_levels
 from src.indicators import atr
 from src.strategy.base import Strategy
 
@@ -119,6 +119,7 @@ class Simulator:
                 )
                 # Per-trade exit config (e.g. ZS TP/SL) overrides the static one.
                 pos_cfg = pending.exit_config or exit_cfg
+                pos.tp_price, pos.sl_price = tp_sl_levels(pos, pos_cfg)
                 entry_time = bar.timestamp
                 entry_idx = i
                 pending = None
@@ -201,4 +202,6 @@ class Simulator:
             bars_held=max(1, bars_held),
             signal_score=1.0,
             cost=cost,
+            tp_price=pos.tp_price,
+            sl_price=pos.sl_price,
         )

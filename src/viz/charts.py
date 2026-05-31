@@ -66,6 +66,10 @@ def build_chart(
             low=df["low"],
             close=df["close"],
             name="FX_BTC_JPY",
+            # customdata = [O,H,L,C] per bar, surfaced on hover for the OHLC pane.
+            customdata=list(
+                zip(df["open"], df["high"], df["low"], df["close"], strict=False)
+            ),
         ),
         row=1,
         col=1,
@@ -119,7 +123,9 @@ def build_chart(
         legend=dict(orientation="h", y=1.02),
         margin=dict(l=40, r=20, t=40, b=30),
         template="plotly_white",
-        hovermode="x",
+        # 'closest' shows only the hovered trace's label (no stack of boxes that
+        # buried the candles); the spike line below still gives the datetime.
+        hovermode="closest",
     )
     # Vertical datetime crosshair spanning all panels on hover.
     fig.update_xaxes(
@@ -277,6 +283,14 @@ def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
     """
     from src.core.types import ExitReason, Side
 
+    def _entry_hover(t: Trade) -> str:
+        parts = [f"{t.side.value} entry @ {t.entry_price:,.0f}"]
+        if t.tp_price is not None:
+            parts.append(f"TP {t.tp_price:,.0f}")
+        if t.sl_price is not None:
+            parts.append(f"SL {t.sl_price:,.0f}")
+        return "<br>".join(parts)
+
     def _entry_group(side: Side, name: str, color: str, symbol: str) -> None:
         pts = [t for t in trades if t.side is side]
         if not pts:
@@ -289,7 +303,9 @@ def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
                 marker=dict(symbol=symbol, color=color, size=13,
                             line=dict(width=1.2, color="black")),
                 name=name,
-                hovertext=[f"{side.value} entry @ {t.entry_price:,.0f}" for t in pts],
+                # customdata = [tp_price, sl_price] so a click can draw the lines.
+                customdata=[[t.tp_price, t.sl_price] for t in pts],
+                hovertext=[_entry_hover(t) for t in pts],
                 hoverinfo="text",
             ),
             row=1, col=1,

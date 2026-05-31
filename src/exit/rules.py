@@ -27,6 +27,8 @@ class OpenPosition:
         bars_held: Bars elapsed since entry (incremented by the simulator).
         favorable_extreme: Highest high (long) / lowest low (short) since entry,
             used for the trailing stop.
+        tp_price: Fixed take-profit price level (set by the simulator at entry).
+        sl_price: Fixed stop-loss price level (set by the simulator at entry).
     """
 
     side: Side
@@ -34,6 +36,8 @@ class OpenPosition:
     entry_atr: float
     bars_held: int = 0
     favorable_extreme: float = field(default=0.0)
+    tp_price: float | None = None
+    sl_price: float | None = None
 
     def __post_init__(self) -> None:
         if self.favorable_extreme == 0.0:
@@ -58,6 +62,27 @@ def _tp_sl_distances(pos: OpenPosition, cfg: ExitConfig) -> tuple[float | None, 
         sl = cfg.sl_atr_mult * pos.entry_atr
     elif cfg.sl_pct is not None:
         sl = cfg.sl_pct * pos.entry_price
+    return tp, sl
+
+
+def tp_sl_levels(pos: OpenPosition, cfg: ExitConfig) -> tuple[float | None, float | None]:
+    """Return the fixed (take_profit_price, stop_loss_price) for a position.
+
+    Side-adjusted absolute price levels derived from the same TP/SL distances
+    :func:`evaluate_exit` uses. Either may be ``None`` if not configured. The
+    trailing stop is dynamic and not returned here.
+
+    Args:
+        pos: The open position (entry price, side, ATR).
+        cfg: The trade's exit configuration.
+
+    Returns:
+        ``(tp_price, sl_price)``.
+    """
+    tp_dist, sl_dist = _tp_sl_distances(pos, cfg)
+    long = pos.side is Side.LONG
+    tp = None if tp_dist is None else (pos.entry_price + tp_dist if long else pos.entry_price - tp_dist)
+    sl = None if sl_dist is None else (pos.entry_price - sl_dist if long else pos.entry_price + sl_dist)
     return tp, sl
 
 

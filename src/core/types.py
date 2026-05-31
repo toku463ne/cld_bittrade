@@ -163,6 +163,8 @@ class Trade:
     bars_held: int
     signal_score: float
     cost: float = 0.0
+    tp_price: float | None = None
+    sl_price: float | None = None
 
     @property
     def gross_pnl(self) -> float:
