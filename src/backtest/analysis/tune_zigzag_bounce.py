@@ -40,6 +40,10 @@ QUICK_MIDS = [3, 4]
 QUICK_TPS = [0.5, 0.7]
 QUICK_SLS = [0.5, 0.7]
 QUICK_MAXBARS = [24, 48]
+# Level-matching toggles, swept only with --sweep-levels (else defaults: fixed
+# tol_pct, same-type). (tol_leg_frac, reverse_levels, require_break).
+LEG_FRACS: list[float | None] = [None, 0.25, 0.5]
+REV_MODES: list[tuple[bool, bool]] = [(False, True), (True, True), (True, False)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +53,9 @@ class Row:
     tp: float
     sl: float
     max_bars: int
+    leg_frac: float | None
+    reverse: bool
+    req_break: bool
     n_trades: int
     total_return: float
     sharpe: float
@@ -60,20 +67,25 @@ def _grid(
     quick: bool,
     sizes: list[int] | None = None,
     mids: list[int] | None = None,
-) -> list[tuple[int, int, float, float, int]]:
+    sweep_levels: bool = False,
+) -> list[tuple[int, int, float, float, int, float | None, bool, bool]]:
     base_sizes, base_mids, tps, sls, mbs = (
         (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS, QUICK_MAXBARS)
         if quick
         else (SIZES, MIDS, TPS, SLS, MAX_BARS)
     )
+    legs = LEG_FRACS if sweep_levels else [None]
+    revs = REV_MODES if sweep_levels else [(False, True)]
     return [
-        (s, m, tp, sl, mb)
+        (s, m, tp, sl, mb, leg, rev, brk)
         for s in (sizes or base_sizes)
         for m in (mids or base_mids)
         if m < s
         for tp in tps
         for sl in sls
         for mb in mbs
+        for leg in legs
+        for (rev, brk) in revs
     ]
 
 
@@ -84,25 +96,27 @@ def tune(
     top: int,
     sizes: list[int] | None = None,
     mids: list[int] | None = None,
+    sweep_levels: bool = False,
 ) -> list[Row]:
     """Run the sweep and return rows sorted by net total return (desc)."""
     bars = load_cache(timeframe).bars
     if not bars:
         raise RuntimeError(f"No {timeframe.value} bars; collect history first.")
-    combos = _grid(quick, sizes, mids)
+    combos = _grid(quick, sizes, mids, sweep_levels)
     logger.info("Tuning zigzag_bounce on {} {} bars over {} combos",
                 len(bars), timeframe.value, len(combos))
 
     rows: list[Row] = []
-    for size, mid, tp, sl, mb in combos:
+    for size, mid, tp, sl, mb, leg, rev, brk in combos:
         strat = ZigzagBounceStrategy(
-            size=size, mid_size=mid, tp_mult=tp, sl_mult=sl, max_bars=mb
+            size=size, mid_size=mid, tp_mult=tp, sl_mult=sl, max_bars=mb,
+            tol_leg_frac=leg, reverse_levels=rev, require_break=brk,
         )
         trades = Simulator(strat).run(bars).trades
         m = portfolio_metrics(trades)
         rows.append(
-            Row(size, mid, tp, sl, mb, m.n_trades, m.total_return, m.sharpe,
-                m.win_rate, m.max_dd)
+            Row(size, mid, tp, sl, mb, leg, rev, brk, m.n_trades, m.total_return,
+                m.sharpe, m.win_rate, m.max_dd)
         )
 
     rows.sort(key=lambda r: r.total_return, reverse=True)
@@ -111,10 +125,12 @@ def tune(
 
 def _print_table(title: str, rows: list[Row]) -> None:
     print(f"\n=== {title} ===")
-    print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} {'age':>4} | {'trades':>6} "
-          f"{'net_ret':>9} {'sharpe':>7} {'win%':>5} {'maxDD':>7}")
+    print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} {'age':>4} {'leg':>4} {'rev':>3} "
+          f"{'brk':>3} | {'trades':>6} {'net_ret':>9} {'sharpe':>7} {'win%':>5} {'maxDD':>7}")
     for r in rows:
-        print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} {r.max_bars:>4} | "
+        leg = "-" if r.leg_frac is None else f"{r.leg_frac:.2f}"
+        print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} {r.max_bars:>4} {leg:>4} "
+              f"{('Y' if r.reverse else 'n'):>3} {('Y' if r.req_break else 'n'):>3} | "
               f"{r.n_trades:>6} {r.total_return:>9.4f} {r.sharpe:>7.3f} "
               f"{r.win_rate:>5.2f} {r.max_dd:>7.4f}")
 
@@ -129,6 +145,11 @@ def main() -> None:
                         help="Hide combos with fewer than this many trades.")
     parser.add_argument("--size", type=int, default=None, help="Restrict to one size.")
     parser.add_argument("--mid", type=int, default=None, help="Restrict to one mid_size.")
+    parser.add_argument(
+        "--sweep-levels", action="store_true",
+        help="Also sweep tol_leg_frac {None,0.25,0.5} and reverse/break modes "
+        "(9x combos — combine with --size/--mid to keep it tractable).",
+    )
     args = parser.parse_args()
 
     configure_logging(get_settings().log_level)
@@ -138,6 +159,7 @@ def main() -> None:
         top=10_000,
         sizes=[args.size] if args.size else None,
         mids=[args.mid] if args.mid else None,
+        sweep_levels=args.sweep_levels,
     )
 
     # Best tp/sl per (size, mid) so EVERY size is visible (not just the winners).
