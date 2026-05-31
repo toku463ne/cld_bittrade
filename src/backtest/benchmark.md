@@ -12,60 +12,66 @@ for metric definitions and `docs/evaluation_criteria.md` for the ship rubric.
 
 ## ema_atr_breakout
 
-_Last run: 2026-05-31 via `scripts/rebenchmark_sign.sh ema_atr_breakout 1m` (DB: btc_bot_bt)._
+_Last run: 2026-05-31 11:40 (INTERIM) via `scripts/rebenchmark_sign.sh ema_atr_breakout 5m` (DB: btc_bot_bt). Portfolio figures NET of trading fees._
 
-**Data window:** 2026-05-29 20:52 → 2026-05-31 07:29 UTC+9 — 1,975 × 1m bars
-from 40,000 raw executions (~34.6h). In-sample = first 80%, OOS = most recent 20%.
+**Data window:** 2026-05-18 → 2026-05-31 UTC+9 — 3,608 × 5m bars from ~494k raw
+executions (~12.6 days). In-sample = first 80%, OOS = most recent 20%.
 
-> ⚠️ **Sample far too small to ship on.** All fires fall in a single calendar
-> month (~35h of data), so there is effectively one walk-forward period and
-> n≈22 fires in-sample. Treat every number below as a smoke-test of the
-> pipeline, not evidence about the strategy. Real evaluation needs months of
-> history (accumulate via `src/data/history.py`).
+> ⚠️ **INTERIM — single calendar month, do not ship on this.** All fires fall in
+> one month (2026-05), so the monthly walk-forward has only ONE period: the
+> ≥4/5-months consistency gate **cannot be evaluated** here. n=44 fires
+> in-sample is still small. The durable cron watcher (`rebench_watch.sh`) will
+> re-run automatically once history reaches ~45+ days (2–3 months) for a verdict
+> that can actually exercise the consistency gate.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|------|---------|--------|
-| 2026-05 | 22 | 0.545 | 0.00059 | 1.000 |
+| 2026-05 | 44 | 0.500 | 0.00051 | 1.000 |
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 22 | 0.545 | 0.0006 |
-| bear | 1  | 0.000 | -0.0040 |
-| bull | 21 | 0.571 | 0.0008 |
+| all  | 44 | 0.500 | 0.0005 |
+| bear | 6  | 0.500 | 0.0003 |
+| bull | 38 | 0.500 | 0.0006 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 22 |
-| Spearman ρ | -0.199 |
-| Q4 − Q1 spread | -0.0001 |
+| n | 44 |
+| Spearman ρ | +0.063 |
+| Q4 − Q1 spread | ~0.0000 |
 
 ### OOS (most recent 20%)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|-------|----------|--------|
-| 2026-05 | 8 | 0.250 | -0.00083 | 1.000 |
+| 2026-05 | 11 | 0.545 | 0.00095 | 1.000 |
 
-### Portfolio metrics (ship criteria)
+### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | -0.145 | 0.413 |
-| Max DD | 0.0037 | — |
-| # trades | 22 | 8 |
-| Net PnL (min lot) | -20.7 JPY | +14.3 JPY |
-| Buy-and-hold BTC/JPY | +0.0064 | — |
+| Sharpe | -1.071 | -1.649 |
+| Max DD | 0.0719 | 0.0206 |
+| # trades | 42 | 11 |
+| Trading fees | 1,023 JPY | ~268 JPY |
+| Net PnL (min lot) | -868 JPY | -271 JPY |
+| Buy-and-hold BTC/JPY (gross) | -0.0368 | — |
 
-**Verdict: REJECT (do not ship).** In-sample Sharpe -0.145 < buy-and-hold
-(+0.0064); the strategy loses money in-sample over this window. Signal-level DR
-54.5% (in-sample) collapses to 25% OOS with `perm_p = 1.0` (timing not
-informative) and negative score calibration (ρ = -0.199) — all consistent with
-noise at n≈22. The positive OOS Sharpe is on 8 trades and not meaningful.
+**Verdict: REJECT (do not ship).** Net of fees the strategy loses money in both
+in-sample (Sharpe -1.07) and OOS (Sharpe -1.65), and the **OVERFIT** flag is
+raised (OOS Sharpe < 0). Signal-level DR is exactly **0.500** in-sample (a coin
+flip — no directional edge) with `perm_p = 1.0` (timing uninformative) and flat
+score calibration (ρ ≈ +0.06, Q4−Q1 ≈ 0). The gross per-fire edge is ~+0.05%,
+which the ~0.2%/round-trip fee erases entirely (1,023 JPY of fees on 42 trades
+turned a roughly break-even gross signal into a clear net loss). This is the
+expected outcome for an EMA-cross+ATR baseline on a short window; it confirms the
+pipeline and the cost model are working, not that the strategy has an edge.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
