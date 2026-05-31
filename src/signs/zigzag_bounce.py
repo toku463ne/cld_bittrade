@@ -301,3 +301,19 @@ class ZigzagBounceSign(Sign):
                     )
                 )
         return fires
+
+
+class ZigzagBounceWallSign(ZigzagBounceSign):
+    """``zigzag_bounce`` sign with "ambiguous wall" matching (~5-day window).
+
+    Matches the early peak to the nearest-in-price confirmed peak within
+    ``wall_window=120`` (``wall_match``), so an overshoot-and-revert fires against
+    the wall it pierced. Detector counterpart of
+    :class:`~src.strategy.zigzag_bounce.ZigzagBounceWallStrategy`; registered so
+    the per-fire benchmark pipeline can evaluate it. Exploratory.
+    """
+
+    name = "zigzag_bounce_wall"
+
+    def __init__(self) -> None:
+        super().__init__(wall_match=True, wall_window=120)

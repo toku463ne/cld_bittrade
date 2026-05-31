@@ -10,13 +10,14 @@ from collections.abc import Callable
 from src.signs.base import Sign
 from src.signs.ema_atr_breakout import EmaAtrBreakoutSign
 from src.signs.ema_cross import EmaCrossSign
-from src.signs.zigzag_bounce import ZigzagBounceSign
+from src.signs.zigzag_bounce import ZigzagBounceSign, ZigzagBounceWallSign
 
 # Factories (zero-arg) so each consumer gets a fresh, default-configured detector.
 SIGN_REGISTRY: dict[str, Callable[[], Sign]] = {
     EmaCrossSign.name: EmaCrossSign,
     EmaAtrBreakoutSign.name: EmaAtrBreakoutSign,
     ZigzagBounceSign.name: ZigzagBounceSign,
+    ZigzagBounceWallSign.name: ZigzagBounceWallSign,
 }
 
 

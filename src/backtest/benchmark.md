@@ -180,3 +180,58 @@ bind materially — kept off by default; re-sweep with deeper history.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
+
+---
+
+## zigzag_bounce_wall
+
+_Last run: 2026-05-31 23:16 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce_wall 1h` + `backtest.cycle` (DB: btc_bot_bt). Registered variant of `zigzag_bounce` with **ambiguous-wall matching** (`wall_match`, `wall_window=120` ~= 5d): match the early peak to the nearest-in-price confirmed peak, so a <=tol overshoot-and-revert fires against the wall it pierced. Same ZS exit. Portfolio NET of fees._
+
+**Data window:** 2026-04-30 -> 2026-05-31 UTC+9 — 750 x 1h bars (~31 days, one
+calendar month). In-sample = first 80%, OOS = most recent 20%.
+
+### Multi-Month Benchmark (in-sample)
+
+| period | n_fires | DR | mean_r | perm_p |
+|--------|---------|------|----------|--------|
+| 2026-05 | 25 | 0.480 | -0.00090 | 1.000 |
+
+### Regime-Split Analysis (ATR bear/bull)
+
+| regime | n | DR | mean_r |
+|--------|---|-------|---------|
+| all  | 25 | 0.480 | -0.0009 |
+| bear | 4  | 0.500 | -0.0081 |
+| bull | 21 | 0.476 | +0.0005 |
+
+### Score Calibration
+
+| metric | value |
+|--------|-------|
+| n | 25 |
+| Spearman rho | +0.130 |
+| Q4 - Q1 spread | +0.0047 |
+
+### Portfolio metrics (ship criteria) — NET of fees
+
+| metric | in-sample | OOS |
+|--------|-----------|-----|
+| Sharpe | +0.060 | 0.000 (0 trades) |
+| Max DD | 0.0190 | — |
+| # trades | 8 | 0 |
+| Trading fees | 201.7 JPY | — |
+| Net PnL (min lot) | +125 JPY | — |
+| Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
+
+**Verdict: REJECT (interim) — but the best zigzag_bounce config so far.** vs the
+default `zigzag_bounce` (IS net -183 / Sharpe -0.105), wall matching flips the
+in-sample portfolio **positive** (net **+125**, Sharpe **+0.060**, same maxDD)
+and lifts more fires (n 17->25) with a higher per-fire DR (0.412->**0.480**) — it
+surfaces overshoot-and-revert bounces the default selection misses (e.g. the 5/15
+short off the 12.92M wall, TP). **Still REJECT**: OOS has **0 trades** (can't
+verify), the per-month validate **FAILs** (1 populated period), and signal
+**calibration regressed** (rho 0.49 -> **0.13** — the score no longer ranks fires
+well). Net of fees mean_r is still slightly negative (-0.0009): a coin-flip-ish
+signal that the wall framing trades a bit more profitably this month, not a
+demonstrated edge. Re-benchmark once forward history exercises the consistency
+gate and an OOS actually has trades.
