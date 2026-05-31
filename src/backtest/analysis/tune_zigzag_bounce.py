@@ -65,6 +65,7 @@ class Row:
     req_break: bool
     winsor: float | None
     dominant: int | None
+    dom_rev: bool
     n_trades: int
     total_return: float
     sharpe: float
@@ -79,7 +80,9 @@ def _grid(
     sweep_levels: bool = False,
     sweep_winsor: bool = False,
     sweep_dominant: bool = False,
-) -> list[tuple[int, int, float, float, int, float | None, bool, bool, float | None, int | None]]:
+) -> list[
+    tuple[int, int, float, float, int, float | None, bool, bool, float | None, int | None, bool]
+]:
     base_sizes, base_mids, tps, sls, mbs = (
         (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS, QUICK_MAXBARS)
         if quick
@@ -88,9 +91,17 @@ def _grid(
     legs = LEG_FRACS if sweep_levels else [None]
     revs = REV_MODES if sweep_levels else [(False, True)]
     winsors = WINSOR_KS if sweep_winsor else [None]
-    doms = DOMINANT_WINDOWS if sweep_dominant else [None]
+    # (dominant_window, dominant_reverse) modes: each non-None window gets both
+    # reverse off/on; None stays single (reverse is a no-op without a window).
+    if sweep_dominant:
+        dom_modes: list[tuple[int | None, bool]] = [(None, False)]
+        for d in DOMINANT_WINDOWS:
+            if d is not None:
+                dom_modes += [(d, False), (d, True)]
+    else:
+        dom_modes = [(None, False)]
     return [
-        (s, m, tp, sl, mb, leg, rev, brk, win, dom)
+        (s, m, tp, sl, mb, leg, rev, brk, win, dom, drev)
         for s in (sizes or base_sizes)
         for m in (mids or base_mids)
         if m < s
@@ -100,7 +111,7 @@ def _grid(
         for leg in legs
         for (rev, brk) in revs
         for win in winsors
-        for dom in doms
+        for (dom, drev) in dom_modes
     ]
 
 
@@ -124,17 +135,17 @@ def tune(
                 len(bars), timeframe.value, len(combos))
 
     rows: list[Row] = []
-    for size, mid, tp, sl, mb, leg, rev, brk, win, dom in combos:
+    for size, mid, tp, sl, mb, leg, rev, brk, win, dom, drev in combos:
         strat = ZigzagBounceStrategy(
             size=size, mid_size=mid, tp_mult=tp, sl_mult=sl, max_bars=mb,
             tol_leg_frac=leg, reverse_levels=rev, require_break=brk,
-            winsorize_k=win, dominant_window=dom,
+            winsorize_k=win, dominant_window=dom, dominant_reverse=drev,
         )
         trades = Simulator(strat).run(bars).trades
         m = portfolio_metrics(trades)
         rows.append(
-            Row(size, mid, tp, sl, mb, leg, rev, brk, win, dom, m.n_trades, m.total_return,
-                m.sharpe, m.win_rate, m.max_dd)
+            Row(size, mid, tp, sl, mb, leg, rev, brk, win, dom, drev, m.n_trades,
+                m.total_return, m.sharpe, m.win_rate, m.max_dd)
         )
 
     rows.sort(key=lambda r: r.total_return, reverse=True)
@@ -144,16 +155,16 @@ def tune(
 def _print_table(title: str, rows: list[Row]) -> None:
     print(f"\n=== {title} ===")
     print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} {'age':>4} {'leg':>4} {'rev':>3} "
-          f"{'brk':>3} {'win':>4} {'dom':>4} | {'trades':>6} {'net_ret':>9} {'sharpe':>7} "
-          f"{'win%':>5} {'maxDD':>7}")
+          f"{'brk':>3} {'win':>4} {'dom':>4} {'drv':>3} | {'trades':>6} {'net_ret':>9} "
+          f"{'sharpe':>7} {'win%':>5} {'maxDD':>7}")
     for r in rows:
         leg = "-" if r.leg_frac is None else f"{r.leg_frac:.2f}"
         win = "-" if r.winsor is None else f"{r.winsor:.1f}"
         dom = "-" if r.dominant is None else f"{r.dominant}"
         print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} {r.max_bars:>4} {leg:>4} "
               f"{('Y' if r.reverse else 'n'):>3} {('Y' if r.req_break else 'n'):>3} "
-              f"{win:>4} {dom:>4} | {r.n_trades:>6} {r.total_return:>9.4f} {r.sharpe:>7.3f} "
-              f"{r.win_rate:>5.2f} {r.max_dd:>7.4f}")
+              f"{win:>4} {dom:>4} {('Y' if r.dom_rev else 'n'):>3} | {r.n_trades:>6} "
+              f"{r.total_return:>9.4f} {r.sharpe:>7.3f} {r.win_rate:>5.2f} {r.max_dd:>7.4f}")
 
 
 def main() -> None:
@@ -177,8 +188,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--sweep-dominant", action="store_true",
-        help="Also sweep dominant_window {None,96,120,168,240} bars (5x combos). "
-        "Note 240 > widest window enlarges warmup (not apples-to-apples with off).",
+        help="Also sweep dominant_window {None,96,120,168,240} x dominant_reverse "
+        "{off,on} (9 modes; the `drv` column). Note 240 > widest window enlarges "
+        "warmup (not apples-to-apples with off).",
     )
     args = parser.parse_args()
 
