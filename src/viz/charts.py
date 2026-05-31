@@ -66,10 +66,6 @@ def build_chart(
             low=df["low"],
             close=df["close"],
             name="FX_BTC_JPY",
-            # customdata = [O,H,L,C] per bar, surfaced on hover for the OHLC pane.
-            customdata=list(
-                zip(df["open"], df["high"], df["low"], df["close"], strict=False)
-            ),
         ),
         row=1,
         col=1,
@@ -303,8 +299,13 @@ def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
                 marker=dict(symbol=symbol, color=color, size=13,
                             line=dict(width=1.2, color="black")),
                 name=name,
-                # customdata = [tp_price, sl_price] so a click can draw the lines.
-                customdata=[[t.tp_price, t.sl_price] for t in pts],
+                # customdata = [tp, sl, entry_iso, exit_iso, exit_price] so a hover
+                # can draw the TP/SL lines over the trade's lifetime + mark the exit.
+                customdata=[
+                    [t.tp_price, t.sl_price, t.entry_time.isoformat(),
+                     t.exit_time.isoformat(), t.exit_price]
+                    for t in pts
+                ],
                 hovertext=[_entry_hover(t) for t in pts],
                 hoverinfo="text",
             ),

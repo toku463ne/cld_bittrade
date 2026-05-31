@@ -217,15 +217,16 @@ def _slice_window(
 
 
 def _ohlc_store(df: pd.DataFrame) -> dict[str, list[float]]:
-    """Build a {naive-ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
+    """Build a {ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
 
-    Keyed by tz-naive wall-clock ISO (what Plotly emits in hover ``x``), parsed
-    the same way in the callback so keys match regardless of separator/seconds.
+    Keyed by the bar timestamp's ISO form. Plotly emits hover ``x`` in the same
+    (tz-aware) form as the axis, and the callback re-parses through pandas, so
+    keys match regardless of formatting.
     """
     out: dict[str, list[float]] = {}
-    idx = df.index
-    naive = idx.tz_localize(None) if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None else idx
-    for ts, o, h, low, c in zip(naive, df["open"], df["high"], df["low"], df["close"], strict=False):
+    for ts, o, h, low, c in zip(
+        df.index, df["open"], df["high"], df["low"], df["close"], strict=False
+    ):
         out[pd.Timestamp(ts).isoformat()] = [float(o), float(h), float(low), float(c)]
     return out
 
@@ -246,19 +247,21 @@ def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | 
         raise PreventUpdate
     points = hoverdata.get("points") or []
     cd = points[0].get("customdata") if points else None
-    if not cd or len(cd) != 2:  # entry markers only (candle customdata is len 4)
+    # Entry markers carry [tp, sl, entry_iso, exit_iso, exit_price]; nothing else
+    # carries customdata, so anything shorter is not an entry.
+    if not cd or len(cd) < 4:
         raise PreventUpdate
-    tp, sl = cd[0], cd[1]
+    tp, sl, entry_x, exit_x = cd[0], cd[1], cd[2], cd[3]
+    exit_price = cd[4] if len(cd) > 4 else None
 
     layout = figure["layout"]
-    new_levels = {round(v) for v in (tp, sl) if v is not None}
-    existing = {
-        round(s["y0"]) for s in layout.get("shapes", [])
-        if str(s.get("name", "")).startswith("tpsl_")
-    }
-    if new_levels and new_levels == existing:
-        raise PreventUpdate  # already showing this entry's lines
+    # Skip redundant redraws while hovering the same entry (keyed on exit point).
+    prior = [a for a in layout.get("annotations", []) if a.get("name") == "tpsl_exit"]
+    if prior and prior[0].get("x") == exit_x:
+        raise PreventUpdate
 
+    # TP/SL as dashed segments over the trade's lifetime (entry -> exit), so it's
+    # clear the trade ended before price may later have crossed a level.
     shapes = [
         s for s in layout.get("shapes", []) if not str(s.get("name", "")).startswith("tpsl_")
     ]
@@ -271,17 +274,30 @@ def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | 
         shapes.append(
             {
                 "type": "line",
-                "xref": "x domain", "x0": 0, "x1": 1,
+                "xref": "x", "x0": entry_x, "x1": exit_x,
                 "yref": "y", "y0": level, "y1": level,
-                "line": {"color": color, "width": 1, "dash": "dash"},
+                "line": {"color": color, "width": 1.4, "dash": "dash"},
                 "name": tag,
-                "label": {"text": f"{lbl} {level:,.0f}", "textposition": "end middle",
+                "label": {"text": f"{lbl} {level:,.0f}", "textposition": "start",
                           "font": {"color": color, "size": 11}},
             }
         )
     if not shapes:
         raise PreventUpdate
     layout["shapes"] = shapes
+
+    # Mark the exit so it's findable.
+    anns = [a for a in layout.get("annotations", []) if a.get("name") != "tpsl_exit"]
+    if exit_price is not None:
+        anns.append(
+            {
+                "name": "tpsl_exit", "xref": "x", "yref": "y",
+                "x": exit_x, "y": exit_price, "text": "exit", "showarrow": True,
+                "arrowhead": 2, "ax": 0, "ay": -28,
+                "font": {"size": 11, "color": "#333"}, "bgcolor": "#ffffffcc",
+            }
+        )
+    layout["annotations"] = anns
     return figure
 
 
