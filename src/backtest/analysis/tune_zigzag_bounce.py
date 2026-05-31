@@ -47,6 +47,10 @@ REV_MODES: list[tuple[bool, bool]] = [(False, True), (True, True), (True, False)
 # MAD high-side leg clip for the ZS band, swept only with --sweep-winsor
 # (else default off). None = off; values are k in MAD-sigmas (~3 = 3-sigma).
 WINSOR_KS: list[float | None] = [None, 2.5, 3.0]
+# Dominant-level lookback (bars), swept only with --sweep-dominant (else off).
+# None = off; @1h: 96≈4d, 120≈5d, 168≈1wk, 240≈10d. NOTE 240 > widest window
+# (180) enlarges warmup and drops early fires -- not apples-to-apples with off.
+DOMINANT_WINDOWS: list[int | None] = [None, 96, 120, 168, 240]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +64,7 @@ class Row:
     reverse: bool
     req_break: bool
     winsor: float | None
+    dominant: int | None
     n_trades: int
     total_return: float
     sharpe: float
@@ -73,7 +78,8 @@ def _grid(
     mids: list[int] | None = None,
     sweep_levels: bool = False,
     sweep_winsor: bool = False,
-) -> list[tuple[int, int, float, float, int, float | None, bool, bool, float | None]]:
+    sweep_dominant: bool = False,
+) -> list[tuple[int, int, float, float, int, float | None, bool, bool, float | None, int | None]]:
     base_sizes, base_mids, tps, sls, mbs = (
         (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS, QUICK_MAXBARS)
         if quick
@@ -82,8 +88,9 @@ def _grid(
     legs = LEG_FRACS if sweep_levels else [None]
     revs = REV_MODES if sweep_levels else [(False, True)]
     winsors = WINSOR_KS if sweep_winsor else [None]
+    doms = DOMINANT_WINDOWS if sweep_dominant else [None]
     return [
-        (s, m, tp, sl, mb, leg, rev, brk, win)
+        (s, m, tp, sl, mb, leg, rev, brk, win, dom)
         for s in (sizes or base_sizes)
         for m in (mids or base_mids)
         if m < s
@@ -93,6 +100,7 @@ def _grid(
         for leg in legs
         for (rev, brk) in revs
         for win in winsors
+        for dom in doms
     ]
 
 
@@ -105,26 +113,27 @@ def tune(
     mids: list[int] | None = None,
     sweep_levels: bool = False,
     sweep_winsor: bool = False,
+    sweep_dominant: bool = False,
 ) -> list[Row]:
     """Run the sweep and return rows sorted by net total return (desc)."""
     bars = load_cache(timeframe).bars
     if not bars:
         raise RuntimeError(f"No {timeframe.value} bars; collect history first.")
-    combos = _grid(quick, sizes, mids, sweep_levels, sweep_winsor)
+    combos = _grid(quick, sizes, mids, sweep_levels, sweep_winsor, sweep_dominant)
     logger.info("Tuning zigzag_bounce on {} {} bars over {} combos",
                 len(bars), timeframe.value, len(combos))
 
     rows: list[Row] = []
-    for size, mid, tp, sl, mb, leg, rev, brk, win in combos:
+    for size, mid, tp, sl, mb, leg, rev, brk, win, dom in combos:
         strat = ZigzagBounceStrategy(
             size=size, mid_size=mid, tp_mult=tp, sl_mult=sl, max_bars=mb,
             tol_leg_frac=leg, reverse_levels=rev, require_break=brk,
-            winsorize_k=win,
+            winsorize_k=win, dominant_window=dom,
         )
         trades = Simulator(strat).run(bars).trades
         m = portfolio_metrics(trades)
         rows.append(
-            Row(size, mid, tp, sl, mb, leg, rev, brk, win, m.n_trades, m.total_return,
+            Row(size, mid, tp, sl, mb, leg, rev, brk, win, dom, m.n_trades, m.total_return,
                 m.sharpe, m.win_rate, m.max_dd)
         )
 
@@ -135,14 +144,15 @@ def tune(
 def _print_table(title: str, rows: list[Row]) -> None:
     print(f"\n=== {title} ===")
     print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} {'age':>4} {'leg':>4} {'rev':>3} "
-          f"{'brk':>3} {'win':>4} | {'trades':>6} {'net_ret':>9} {'sharpe':>7} "
+          f"{'brk':>3} {'win':>4} {'dom':>4} | {'trades':>6} {'net_ret':>9} {'sharpe':>7} "
           f"{'win%':>5} {'maxDD':>7}")
     for r in rows:
         leg = "-" if r.leg_frac is None else f"{r.leg_frac:.2f}"
         win = "-" if r.winsor is None else f"{r.winsor:.1f}"
+        dom = "-" if r.dominant is None else f"{r.dominant}"
         print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} {r.max_bars:>4} {leg:>4} "
               f"{('Y' if r.reverse else 'n'):>3} {('Y' if r.req_break else 'n'):>3} "
-              f"{win:>4} | {r.n_trades:>6} {r.total_return:>9.4f} {r.sharpe:>7.3f} "
+              f"{win:>4} {dom:>4} | {r.n_trades:>6} {r.total_return:>9.4f} {r.sharpe:>7.3f} "
               f"{r.win_rate:>5.2f} {r.max_dd:>7.4f}")
 
 
@@ -165,6 +175,11 @@ def main() -> None:
         "--sweep-winsor", action="store_true",
         help="Also sweep ZS-band MAD leg-clip winsorize_k {None,2.5,3.0} (3x combos).",
     )
+    parser.add_argument(
+        "--sweep-dominant", action="store_true",
+        help="Also sweep dominant_window {None,96,120,168,240} bars (5x combos). "
+        "Note 240 > widest window enlarges warmup (not apples-to-apples with off).",
+    )
     args = parser.parse_args()
 
     configure_logging(get_settings().log_level)
@@ -176,6 +191,7 @@ def main() -> None:
         mids=[args.mid] if args.mid else None,
         sweep_levels=args.sweep_levels,
         sweep_winsor=args.sweep_winsor,
+        sweep_dominant=args.sweep_dominant,
     )
 
     # Best tp/sl per (size, mid) so EVERY size is visible (not just the winners).
