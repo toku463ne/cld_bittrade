@@ -119,10 +119,12 @@ def run_cycle(
     )
 
     logger.info(
-        "Cycle {}: IS Sharpe={:.3f} DD={:.4f} | OOS Sharpe={:.3f} | bench(B&H)={:.4f} | ship={}",
+        "Cycle {}: IS Sharpe={:.3f} DD={:.4f} cost={:.1f}JPY | OOS Sharpe={:.3f} | "
+        "bench(B&H, gross)={:.4f} | ship={}  [returns NET of fees]",
         strategy_name,
         m_in.sharpe,
         m_in.max_dd,
+        m_in.total_cost,
         m_oos.sharpe,
         bench,
         ship,

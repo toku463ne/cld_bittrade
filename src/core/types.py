@@ -141,6 +141,8 @@ class Trade:
         size: Position size in BTC.
         bars_held: Number of bars the position was open.
         signal_score: Score of the originating signal.
+        cost: Round-trip trading cost in JPY (deducted from PnL/returns). Set by
+            the simulator at position close; ``0.0`` means cost-free.
     """
 
     side: Side
@@ -152,13 +154,30 @@ class Trade:
     size: float
     bars_held: int
     signal_score: float
+    cost: float = 0.0
 
     @property
-    def pnl(self) -> float:
-        """Absolute PnL in JPY (price terms × size)."""
+    def gross_pnl(self) -> float:
+        """PnL in JPY before trading costs (price terms × size)."""
         return self.side.sign * (self.exit_price - self.entry_price) * self.size
 
     @property
-    def return_pct(self) -> float:
-        """Signed fractional return of the trade (long-equivalent)."""
+    def pnl(self) -> float:
+        """Net PnL in JPY: gross minus the round-trip trading cost."""
+        return self.gross_pnl - self.cost
+
+    @property
+    def gross_return_pct(self) -> float:
+        """Signed fractional return before costs (long-equivalent)."""
         return self.side.sign * (self.exit_price - self.entry_price) / self.entry_price
+
+    @property
+    def return_pct(self) -> float:
+        """Signed fractional return net of trading costs (long-equivalent).
+
+        The cost is expressed as a fraction of notional (``cost / (entry × size)``)
+        so it is comparable across price levels.
+        """
+        notional = self.entry_price * self.size
+        cost_frac = self.cost / notional if notional > 0 else 0.0
+        return self.gross_return_pct - cost_frac

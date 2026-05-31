@@ -270,6 +270,18 @@ signs rank higher), or might fire only when the strategy is already in
 a position, or might cluster with other signs (false diversification).
 So per-fire pass ≠ strategy uplift.
 
+> **All strategy-level figures below are NET of trading costs.** The simulator
+> deducts a round-trip cost of `entry_price × lot_size × fee_rate × 2` from every
+> trade before any metric is computed, so Sharpe, Sortino, win rate, profit
+> factor, total/annualized return and max drawdown all already account for fees.
+> `fee_rate` defaults to **0.001** (0.10%, bitFlyer FX_BTC_JPY worst-case taker
+> tier at < ¥1B monthly volume; lower to ~0.0007 / ~0.0003 at higher tiers). In
+> return terms this is a flat `2 × fee_rate` haircut per trade (~0.2% at the
+> default rate), so high-churn strategies are penalised proportionally to
+> turnover. **The Buy-and-hold BTC/JPY benchmark is intentionally left GROSS**
+> (no trading cost), so a strategy must overcome its own fees to beat a costless
+> benchmark — a deliberately conservative bar.
+
 ### 4.1 Sharpe ratio (per-trade)
 
 ```

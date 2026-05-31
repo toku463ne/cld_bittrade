@@ -150,14 +150,20 @@ def sign_metrics(signed_returns: list[float], *, with_perm: bool = False) -> Sig
 class PortfolioMetrics:
     """Strategy-level metrics (the GO/ship criteria inputs).
 
+    All return-based figures (total_return, sharpe, sortino, win_rate, etc.) are
+    computed from each trade's NET return — i.e. after round-trip trading costs
+    (see :class:`~src.core.types.Trade`). ``total_cost`` reports the JPY cost
+    that was deducted.
+
     Attributes:
         n_trades: Number of trades.
-        total_return: Sum of per-trade fractional returns.
-        sharpe: Per-trade Sharpe (mean/std of trade returns).
-        sortino: Per-trade Sortino (mean/std of downside returns).
-        win_rate: Fraction of profitable trades.
-        profit_factor: Gross profit / gross loss.
-        max_dd: Maximum drawdown of the cumulative-return curve (fractional).
+        total_return: Sum of per-trade NET fractional returns.
+        sharpe: Per-trade Sharpe (mean/std of NET trade returns).
+        sortino: Per-trade Sortino (mean/std of NET downside returns).
+        win_rate: Fraction of trades with positive NET return.
+        profit_factor: Gross-of-other-trades profit / loss on NET returns.
+        max_dd: Maximum drawdown of the cumulative NET-return curve (fractional).
+        total_cost: Sum of round-trip trading costs across trades (JPY).
     """
 
     n_trades: int
@@ -167,6 +173,7 @@ class PortfolioMetrics:
     win_rate: float
     profit_factor: float
     max_dd: float
+    total_cost: float
 
 
 def max_drawdown(equity_curve: list[float]) -> float:
@@ -198,9 +205,10 @@ def portfolio_metrics(trades: list[Trade]) -> PortfolioMetrics:
         A :class:`PortfolioMetrics`.
     """
     if not trades:
-        return PortfolioMetrics(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return PortfolioMetrics(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     rets = np.array([t.return_pct for t in trades], dtype=float)
+    total_cost = float(sum(t.cost for t in trades))
     n = int(rets.size)
     total = float(rets.sum())
     std = float(rets.std(ddof=1)) if n > 1 else 0.0
@@ -228,6 +236,7 @@ def portfolio_metrics(trades: list[Trade]) -> PortfolioMetrics:
         win_rate=win_rate,
         profit_factor=profit_factor,
         max_dd=dd,
+        total_cost=total_cost,
     )
 
 

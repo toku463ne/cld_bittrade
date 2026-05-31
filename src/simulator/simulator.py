@@ -22,6 +22,10 @@ from src.exit.rules import OpenPosition, evaluate_exit
 from src.indicators import atr
 from src.strategy.base import Strategy
 
+# bitFlyer Lightning FX_BTC_JPY taker fee (worst case, < 1B JPY / 30-day volume).
+# Lower this if 30-day volume crosses a tier: ~0.0007 (mid), ~0.0003 (highest).
+DEFAULT_FEE_RATE = 0.001
+
 
 @dataclass(slots=True)
 class SimResult:
@@ -46,14 +50,22 @@ class Simulator:
         strategy: The strategy to drive.
         size: Position size in BTC (minimum lot by default).
         atr_period: ATR period used to size ATR-based exits at entry.
+        fee_rate: Per-side taker fee rate. The round-trip cost deducted from each
+            trade is ``entry_price × size × fee_rate × 2``.
     """
 
     def __init__(
-        self, strategy: Strategy, *, size: float = 0.001, atr_period: int = 14
+        self,
+        strategy: Strategy,
+        *,
+        size: float = 0.001,
+        atr_period: int = 14,
+        fee_rate: float = DEFAULT_FEE_RATE,
     ) -> None:
         self.strategy = strategy
         self.size = size
         self.atr_period = atr_period
+        self.fee_rate = fee_rate
 
     def run(self, bars: list[Bar]) -> SimResult:
         """Run the simulation over ``bars``.
@@ -165,6 +177,8 @@ class Simulator:
         from datetime import datetime
 
         assert isinstance(entry_time, datetime)
+        # Round-trip trading cost: entry and exit are each charged fee_rate.
+        cost = pos.entry_price * self.size * self.fee_rate * 2.0
         return Trade(
             side=pos.side,
             entry_time=entry_time,
@@ -175,4 +189,5 @@ class Simulator:
             size=self.size,
             bars_held=max(1, bars_held),
             signal_score=1.0,
+            cost=cost,
         )
