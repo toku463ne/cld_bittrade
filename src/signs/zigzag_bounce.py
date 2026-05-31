@@ -51,6 +51,8 @@ class ZigzagBounceSign(Sign):
         require_break: bool = True,
         dominant_window: int | None = None,
         dominant_reverse: bool = False,
+        wall_match: bool = False,
+        wall_window: int | None = None,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
@@ -58,6 +60,8 @@ class ZigzagBounceSign(Sign):
             raise ValueError("windows must be non-empty")
         if dominant_window is not None and dominant_window <= 0:
             raise ValueError("dominant_window must be > 0 when set")
+        if wall_window is not None and wall_window <= 0:
+            raise ValueError("wall_window must be > 0 when set")
         self.size = size
         self.mid_size = mid_size
         # Expanding lookback windows for the "outstanding" peak: try the first;
@@ -76,6 +80,15 @@ class ZigzagBounceSign(Sign):
         # a short). require_break gates it. The dominant *extreme* itself can't
         # be broken, so this surfaces earlier, since-exceeded swings. Default off.
         self.dominant_reverse = dominant_reverse
+        # Optional "ambiguous wall" matching: treat every confirmed same-type peak
+        # within wall_window (default = widest expanding window) as a ±tol wall and
+        # match the early peak to the NEAREST-in-price one — instead of the
+        # expanding-window extreme. So an overshoot of up to tol into any standing
+        # wall (then revert) fires, not just a retest of the window's extreme. This
+        # is the most literal reading of "the peak is a ±0.5% wall; overshoot and
+        # back counts". Default off (today's extreme-based selection).
+        self.wall_match = wall_match
+        self.wall_window = wall_window
         self.tol_pct = tol_pct
         # Optional volatility-scaled "near" band: when set, tolerance =
         # tol_leg_frac × EWA(recent zigzag legs) instead of tol_pct × price, so
@@ -91,7 +104,7 @@ class ZigzagBounceSign(Sign):
         # Trailing window: widest lookback (expanding or dominant, whichever is
         # larger) + left context for the early peak + the confirmed peaks' own
         # right-context.
-        widest = max(self.windows[-1], dominant_window or 0)
+        widest = max(self.windows[-1], dominant_window or 0, wall_window or 0)
         self.window = widest + 2 * size + mid_size + 5
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
 
@@ -153,7 +166,21 @@ class ZigzagBounceSign(Sign):
           opposite-type broken levels (role reversal at the dominant horizon).
 
         Nearest-in-price wins across all candidates.
+
+        When ``wall_match`` is on, this short-circuits to a different model: every
+        confirmed same-type peak within ``wall_window`` (default = widest expanding
+        window) is a ±tol wall, and the early peak is matched to the nearest one in
+        price. The caller's ``gap <= band`` check then fires on a ≤tol overshoot of
+        (or approach to) that wall, regardless of whether it is the window extreme.
         """
+        if self.wall_match:
+            lo = ep_idx - (self.wall_window or self.windows[-1])
+            walls = [
+                p for p in peaks
+                if p.is_confirmed and p.is_high == is_high and lo <= p.bar_index < ep_idx
+            ]
+            return min(walls, key=lambda p: abs(p.price - ep_price)) if walls else None
+
         refs: list[Peak] = []
         for win in self.windows:
             lo = ep_idx - win

@@ -156,6 +156,8 @@ regimes and tighten in quiet ones.
 | `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
 | `dominant_window` | `None` | If set, also reference the same-type extreme over this long lookback (~168 ≈ 1 week @ 1h) — a long-standing, unbroken floor/ceiling — even when nearer minor peaks exist. `None` = off. |
 | `dominant_reverse` | `False` | If set (with `dominant_window`), also add opposite-type *broken* levels over the dominant lookback (a prior high broken above → support; a prior low broken below → resistance). `require_break` gates it. Independent of `reverse_levels`. Regressed on the interim sample — A/B once data is deep. |
+| `wall_match` | `False` | "Ambiguous wall" model: match the early peak to the **nearest-in-price** confirmed same-type peak within `wall_window` (a ±`tol` wall), instead of the expanding-window extreme — so a ≤`tol` overshoot-and-revert fires against the wall it pierced. Default off. |
+| `wall_window` | `None` | Lookback (bars) for `wall_match`; defaults to the widest expanding window (180). On the interim sample the full 180 regressed but ~120 (5d) was net positive. |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
 | `sl_mult` | 1.0 | SL = `sl_mult × band` |
@@ -248,3 +250,4 @@ Re-benchmark once the collector has accumulated more hourly history.
 | 2026-05-31 | Add opt-in `winsorize_k` (MAD high-side leg clipping) to the ZS band so a single abnormal leg can't inflate TP/SL. Default off. |
 | 2026-05-31 | Add opt-in `dominant_window` (reference the long-horizon unbroken same-type extreme as an extra candidate) so bounces off a dominant weekly floor/ceiling fire even when nearer minor peaks exist. Default off; on the interim 1h sample it improved net/Sharpe/win-rate (e.g. catches the 5/14 retest of the 5/08 floor). |
 | 2026-05-31 | Add opt-in `dominant_reverse` (opposite-type broken levels over the dominant lookback — role reversal at the dominant horizon, independent of `reverse_levels`). Default off; regressed on the interim sample (net +110→−573 at dom=120, DD doubled). |
+| 2026-05-31 | Add opt-in `wall_match` / `wall_window` ("ambiguous ±tol wall": match the nearest-in-price confirmed peak, so a ≤tol overshoot-and-revert fires against the pierced wall). Default off; full 180 regressed, ~120 (5d) net positive (≈ dominant_window=120). |
