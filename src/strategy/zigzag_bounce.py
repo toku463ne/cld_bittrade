@@ -17,12 +17,20 @@ from src.strategy.base import Strategy
 
 
 class ZigzagBounceStrategy(Strategy):
-    """Early-peak-near-recent-peak bounce strategy with a ZS TP/SL exit."""
+    """Early-peak-near-recent-peak bounce strategy with a ZS TP/SL exit.
+
+    Default selection is **ambiguous-wall matching** (``wall_match=True``,
+    ``wall_window=120`` ≈ 5d): the early peak is matched to the nearest-in-price
+    confirmed peak within the window, so a ≤tol overshoot-and-revert fires against
+    the wall it pierced. (The original extreme-based selection is ``wall_match=
+    False``.) Best config on the interim 1h sample — still REJECT, see
+    ``docs/strategy/zigzag_bounce.md`` / ``src/backtest/benchmark.md``.
+    """
 
     name = "zigzag_bounce"
     description = (
         "Bounce off recent zigzag S/R: fire when a right-edge early peak forms "
-        "near a recent confirmed peak (hourly). ZS-adaptive TP/SL exit."
+        "near a recent confirmed peak / wall (hourly). ZS-adaptive TP/SL exit."
     )
 
     def __init__(
@@ -36,8 +44,8 @@ class ZigzagBounceStrategy(Strategy):
         require_break: bool = True,
         dominant_window: int | None = None,
         dominant_reverse: bool = False,
-        wall_match: bool = False,
-        wall_window: int | None = None,
+        wall_match: bool = True,
+        wall_window: int | None = 120,
         tp_mult: float = 1.0,
         sl_mult: float = 1.0,
         alpha: float = 0.3,
@@ -96,25 +104,3 @@ class ZigzagBounceStrategy(Strategy):
 
     def get_exit_rules(self) -> ExitConfig:  # noqa: D102 (inherited)
         return self._fallback
-
-
-class ZigzagBounceWallStrategy(ZigzagBounceStrategy):
-    """``zigzag_bounce`` variant: "ambiguous wall" matching.
-
-    Matches the early peak to the nearest-in-price confirmed peak within a ~5-day
-    window (``wall_match`` / ``wall_window=120``), so an overshoot-and-revert
-    fires against the wall it pierced (e.g. the 5/15 rejection of the 12.92M
-    resistance) — which the default extreme-based selection misses. Exploratory:
-    registered so it is selectable in the viz dropdown and the benchmark runner;
-    same ZS exit as the base. Net positive on the interim 1h sample, but NOT
-    benchmarked to ship — see ``docs/strategy/zigzag_bounce.md``.
-    """
-
-    name = "zigzag_bounce_wall"
-    description = (
-        "zigzag_bounce + ambiguous-wall matching (nearest ±tol wall, ~5d "
-        "lookback) so overshoot-and-revert bounces fire. Exploratory."
-    )
-
-    def __init__(self) -> None:
-        super().__init__(wall_match=True, wall_window=120)

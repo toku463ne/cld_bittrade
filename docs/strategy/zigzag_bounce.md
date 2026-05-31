@@ -13,7 +13,7 @@ TP/SL exit.
 | **Indicator** | `src/indicators/zigzag.py` → `detect_peaks`, `Peak`, `confirmed_leg_sizes` |
 | **Exit** | `src/exit/zs_tp_sl.py` → `ZsTpSl` (via `src/exit/base.py`) |
 | **Default timeframe** | **1h** |
-| **Status** | Implemented; **not yet benchmarked** (needs more 1h history) |
+| **Status** | Implemented; benchmarked 1h = **REJECT (interim, ~1mo)**. Default = ambiguous-wall matching (`wall_match`). See `src/backtest/benchmark.md`. |
 
 > Ported from `cld_trade_advisor` (`src/indicators/zigzag.py`, `src/exit/base.py`,
 > `src/exit/zs_tp_sl.py`) and adapted: the reference was stock/long-only; this
@@ -156,8 +156,8 @@ regimes and tighten in quiet ones.
 | `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
 | `dominant_window` | `None` | If set, also reference the same-type extreme over this long lookback (~168 ≈ 1 week @ 1h) — a long-standing, unbroken floor/ceiling — even when nearer minor peaks exist. `None` = off. |
 | `dominant_reverse` | `False` | If set (with `dominant_window`), also add opposite-type *broken* levels over the dominant lookback (a prior high broken above → support; a prior low broken below → resistance). `require_break` gates it. Independent of `reverse_levels`. Regressed on the interim sample — A/B once data is deep. |
-| `wall_match` | `False` | "Ambiguous wall" model: match the early peak to the **nearest-in-price** confirmed same-type peak within `wall_window` (a ±`tol` wall), instead of the expanding-window extreme — so a ≤`tol` overshoot-and-revert fires against the wall it pierced. Default off. |
-| `wall_window` | `None` | Lookback (bars) for `wall_match`; defaults to the widest expanding window (180). On the interim sample the full 180 regressed but ~120 (5d) was net positive. |
+| `wall_match` | **`True`** | "Ambiguous wall" model (**default**): match the early peak to the **nearest-in-price** confirmed same-type peak within `wall_window` (a ±`tol` wall), instead of the expanding-window extreme — so a ≤`tol` overshoot-and-revert fires against the wall it pierced. Set `False` for the original extreme-based selection. |
+| `wall_window` | **`120`** | Lookback (bars, ≈5d @ 1h) for `wall_match`. The full 180 regressed on the interim sample; ~120 (5d) was net positive — hence the default. |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
 | `sl_mult` | 1.0 | SL = `sl_mult × band` |
@@ -252,3 +252,4 @@ Re-benchmark once the collector has accumulated more hourly history.
 | 2026-05-31 | Add opt-in `dominant_reverse` (opposite-type broken levels over the dominant lookback — role reversal at the dominant horizon, independent of `reverse_levels`). Default off; regressed on the interim sample (net +110→−573 at dom=120, DD doubled). |
 | 2026-05-31 | Add opt-in `wall_match` / `wall_window` ("ambiguous ±tol wall": match the nearest-in-price confirmed peak, so a ≤tol overshoot-and-revert fires against the pierced wall). Default off; full 180 regressed, ~120 (5d) net positive (≈ dominant_window=120). |
 | 2026-05-31 | Register `zigzag_bounce_wall` variant (`wall_match`, `wall_window=120`) so the wall bounces (e.g. the 5/15 12.92M-resistance rejection, TP) are selectable in the viz dropdown / benchmark runner. Exploratory — IS Sharpe +0.06, `ship=False`. |
+| 2026-05-31 | **Make `wall_match`/`wall_window=120` the default** (best config on the interim month: IS net −183→+125, Sharpe −0.105→+0.060, DR 0.412→0.480). Folded the `zigzag_bounce_wall` variant into the default and removed it. Still REJECT (OOS 0 trades, calibration ρ 0.49→0.13) — a judgment call on in-sample evidence, to re-validate once forward history exists. |

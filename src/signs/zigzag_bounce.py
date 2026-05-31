@@ -51,8 +51,8 @@ class ZigzagBounceSign(Sign):
         require_break: bool = True,
         dominant_window: int | None = None,
         dominant_reverse: bool = False,
-        wall_match: bool = False,
-        wall_window: int | None = None,
+        wall_match: bool = True,
+        wall_window: int | None = 120,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
@@ -80,13 +80,13 @@ class ZigzagBounceSign(Sign):
         # a short). require_break gates it. The dominant *extreme* itself can't
         # be broken, so this surfaces earlier, since-exceeded swings. Default off.
         self.dominant_reverse = dominant_reverse
-        # Optional "ambiguous wall" matching: treat every confirmed same-type peak
-        # within wall_window (default = widest expanding window) as a ±tol wall and
-        # match the early peak to the NEAREST-in-price one — instead of the
-        # expanding-window extreme. So an overshoot of up to tol into any standing
-        # wall (then revert) fires, not just a retest of the window's extreme. This
-        # is the most literal reading of "the peak is a ±0.5% wall; overshoot and
-        # back counts". Default off (today's extreme-based selection).
+        # "Ambiguous wall" matching (DEFAULT): treat every confirmed same-type peak
+        # within wall_window (≈5d) as a ±tol wall and match the early peak to the
+        # NEAREST-in-price one — instead of the expanding-window extreme. So an
+        # overshoot of up to tol into any standing wall (then revert) fires, not
+        # just a retest of the window's extreme. The most literal reading of "the
+        # peak is a ±0.5% wall; overshoot and back counts". Set wall_match=False
+        # for the original extreme-based selection (expanding 60→120→180).
         self.wall_match = wall_match
         self.wall_window = wall_window
         self.tol_pct = tol_pct
@@ -301,19 +301,3 @@ class ZigzagBounceSign(Sign):
                     )
                 )
         return fires
-
-
-class ZigzagBounceWallSign(ZigzagBounceSign):
-    """``zigzag_bounce`` sign with "ambiguous wall" matching (~5-day window).
-
-    Matches the early peak to the nearest-in-price confirmed peak within
-    ``wall_window=120`` (``wall_match``), so an overshoot-and-revert fires against
-    the wall it pierced. Detector counterpart of
-    :class:`~src.strategy.zigzag_bounce.ZigzagBounceWallStrategy`; registered so
-    the per-fire benchmark pipeline can evaluate it. Exploratory.
-    """
-
-    name = "zigzag_bounce_wall"
-
-    def __init__(self) -> None:
-        super().__init__(wall_match=True, wall_window=120)

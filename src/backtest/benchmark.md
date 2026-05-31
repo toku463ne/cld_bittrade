@@ -91,64 +91,71 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 21:19 (INTERIM) via `rebench_watch.sh` → `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle` (watcher fired on stall and self-removed). **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None` (off). Portfolio NET of fees. Numbers unchanged from the 20:04 / 21:10 runs — back-paging stalled at 2026-04-30 so the data window did not grow._
+_Last run: 2026-05-31 23:22 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Default is now ambiguous-wall matching** (`wall_match=True`, `wall_window=120` ≈ 5d): match the early peak to the nearest-in-price confirmed peak (a ±tol wall), so a ≤tol overshoot-and-revert fires against the wall it pierced. Same-type level matching (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None`. Portfolio NET of fees._
 
 **Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
 
-> ⚠️ **INTERIM — no edge; default reverted to same-type.** As data grew the
-> same-type DR slipped 0.467 → **0.412** and IS Sharpe +0.115 → **−0.105**, i.e.
-> the earlier slight positive was small-sample luck. S/R **role reversal** was
-> tested and *regressed* on this window (DR 0.389 no-break / 0.417 break-check,
-> IS net down to −500 JPY) — so it's kept as an **opt-in** (`reverse_levels` /
-> `require_break`) to A/B once history is deep, not the default.
+> ⚠️ **INTERIM — REJECT; wall is the default by judgment, not by passing the
+> gate.** Wall matching was made the default because it is the **best config on
+> this one month** (vs the prior extreme-based selection: IS net −183→**+125**,
+> Sharpe −0.105→**+0.060**, fires 17→**25**, DR 0.412→**0.480**). But it is still
+> REJECT (OOS 0 trades, per-month validate FAILs) and **calibration regressed**
+> (ρ 0.49→**0.13**). Chosen on in-sample evidence alone — re-validate once
+> forward history exercises the consistency gate. Set `wall_match=False` for the
+> original extreme-based selection.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|------|----------|--------|
-| 2026-05 | 17 | 0.412 | -0.00405 | 1.000 |
+| 2026-05 | 25 | 0.480 | -0.00090 | 1.000 |
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 17 | 0.412 | -0.0041 |
-| bear | 3  | 0.333 | -0.0126 |
-| bull | 14 | 0.429 | -0.0022 |
+| all  | 25 | 0.480 | -0.0009 |
+| bear | 4  | 0.500 | -0.0081 |
+| bull | 21 | 0.476 | +0.0005 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 17 |
-| Spearman ρ | +0.488 |
-| Q4 − Q1 spread | +0.0219 |
+| n | 25 |
+| Spearman ρ | +0.130 |
+| Q4 − Q1 spread | +0.0047 |
 
 ### OOS (most recent 20%)
 
-| period | n_fires | DR | mean_r | perm_p |
-|--------|---------|-------|----------|--------|
-| 2026-05 | 5 | 0.800 | +0.00967 | 1.000 |
+Portfolio OOS produced **0 trades** — the out-of-sample leg of the ship gate is
+unexercisable on this one-month window.
 
 ### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | -0.105 | 0.000 (0 trades) |
+| Sharpe | +0.060 | 0.000 (0 trades) |
 | Max DD | 0.0190 | — |
-| # trades | 7 | 0 |
-| Trading fees | 175.9 JPY | — |
-| Net PnL (min lot) | -183 JPY | — |
+| # trades | 8 | 0 |
+| Trading fees | 201.7 JPY | — |
+| Net PnL (min lot) | +125 JPY | — |
 | Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
 
-**Verdict: REJECT (interim).** Default same-type matching: in-sample DR 0.412
-(< coin flip), `perm_p` 1.0, net −183 JPY / Sharpe −0.105; per-month validation
-FAILs. No directional edge demonstrated. The one persistently-positive signal is
-**score calibration** (ρ rising 0.26 → 0.49 across runs, Q4−Q1 +0.022) — the
-score ranks fires even though the base DR is sub-0.5; a flag to watch, not
-trade. Role-reversal options exist but underperformed here. Re-evaluate (and
-A/B the options) once months of 1h history exist.
+**Verdict: REJECT (interim) — best config so far, made the default.** Wall
+matching flips the in-sample portfolio positive (net **+125** / Sharpe
+**+0.060**, same maxDD) and lifts fires (17→25) and per-fire DR (0.412→0.480),
+catching overshoot-and-revert bounces the prior extreme selection missed (e.g.
+the 5/15 short off the 12.92M wall, TP). **Still REJECT**: OOS 0 trades (gate
+unexercisable), per-month validate FAILs, mean_r still −0.0009 net of fees, and
+**calibration regressed** (ρ 0.49→0.13 — the extra fires are lower-quality; the
+score no longer ranks them). A config that *trades* a bit better this one month,
+not a demonstrated edge. Re-validate once forward history gives the consistency
+gate and an OOS something to test.
+
+> The opt-in notes below were measured **vs the prior extreme-based default**
+> (`wall_match=False`); re-sweep against the new wall baseline once data is deep.
 
 **Dominant-level reference (`dominant_window`) — opt-in, default off.** Adds the
 long-horizon unbroken same-type extreme (~1 week) as a candidate level so price
@@ -180,58 +187,3 @@ bind materially — kept off by default; re-sweep with deeper history.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
-
----
-
-## zigzag_bounce_wall
-
-_Last run: 2026-05-31 23:16 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce_wall 1h` + `backtest.cycle` (DB: btc_bot_bt). Registered variant of `zigzag_bounce` with **ambiguous-wall matching** (`wall_match`, `wall_window=120` ~= 5d): match the early peak to the nearest-in-price confirmed peak, so a <=tol overshoot-and-revert fires against the wall it pierced. Same ZS exit. Portfolio NET of fees._
-
-**Data window:** 2026-04-30 -> 2026-05-31 UTC+9 — 750 x 1h bars (~31 days, one
-calendar month). In-sample = first 80%, OOS = most recent 20%.
-
-### Multi-Month Benchmark (in-sample)
-
-| period | n_fires | DR | mean_r | perm_p |
-|--------|---------|------|----------|--------|
-| 2026-05 | 25 | 0.480 | -0.00090 | 1.000 |
-
-### Regime-Split Analysis (ATR bear/bull)
-
-| regime | n | DR | mean_r |
-|--------|---|-------|---------|
-| all  | 25 | 0.480 | -0.0009 |
-| bear | 4  | 0.500 | -0.0081 |
-| bull | 21 | 0.476 | +0.0005 |
-
-### Score Calibration
-
-| metric | value |
-|--------|-------|
-| n | 25 |
-| Spearman rho | +0.130 |
-| Q4 - Q1 spread | +0.0047 |
-
-### Portfolio metrics (ship criteria) — NET of fees
-
-| metric | in-sample | OOS |
-|--------|-----------|-----|
-| Sharpe | +0.060 | 0.000 (0 trades) |
-| Max DD | 0.0190 | — |
-| # trades | 8 | 0 |
-| Trading fees | 201.7 JPY | — |
-| Net PnL (min lot) | +125 JPY | — |
-| Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
-
-**Verdict: REJECT (interim) — but the best zigzag_bounce config so far.** vs the
-default `zigzag_bounce` (IS net -183 / Sharpe -0.105), wall matching flips the
-in-sample portfolio **positive** (net **+125**, Sharpe **+0.060**, same maxDD)
-and lifts more fires (n 17->25) with a higher per-fire DR (0.412->**0.480**) — it
-surfaces overshoot-and-revert bounces the default selection misses (e.g. the 5/15
-short off the 12.92M wall, TP). **Still REJECT**: OOS has **0 trades** (can't
-verify), the per-month validate **FAILs** (1 populated period), and signal
-**calibration regressed** (rho 0.49 -> **0.13** — the score no longer ranks fires
-well). Net of fees mean_r is still slightly negative (-0.0009): a coin-flip-ish
-signal that the wall framing trades a bit more profitably this month, not a
-demonstrated edge. Re-benchmark once forward history exercises the consistency
-gate and an OOS actually has trades.

@@ -13,13 +13,14 @@ from collections.abc import Callable
 
 from src.strategy.base import Strategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
-from src.strategy.zigzag_bounce import ZigzagBounceStrategy, ZigzagBounceWallStrategy
+from src.strategy.zigzag_bounce import ZigzagBounceStrategy
 
 # Factories (zero-arg) so each consumer gets a fresh, default-configured strategy.
+# zigzag_bounce defaults to ambiguous-wall matching (was the zigzag_bounce_wall
+# variant, now folded into the default).
 STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     EmaAtrBreakoutStrategy.name: EmaAtrBreakoutStrategy,
     ZigzagBounceStrategy.name: ZigzagBounceStrategy,
-    ZigzagBounceWallStrategy.name: ZigzagBounceWallStrategy,
 }
 
 
