@@ -12,66 +12,77 @@ for metric definitions and `docs/evaluation_criteria.md` for the ship rubric.
 
 ## ema_atr_breakout
 
-_Last run: 2026-05-31 11:40 (INTERIM) via `scripts/rebenchmark_sign.sh ema_atr_breakout 5m` (DB: btc_bot_bt). Portfolio figures NET of trading fees._
+_Last run: 2026-05-31 21:19 (INTERIM) via `rebench_watch.sh` → `scripts/rebenchmark_sign.sh ema_atr_breakout 5m` + `backtest.cycle` (DB: btc_bot_bt). Portfolio figures NET of trading fees._
 
-**Data window:** 2026-05-18 → 2026-05-31 UTC+9 — 3,608 × 5m bars from ~494k raw
-executions (~12.6 days). In-sample = first 80%, OOS = most recent 20%.
+**Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 8,934 × 5m bars (~31 days, one
+calendar month; back-paging is exhausted at bitFlyer's ~31-day `getexecutions`
+floor — oldest exec frozen at 2026-04-30 13:00). In-sample = first 80%, OOS =
+most recent 20%.
 
-> ⚠️ **INTERIM — single calendar month, do not ship on this.** All fires fall in
-> one month (2026-05), so the monthly walk-forward has only ONE period: the
-> ≥4/5-months consistency gate **cannot be evaluated** here. n=44 fires
-> in-sample is still small. The durable cron watcher (`rebench_watch.sh`) will
-> re-run automatically once history reaches ~45+ days (2–3 months) for a verdict
-> that can actually exercise the consistency gate.
+> ⚠️ **INTERIM — still effectively one month, do not ship.** Fires span only
+> 2026-04 (n=3) and 2026-05 (n=106), so the monthly walk-forward has just one
+> populated period; the ≥4/5-months consistency gate **cannot be evaluated**.
+> bitFlyer REST can't supply pre-2026-04-30 history, so depth only grows forward
+> in real time from here. The watcher has fired and self-removed; re-arm it once
+> 2–3 months of forward history accrue.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
-|--------|---------|------|---------|--------|
-| 2026-05 | 44 | 0.500 | 0.00051 | 1.000 |
+|--------|---------|-------|---------|--------|
+| 2026-04 | 3 | 0.333 | +0.0032 | 1.000 |
+| 2026-05 | 106 | 0.594 | +0.0018 | 1.000 |
+
+Sign-level monthly validate: **2/2 months non-negative mean_r → PASS** (note: this
+is the *signal* mean_r check, NOT the portfolio ship gate below).
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 44 | 0.500 | 0.0005 |
-| bear | 6  | 0.500 | 0.0003 |
-| bull | 38 | 0.500 | 0.0006 |
+| all  | 109 | 0.587 | +0.0018 |
+| bear | 15  | 0.333 | -0.0019 |
+| bull | 94  | 0.628 | +0.0024 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 44 |
-| Spearman ρ | +0.063 |
-| Q4 − Q1 spread | ~0.0000 |
+| n | 109 |
+| Spearman ρ | -0.070 |
+| Q4 − Q1 spread | -0.0004 |
 
 ### OOS (most recent 20%)
 
-| period | n_fires | DR | mean_r | perm_p |
-|--------|---------|-------|----------|--------|
-| 2026-05 | 11 | 0.545 | 0.00095 | 1.000 |
+| metric | value |
+|--------|-------|
+| Sharpe | -1.119 |
+| Max DD | 0.0498 |
+| # trades | 31 |
+| Net PnL (min lot) | -626 JPY |
 
 ### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | -1.071 | -1.649 |
-| Max DD | 0.0719 | 0.0206 |
-| # trades | 42 | 11 |
-| Trading fees | 1,023 JPY | ~268 JPY |
-| Net PnL (min lot) | -868 JPY | -271 JPY |
-| Buy-and-hold BTC/JPY (gross) | -0.0368 | — |
+| Sharpe | -1.122 | -1.119 |
+| Max DD | 0.1759 | 0.0498 |
+| # trades | 103 | 31 |
+| Trading fees | 2,568 JPY | (incl.) |
+| Net PnL (min lot) | -2,191 JPY | -626 JPY |
+| Buy-and-hold BTC/JPY (gross) | -0.0353 | — |
 
 **Verdict: REJECT (do not ship).** Net of fees the strategy loses money in both
-in-sample (Sharpe -1.07) and OOS (Sharpe -1.65), and the **OVERFIT** flag is
-raised (OOS Sharpe < 0). Signal-level DR is exactly **0.500** in-sample (a coin
-flip — no directional edge) with `perm_p = 1.0` (timing uninformative) and flat
-score calibration (ρ ≈ +0.06, Q4−Q1 ≈ 0). The gross per-fire edge is ~+0.05%,
-which the ~0.2%/round-trip fee erases entirely (1,023 JPY of fees on 42 trades
-turned a roughly break-even gross signal into a clear net loss). This is the
-expected outcome for an EMA-cross+ATR baseline on a short window; it confirms the
-pipeline and the cost model are working, not that the strategy has an edge.
+in-sample (Sharpe -1.12, -2,191 JPY) and OOS (Sharpe -1.12, -626 JPY), and the
+**OVERFIT** flag is raised (OOS Sharpe < 0). The interesting wrinkle vs the prior
+run: with a full month the **signal** now looks mildly informative — all-DR
+**0.587** (bull 0.628), positive mean_r — yet the **portfolio still bleeds**. The
+gap is turnover × cost: at ~103 trades/month the ~0.2%/round-trip fee
+(2,568 JPY total) dwarfs the +0.18% gross per-fire edge, and the TP/SL structure
+doesn't convert the weak directional tilt into net PnL. Score calibration is flat
+(ρ ≈ -0.07), so the score doesn't rank fires. Bottom line: a real but tiny
+directional signal that is **not tradeable at this frequency net of costs** — the
+pipeline and cost model are working as intended, not evidence of an edge.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
@@ -80,7 +91,7 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 21:10 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None` (off). Portfolio NET of fees. Numbers unchanged from the 20:04 run — back-paging stalled at 2026-04-30 so the data window did not grow._
+_Last run: 2026-05-31 21:19 (INTERIM) via `rebench_watch.sh` → `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle` (watcher fired on stall and self-removed). **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None` (off). Portfolio NET of fees. Numbers unchanged from the 20:04 / 21:10 runs — back-paging stalled at 2026-04-30 so the data window did not grow._
 
 **Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
