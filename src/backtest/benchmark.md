@@ -91,41 +91,44 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 23:22 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Default is now ambiguous-wall matching** (`wall_match=True`, `wall_window=120` ≈ 5d): match the early peak to the nearest-in-price confirmed peak (a ±tol wall), so a ≤tol overshoot-and-revert fires against the wall it pierced. Same-type level matching (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None`. Portfolio NET of fees._
+_Last run: 2026-05-31 23:35 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Defaults: ambiguous-wall matching** (`wall_match=True`, `wall_window=120` ≈ 5d — match the early peak to the nearest-in-price confirmed wall, so a ≤tol overshoot-and-revert fires) **+ no-chase filter** (`reject_past_peak=True` — skip a fire whose entry already broke past the most recent opposite-type swing peak). Same-type level matching. Exit: tp 1.0 / sl 1.0 / max_bars 48. Portfolio NET of fees._
 
 **Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
 
-> ⚠️ **INTERIM — REJECT; wall is the default by judgment, not by passing the
-> gate.** Wall matching was made the default because it is the **best config on
-> this one month** (vs the prior extreme-based selection: IS net −183→**+125**,
-> Sharpe −0.105→**+0.060**, fires 17→**25**, DR 0.412→**0.480**). But it is still
-> REJECT (OOS 0 trades, per-month validate FAILs) and **calibration regressed**
-> (ρ 0.49→**0.13**). Chosen on in-sample evidence alone — re-validate once
-> forward history exercises the consistency gate. Set `wall_match=False` for the
-> original extreme-based selection.
+> ⚠️ **INTERIM — REJECT; the two defaults below were chosen by judgment, not by
+> passing the gate.** (1) **Wall matching** (`wall_match`) is the best selection
+> on this one month vs the prior extreme-based one (IS net −183→+125, Sharpe
+> −0.105→+0.060, fires 17→25, DR 0.412→0.480). (2) **No-chase** (`reject_past_peak`)
+> drops entries that already ran past the recent swing peak (e.g. the 5/11 long
+> that filled +2.45% above its support and stopped out); it *slightly* lowers
+> this month's net via a single-position cascade (a downstream winner gets
+> reshuffled out) but enforces a sound entry rule and improves max DD. Both still
+> leave the strategy **REJECT** (OOS 0 trades, per-month validate FAILs,
+> calibration weak ρ≈0.15). Set `wall_match=False` / `reject_past_peak=False` for
+> the prior behavior.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|------|----------|--------|
-| 2026-05 | 25 | 0.480 | -0.00090 | 1.000 |
+| 2026-05 | 23 | 0.478 | -0.00050 | 1.000 |
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 25 | 0.480 | -0.0009 |
-| bear | 4  | 0.500 | -0.0081 |
+| all  | 23 | 0.478 | -0.0005 |
+| bear | 2  | 0.500 | -0.0101 |
 | bull | 21 | 0.476 | +0.0005 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 25 |
-| Spearman ρ | +0.130 |
-| Q4 − Q1 spread | +0.0047 |
+| n | 23 |
+| Spearman ρ | +0.150 |
+| Q4 − Q1 spread | +0.0060 |
 
 ### OOS (most recent 20%)
 
@@ -136,23 +139,24 @@ unexercisable on this one-month window.
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | +0.060 | 0.000 (0 trades) |
-| Max DD | 0.0190 | — |
-| # trades | 8 | 0 |
-| Trading fees | 201.7 JPY | — |
-| Net PnL (min lot) | +125 JPY | — |
+| Sharpe | +0.022 | 0.000 (0 trades) |
+| Max DD | 0.0152 | — |
+| # trades | 7 | 0 |
+| Trading fees | 175.7 JPY | — |
+| Net PnL (min lot) | +40 JPY | — |
 | Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
 
-**Verdict: REJECT (interim) — best config so far, made the default.** Wall
-matching flips the in-sample portfolio positive (net **+125** / Sharpe
-**+0.060**, same maxDD) and lifts fires (17→25) and per-fire DR (0.412→0.480),
-catching overshoot-and-revert bounces the prior extreme selection missed (e.g.
-the 5/15 short off the 12.92M wall, TP). **Still REJECT**: OOS 0 trades (gate
-unexercisable), per-month validate FAILs, mean_r still −0.0009 net of fees, and
-**calibration regressed** (ρ 0.49→0.13 — the extra fires are lower-quality; the
-score no longer ranks them). A config that *trades* a bit better this one month,
-not a demonstrated edge. Re-validate once forward history gives the consistency
-gate and an OOS something to test.
+**Verdict: REJECT (interim) — best config so far, made the default.** vs the
+prior extreme-based selection, wall matching flips the in-sample portfolio
+positive and catches overshoot-and-revert bounces it missed (e.g. the 5/15 short
+off the 12.92M wall, TP); the no-chase filter then drops entries that ran past
+the recent swing peak (e.g. the 5/11 chase long), trimming net slightly this
+month (single-position cascade artifact) but improving max DD (0.0190→**0.0152**)
+and enforcing a sound rule. Net: IS Sharpe **+0.022**, net **+40 JPY**. **Still
+REJECT**: OOS 0 trades (gate unexercisable), per-month validate FAILs, mean_r
+−0.0005 net of fees, calibration weak (ρ≈0.15). A config that *trades* a touch
+better this one month, not a demonstrated edge. Re-validate once forward history
+gives the consistency gate and an OOS something to test.
 
 > The opt-in notes below were measured **vs the prior extreme-based default**
 > (`wall_match=False`); re-sweep against the new wall baseline once data is deep.

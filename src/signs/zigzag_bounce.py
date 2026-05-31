@@ -53,6 +53,7 @@ class ZigzagBounceSign(Sign):
         dominant_reverse: bool = False,
         wall_match: bool = True,
         wall_window: int | None = 120,
+        reject_past_peak: bool = True,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
@@ -89,6 +90,13 @@ class ZigzagBounceSign(Sign):
         # for the original extreme-based selection (expanding 60→120→180).
         self.wall_match = wall_match
         self.wall_window = wall_window
+        # "No-chase" filter (DEFAULT on): reject a fire whose entry (fire-bar
+        # close) has already broken PAST the most recent confirmed opposite-type
+        # peak — for a long, the close is above the last swing high (broke
+        # resistance); for a short, below the last swing low. The bounce may be
+        # valid at the level, but the mid_size lag let price run through the
+        # recent peak, so the entry is a chase. Set False to allow chased entries.
+        self.reject_past_peak = reject_past_peak
         self.tol_pct = tol_pct
         # Optional volatility-scaled "near" band: when set, tolerance =
         # tol_leg_frac × EWA(recent zigzag legs) instead of tol_pct × price, so
@@ -216,7 +224,7 @@ class ZigzagBounceSign(Sign):
         return None
 
     def _eval_end(
-        self, highs: list[float], lows: list[float]
+        self, highs: list[float], lows: list[float], closes: list[float]
     ) -> tuple[Side, float, tuple[float, ...], int, float] | None:
         """Evaluate whether the LAST bar of the window triggers a bounce.
 
@@ -224,7 +232,8 @@ class ZigzagBounceSign(Sign):
         ``None``. ``outstanding_idx`` is the window-relative bar index of the
         outstanding peak the early peak bounced off (the caller maps it to a
         timestamp). The early-peak candidate is the bar ``mid_size`` positions
-        before the end; it must sit within ``tol_pct`` of that peak.
+        before the end; it must sit within ``tol_pct`` of that peak. ``closes`` is
+        used only by the ``reject_past_peak`` no-chase filter.
         """
         n = len(highs)
         ep_idx = n - 1 - self.mid_size
@@ -258,6 +267,24 @@ class ZigzagBounceSign(Sign):
         if band <= 0.0 or gap > band:
             return None
 
+        # No-chase filter: skip if the entry (last close) has already broken past
+        # the most recent confirmed opposite-type peak (long: above the last swing
+        # high; short: below the last swing low) — the bounce ran through the
+        # recent peak before we could enter.
+        if self.reject_past_peak:
+            lo = ep_idx - (self.wall_window or self.windows[-1])
+            opp = [
+                p for p in peaks
+                if p.is_confirmed and p.is_high != is_high and lo <= p.bar_index < ep_idx
+            ]
+            if opp:
+                recent = max(opp, key=lambda p: p.bar_index)
+                last_close = closes[-1]
+                if (not is_high and last_close > recent.price) or (
+                    is_high and last_close < recent.price
+                ):
+                    return None
+
         side = Side.SHORT if is_high else Side.LONG
         score = max(0.0, min(1.0, 1.0 - gap / band))
         return side, score, legs, outstanding.bar_index, outstanding.price
@@ -265,7 +292,7 @@ class ZigzagBounceSign(Sign):
     def last_fire(self, df: pd.DataFrame) -> FireEvent | None:  # noqa: D102 (override)
         if df.empty:
             return None
-        res = self._eval_end(df["high"].tolist(), df["low"].tolist())
+        res = self._eval_end(df["high"].tolist(), df["low"].tolist(), df["close"].tolist())
         if res is None:
             return None
         side, score, legs, out_idx, out_price = res
@@ -290,7 +317,7 @@ class ZigzagBounceSign(Sign):
         w = self.window
         for t in range(len(df)):
             w0 = max(0, t - w + 1)
-            res = self._eval_end(highs[w0 : t + 1], lows[w0 : t + 1])
+            res = self._eval_end(highs[w0 : t + 1], lows[w0 : t + 1], closes[w0 : t + 1])
             if res is not None:
                 side, score, legs, out_idx, out_price = res
                 fires.append(

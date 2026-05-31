@@ -46,6 +46,7 @@ class ZigzagBounceStrategy(Strategy):
         dominant_reverse: bool = False,
         wall_match: bool = True,
         wall_window: int | None = 120,
+        reject_past_peak: bool = True,
         tp_mult: float = 1.0,
         sl_mult: float = 1.0,
         alpha: float = 0.3,
@@ -61,6 +62,7 @@ class ZigzagBounceStrategy(Strategy):
             reverse_levels=reverse_levels, require_break=require_break,
             dominant_window=dominant_window, dominant_reverse=dominant_reverse,
             wall_match=wall_match, wall_window=wall_window,
+            reject_past_peak=reject_past_peak,
         )
         self._exit_rule = ZsTpSl(
             tp_mult=tp_mult,
