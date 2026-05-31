@@ -80,62 +80,63 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 15:47 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` (DB: btc_bot_bt). Portfolio figures NET of trading fees._
+_Last run: 2026-05-31 18:01 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` (DB: btc_bot_bt). Exit defaults: tp_mult 1.0, sl_mult 1.0, max_bars 48 (provisionally tuned). Portfolio figures NET of fees._
 
-**Data window:** 2026-05-08 → 2026-05-31 UTC+9 — 556 × 1h bars (~23 days, one
+**Data window:** 2026-05-04 → 2026-05-31 UTC+9 — 648 × 1h bars (~27 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
 
-> ⚠️ **INTERIM — sample far too small.** n=12 in-sample fires / 4 trades, one
-> walk-forward period. The ≥4/5-months consistency gate cannot be evaluated.
-> Treat every number as a pipeline check, not evidence about the strategy. The
-> cron watcher (`rebench_watch.sh zigzag_bounce 1h`) will re-run as 1h history
-> deepens.
+> ⚠️ **INTERIM — sample far too small + tuned on this data.** n=15 in-sample
+> fires / 4 trades, one walk-forward period; the exit params were tuned on this
+> same window (circular). The ≥4/5-months gate cannot be evaluated. Pipeline
+> check, not evidence. The cron watcher re-runs as 1h history deepens.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|------|----------|--------|
-| 2026-05 | 12 | 0.500 | -0.00017 | 1.000 |
+| 2026-05 | 15 | 0.467 | -0.00141 | 1.000 |
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 12 | 0.500 | -0.0002 |
+| all  | 15 | 0.467 | -0.0014 |
 | bear | 1  | 0.000 | -0.0155 |
-| bull | 11 | 0.545 | +0.0012 |
+| bull | 14 | 0.500 | -0.0004 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 12 |
-| Spearman ρ | +0.259 |
-| Q4 − Q1 spread | +0.0043 |
+| n | 15 |
+| Spearman ρ | +0.300 |
+| Q4 − Q1 spread | +0.0179 |
 
 ### OOS (most recent 20%)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|-------|----------|--------|
-| 2026-05 | 3 | 0.667 | -0.00142 | 1.000 |
+| 2026-05 | 3 | 0.667 | -0.00089 | 1.000 |
 
 ### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | -0.466 | 0.000 (0 trades) |
-| Max DD | 0.0129 | — |
+| Sharpe | +0.115 | 0.000 (0 trades) |
+| Max DD | 0.0152 | — |
 | # trades | 4 | 0 |
-| Trading fees | 98.3 JPY | — |
-| Net PnL (min lot) | -265 JPY | — |
-| Buy-and-hold BTC/JPY (gross) | -0.0560 | — |
+| Trading fees | 99.2 JPY | — |
+| Net PnL (min lot) | +102 JPY | — |
+| Buy-and-hold BTC/JPY (gross) | -0.0583 | — |
 
-**Verdict: REJECT (interim).** Per-month validation FAILs (0/1 non-negative);
-net-of-fees in-sample Sharpe -0.47 on 4 trades; signal DR exactly 0.500
-(coin flip) with `perm_p = 1.0`. Score calibration is mildly positive
-(ρ +0.26, Q4−Q1 +0.0043) and the bull-regime cell is slightly positive
-(mean_r +0.0012, n=11) — *possibly* interesting, but n=12 total is far below
-anything readable. No conclusion either way until months of 1h history exist.
+**Verdict: REJECT (interim).** The provisionally-tuned exit (wider SL 1.0,
+longer age 48) flipped the in-sample portfolio from a loss to a small gain
+(Sharpe -0.47 → +0.115, net -265 → +102 JPY) — but on **4 trades, tuned on this
+same window** (overfit/circular), and the **sign's own DR is 0.467 (< coin
+flip)** with `perm_p = 1.0`, so there's no demonstrated directional edge; the
+positive net is payoff asymmetry from a couple of winners. Per-month validation
+still FAILs. Score calibration ρ +0.30 (Q4−Q1 +0.018) is a faint flag-to-watch,
+not readable at n=15. No conclusion until months of 1h history exist.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
