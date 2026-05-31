@@ -12,6 +12,7 @@ level traded first. This keeps backtest results conservative.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from src.core.types import Bar, ExitConfig, ExitReason, Side
 
@@ -38,6 +39,8 @@ class OpenPosition:
     favorable_extreme: float = field(default=0.0)
     tp_price: float | None = None
     sl_price: float | None = None
+    ref_time: datetime | None = None
+    ref_price: float | None = None
 
     def __post_init__(self) -> None:
         if self.favorable_extreme == 0.0:

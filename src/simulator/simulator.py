@@ -120,6 +120,7 @@ class Simulator:
                 # Per-trade exit config (e.g. ZS TP/SL) overrides the static one.
                 pos_cfg = pending.exit_config or exit_cfg
                 pos.tp_price, pos.sl_price = tp_sl_levels(pos, pos_cfg)
+                pos.ref_time, pos.ref_price = pending.ref_time, pending.ref_price
                 entry_time = bar.timestamp
                 entry_idx = i
                 pending = None
@@ -204,4 +205,6 @@ class Simulator:
             cost=cost,
             tp_price=pos.tp_price,
             sl_price=pos.sl_price,
+            ref_time=pos.ref_time,
+            ref_price=pos.ref_price,
         )

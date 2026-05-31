@@ -28,6 +28,9 @@ class FireEvent:
         price: Close of the signal bar (reference price).
         legs: Optional adaptive-volatility context (e.g. recent zigzag leg sizes,
             oldest-first) for exit sizing. Empty for detectors that don't use it.
+        ref_time: Optional reference level this fire keys off (e.g. the
+            "outstanding" peak for zigzag_bounce). ``None`` if not applicable.
+        ref_price: Price of that reference level.
     """
 
     fired_at: datetime
@@ -35,6 +38,8 @@ class FireEvent:
     score: float
     price: float
     legs: tuple[float, ...] = ()
+    ref_time: datetime | None = None
+    ref_price: float | None = None
 
 
 class Sign(ABC):

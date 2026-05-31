@@ -36,7 +36,7 @@ class ZigzagBounceStrategy(Strategy):
         alpha: float = 0.3,
         min_legs: int = 3,
         fallback_pct: float = 0.01,
-        max_bars: int = 24,
+        max_bars: int = 48,
     ) -> None:
         super().__init__()
         self._sign = ZigzagBounceSign(
@@ -76,6 +76,8 @@ class ZigzagBounceStrategy(Strategy):
             price=fire.price,
             score=fire.score,
             reason=self._sign.name,
+            ref_time=fire.ref_time,
+            ref_price=fire.ref_price,
             exit_config=cfg,
         )
 

@@ -80,12 +80,14 @@ class ZigzagBounceSign(Sign):
 
     def _eval_end(
         self, highs: list[float], lows: list[float]
-    ) -> tuple[Side, float, tuple[float, ...]] | None:
+    ) -> tuple[Side, float, tuple[float, ...], int, float] | None:
         """Evaluate whether the LAST bar of the window triggers a bounce.
 
-        Returns ``(side, score, legs)`` or ``None``. The early-peak candidate is
-        the bar ``mid_size`` positions before the end; it must sit within
-        ``tol_pct`` of the *outstanding* confirmed peak of the same type.
+        Returns ``(side, score, legs, outstanding_idx, outstanding_price)`` or
+        ``None``. ``outstanding_idx`` is the window-relative bar index of the
+        outstanding peak the early peak bounced off (the caller maps it to a
+        timestamp). The early-peak candidate is the bar ``mid_size`` positions
+        before the end; it must sit within ``tol_pct`` of that peak.
         """
         n = len(highs)
         ep_idx = n - 1 - self.mid_size
@@ -114,7 +116,7 @@ class ZigzagBounceSign(Sign):
         side = Side.SHORT if is_high else Side.LONG
         score = max(0.0, min(1.0, 1.0 - dist / self.tol_pct))
         legs = confirmed_leg_sizes(peaks)[-self.n_legs :]
-        return side, score, legs
+        return side, score, legs, outstanding.bar_index, outstanding.price
 
     def last_fire(self, df: pd.DataFrame) -> FireEvent | None:  # noqa: D102 (override)
         if df.empty:
@@ -122,13 +124,15 @@ class ZigzagBounceSign(Sign):
         res = self._eval_end(df["high"].tolist(), df["low"].tolist())
         if res is None:
             return None
-        side, score, legs = res
+        side, score, legs, out_idx, out_price = res
         return FireEvent(
             fired_at=df.index[-1].to_pydatetime(),
             side=side,
             score=score,
             price=float(df["close"].iloc[-1]),
             legs=legs,
+            ref_time=df.index[out_idx].to_pydatetime(),
+            ref_price=out_price,
         )
 
     def detect(self, df: pd.DataFrame) -> list[FireEvent]:  # noqa: D102 (inherited)
@@ -144,8 +148,12 @@ class ZigzagBounceSign(Sign):
             w0 = max(0, t - w + 1)
             res = self._eval_end(highs[w0 : t + 1], lows[w0 : t + 1])
             if res is not None:
-                side, score, legs = res
+                side, score, legs, out_idx, out_price = res
                 fires.append(
-                    FireEvent(idx[t].to_pydatetime(), side, score, float(closes[t]), legs)
+                    FireEvent(
+                        idx[t].to_pydatetime(), side, score, float(closes[t]), legs,
+                        ref_time=idx[w0 + out_idx].to_pydatetime(),
+                        ref_price=out_price,
+                    )
                 )
         return fires

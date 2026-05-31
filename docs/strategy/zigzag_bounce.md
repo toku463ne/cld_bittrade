@@ -120,10 +120,20 @@ regimes and tighten in quiet ones.
 | `alpha` | 0.3 | EWA smoothing (≈2-leg half-life) |
 | `min_legs` | 3 | Legs needed before trusting the EWA band |
 | `fallback_pct` | 0.01 | Fallback band (fraction of price) |
-| `max_bars` | 24 | Time stop (≈1 day @ 1h) |
+| `max_bars` | 48 | Time stop / "trade age" (≈2 days @ 1h) |
 
 The strategy's internal buffer/warmup equal the sign's trailing window
 (`max(windows) + 2·size + mid_size + 5`) so per-bar and benchmark evaluation match.
+
+> `max_bars` defaults to **48** (≈2 days @ 1h): a preliminary tune found that the
+> previous 24-bar stop cut bounces off too early (most exits were losing
+> time-stops); 48 improved net return / win rate broadly across settings. Still a
+> small-sample finding — re-tune with more 1h history
+> (`src/backtest/analysis/tune_zigzag_bounce.py` sweeps `max_bars`).
+
+The Backtest tab visualises each entry on hover: TP/SL segments over the trade's
+lifetime, an "exit" marker, and a dotted connector to the **outstanding peak**
+the bounce referenced.
 
 ---
 

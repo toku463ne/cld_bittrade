@@ -253,6 +253,8 @@ def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | 
         raise PreventUpdate
     tp, sl, entry_x, exit_x = cd[0], cd[1], cd[2], cd[3]
     exit_price = cd[4] if len(cd) > 4 else None
+    ref_x = cd[5] if len(cd) > 5 else None
+    ref_price = cd[6] if len(cd) > 6 else None
 
     layout = figure["layout"]
     # Skip redundant redraws while hovering the same entry (keyed on exit point).
@@ -284,10 +286,22 @@ def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | 
         )
     if not shapes:
         raise PreventUpdate
+
+    # Dotted connector from the entry to the "outstanding" peak it bounced off.
+    if ref_x is not None and ref_price is not None:
+        shapes.append(
+            {
+                "type": "line",
+                "xref": "x", "x0": ref_x, "x1": entry_x,
+                "yref": "y", "y0": ref_price, "y1": ref_price,
+                "line": {"color": "#8c564b", "width": 1, "dash": "dot"},
+                "name": "tpsl_ref",
+            }
+        )
     layout["shapes"] = shapes
 
-    # Mark the exit so it's findable.
-    anns = [a for a in layout.get("annotations", []) if a.get("name") != "tpsl_exit"]
+    # Mark the exit and the outstanding peak so they're findable.
+    anns = [a for a in layout.get("annotations", []) if not str(a.get("name", "")).startswith("tpsl_")]
     if exit_price is not None:
         anns.append(
             {
@@ -295,6 +309,15 @@ def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | 
                 "x": exit_x, "y": exit_price, "text": "exit", "showarrow": True,
                 "arrowhead": 2, "ax": 0, "ay": -28,
                 "font": {"size": 11, "color": "#333"}, "bgcolor": "#ffffffcc",
+            }
+        )
+    if ref_x is not None and ref_price is not None:
+        anns.append(
+            {
+                "name": "tpsl_ref", "xref": "x", "yref": "y",
+                "x": ref_x, "y": ref_price, "text": "outstanding peak",
+                "showarrow": True, "arrowhead": 2, "ax": 0, "ay": -24,
+                "font": {"size": 10, "color": "#8c564b"}, "bgcolor": "#ffffffcc",
             }
         )
     layout["annotations"] = anns

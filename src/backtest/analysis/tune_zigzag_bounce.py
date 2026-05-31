@@ -29,15 +29,17 @@ from src.strategy.zigzag_bounce import ZigzagBounceStrategy
 # Full grid (mid_size < size enforced below). tp/sl are multiples of the ZS band
 # (one zigzag leg ~2.5% of price on 1h), so values >= ~1.0 rarely bind before the
 # time stop — keep them fractional so TP/SL actually drive exits.
-SIZES = [5, 6, 7, 8, 10, 12, 14]
-MIDS = [2, 3, 4]
-TPS = [0.3, 0.5, 0.7, 1.0]
-SLS = [0.3, 0.5, 0.7, 1.0]
+SIZES = [6, 7, 8, 10, 14]
+MIDS = [3, 4]
+TPS = [0.5, 0.7, 1.0]
+SLS = [0.5, 0.7, 1.0]
+MAX_BARS = [12, 24, 48, 72]  # "trade age" / time stop (bars)
 # Reduced grid for slow (5m) runs.
 QUICK_SIZES = [8, 10, 14]
 QUICK_MIDS = [3, 4]
-QUICK_TPS = [0.3, 0.5, 0.7]
-QUICK_SLS = [0.3, 0.5, 0.7]
+QUICK_TPS = [0.5, 0.7]
+QUICK_SLS = [0.5, 0.7]
+QUICK_MAXBARS = [24, 48]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,7 @@ class Row:
     mid: int
     tp: float
     sl: float
+    max_bars: int
     n_trades: int
     total_return: float
     sharpe: float
@@ -53,19 +56,20 @@ class Row:
     max_dd: float
 
 
-def _grid(quick: bool) -> list[tuple[int, int, float, float]]:
-    sizes, mids, tps, sls = (
-        (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS)
+def _grid(quick: bool) -> list[tuple[int, int, float, float, int]]:
+    sizes, mids, tps, sls, mbs = (
+        (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS, QUICK_MAXBARS)
         if quick
-        else (SIZES, MIDS, TPS, SLS)
+        else (SIZES, MIDS, TPS, SLS, MAX_BARS)
     )
     return [
-        (s, m, tp, sl)
+        (s, m, tp, sl, mb)
         for s in sizes
         for m in mids
         if m < s
         for tp in tps
         for sl in sls
+        for mb in mbs
     ]
 
 
@@ -79,12 +83,15 @@ def tune(timeframe: Timeframe, *, quick: bool, top: int) -> list[Row]:
                 len(bars), timeframe.value, len(combos))
 
     rows: list[Row] = []
-    for size, mid, tp, sl in combos:
-        strat = ZigzagBounceStrategy(size=size, mid_size=mid, tp_mult=tp, sl_mult=sl)
+    for size, mid, tp, sl, mb in combos:
+        strat = ZigzagBounceStrategy(
+            size=size, mid_size=mid, tp_mult=tp, sl_mult=sl, max_bars=mb
+        )
         trades = Simulator(strat).run(bars).trades
         m = portfolio_metrics(trades)
         rows.append(
-            Row(size, mid, tp, sl, m.n_trades, m.total_return, m.sharpe, m.win_rate, m.max_dd)
+            Row(size, mid, tp, sl, mb, m.n_trades, m.total_return, m.sharpe,
+                m.win_rate, m.max_dd)
         )
 
     rows.sort(key=lambda r: r.total_return, reverse=True)
@@ -93,11 +100,12 @@ def tune(timeframe: Timeframe, *, quick: bool, top: int) -> list[Row]:
 
 def _print_table(title: str, rows: list[Row]) -> None:
     print(f"\n=== {title} ===")
-    print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} | {'trades':>6} "
+    print(f"{'size':>4} {'mid':>3} {'tp':>4} {'sl':>4} {'age':>4} | {'trades':>6} "
           f"{'net_ret':>9} {'sharpe':>7} {'win%':>5} {'maxDD':>7}")
     for r in rows:
-        print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} | {r.n_trades:>6} "
-              f"{r.total_return:>9.4f} {r.sharpe:>7.3f} {r.win_rate:>5.2f} {r.max_dd:>7.4f}")
+        print(f"{r.size:>4} {r.mid:>3} {r.tp:>4.1f} {r.sl:>4.1f} {r.max_bars:>4} | "
+              f"{r.n_trades:>6} {r.total_return:>9.4f} {r.sharpe:>7.3f} "
+              f"{r.win_rate:>5.2f} {r.max_dd:>7.4f}")
 
 
 def main() -> None:

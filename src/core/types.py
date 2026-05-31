@@ -90,6 +90,8 @@ class Signal:
     score: float = 1.0
     reason: str = ""
     meta: dict[str, float] = field(default_factory=dict)
+    ref_time: datetime | None = None
+    ref_price: float | None = None
     exit_config: ExitConfig | None = None
     """Optional per-trade exit config (e.g. from an :class:`ExitRule`). When set,
     the simulator uses it instead of the strategy's static ``get_exit_rules()``."""
@@ -165,6 +167,8 @@ class Trade:
     cost: float = 0.0
     tp_price: float | None = None
     sl_price: float | None = None
+    ref_time: datetime | None = None
+    ref_price: float | None = None
 
     @property
     def gross_pnl(self) -> float:
