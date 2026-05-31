@@ -97,6 +97,16 @@ def _backtest_tab() -> html.Div:
                     _timeframe_dropdown("bt-timeframe"),
                     html.Label("Strategy"),
                     _strategy_dropdown("bt-strategy"),
+                    dcc.Checklist(
+                        id="bt-toggles",
+                        options=[
+                            {"label": "Bollinger", "value": "bb"},
+                            {"label": "RSI", "value": "rsi"},
+                            {"label": "Zigzag", "value": "zigzag"},
+                        ],
+                        value=["bb", "rsi"],
+                        inline=True,
+                    ),
                     html.Button("Run backtest", id="bt-run", n_clicks=0),
                 ],
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
@@ -342,10 +352,11 @@ def _register_callbacks(app: dash.Dash) -> None:
         Input("bt-run", "n_clicks"),
         Input("bt-timeframe", "value"),
         Input("bt-strategy", "value"),
+        Input("bt-toggles", "value"),
         Input("bt-graph", "relayoutData"),
         State("bt-graph", "figure"),
     )
-    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, relayout, figure):  # type: ignore[no-untyped-def]
+    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, toggles, relayout, figure):  # type: ignore[no-untyped-def]
         # Single owner of bt-graph so a graph-mount relayout can't race the render
         # through a duplicate output. RENDER unless this is unambiguously a
         # genuine zoom (bt-graph relayout alone, carrying a real datetime range);
@@ -353,14 +364,16 @@ def _register_callbacks(app: dash.Dash) -> None:
         # attributes when the tab mounts (tabs.value + relayout fire together).
         if active_tab != "backtest":
             raise PreventUpdate
+        toggles = toggles or []
+        show_bb, show_rsi, show_zigzag = "bb" in toggles, "rsi" in toggles, "zigzag" in toggles
 
         triggered = {t["prop_id"].split(".")[0] for t in (dash.ctx.triggered or [])}
         if triggered == {"bt-graph"} and _is_zoom_relayout(relayout):
             return _autoscale_figure(
-                relayout, figure, timeframe, show_bb=True, show_rsi=True
+                relayout, figure, timeframe, show_bb=show_bb, show_rsi=show_rsi
             ), dash.no_update
 
-        # Tab opened / timeframe / strategy / Run button / mount -> render results.
+        # Tab opened / timeframe / strategy / toggles / Run button / mount -> render.
         tf = Timeframe(timeframe)
         cache = load_cache(tf)
         df = cache.to_frame()
@@ -369,7 +382,13 @@ def _register_callbacks(app: dash.Dash) -> None:
         # run_cycle already simulates in-sample + OOS; reuse its trades for the
         # chart instead of a third full simulation.
         result = run_cycle(strategy, tf)
-        fig = build_chart(df, trades=result.trades)
+        fig = build_chart(
+            df,
+            show_bb=show_bb,
+            show_rsi=show_rsi,
+            show_zigzag=show_zigzag,
+            trades=result.trades,
+        )
         return fig, _format_metrics(result)
 
     @app.callback(

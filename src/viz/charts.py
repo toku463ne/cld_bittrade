@@ -119,39 +119,68 @@ def build_chart(
         legend=dict(orientation="h", y=1.02),
         margin=dict(l=40, r=20, t=40, b=30),
         template="plotly_white",
+        hovermode="x",
+    )
+    # Vertical datetime crosshair spanning all panels on hover.
+    fig.update_xaxes(
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikethickness=1,
+        spikedash="dot",
+        spikecolor="#666",
     )
     return fig
 
 
 def _add_zigzag(fig: go.Figure, df: pd.DataFrame, size: int = 10, middle_size: int = 3) -> None:
-    """Overlay the zigzag: connected confirmed peaks + early-peak markers."""
-    from src.indicators.zigzag import detect_peaks
+    """Overlay the zigzag as a clean alternating high/low line + early markers.
+
+    ``detect_peaks`` can emit consecutive same-direction peaks (and mixes early
+    with confirmed). Drawing those directly breaks the zigzag (an up-leg can end
+    below the prior low). We collapse each run of same-direction peaks to its
+    extreme (highest high / lowest low), yielding a strictly alternating line
+    where every up-leg rises above the previous low and every down-leg falls
+    below the previous high.
+    """
+    from src.indicators.zigzag import Peak, detect_peaks
 
     peaks = detect_peaks(df["high"].tolist(), df["low"].tolist(), size, middle_size)
     if not peaks:
         return
-    confirmed = [p for p in peaks if p.is_confirmed]
-    if len(confirmed) >= 2:
+
+    line: list[Peak] = []
+    for p in peaks:
+        if line and line[-1].is_high == p.is_high:
+            more_extreme = p.price > line[-1].price if p.is_high else p.price < line[-1].price
+            if more_extreme:
+                line[-1] = p  # keep the run's extreme turning point
+        else:
+            line.append(p)
+
+    if len(line) >= 2:
+        # Line only — no markers (filled dots clashed with the TP exit marker).
         fig.add_trace(
             go.Scatter(
-                x=[df.index[p.bar_index] for p in confirmed],
-                y=[p.price for p in confirmed],
-                mode="lines+markers",
+                x=[df.index[p.bar_index] for p in line],
+                y=[p.price for p in line],
+                mode="lines",
                 name=f"Zigzag({size})",
                 line=dict(color="#111", width=1),
-                marker=dict(color="#111", size=7),
             ),
             row=1, col=1,
         )
-    early = [p for p in peaks if not p.is_confirmed]
+    early = [p for p in line if not p.is_confirmed]
     if early:
+        # 'x' marker — distinct from the open-circle SL/stop exit marker.
         fig.add_trace(
             go.Scatter(
                 x=[df.index[p.bar_index] for p in early],
                 y=[p.price for p in early],
                 mode="markers",
                 name="Zigzag early",
-                marker=dict(symbol="circle-open", color="#888", size=8),
+                marker=dict(symbol="x-thin", color="#888", size=7,
+                            line=dict(width=1, color="#888")),
             ),
             row=1, col=1,
         )
