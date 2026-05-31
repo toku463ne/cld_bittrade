@@ -26,12 +26,15 @@ class FireEvent:
         side: Direction the detector predicts.
         score: Confidence in ``[0, 1]``.
         price: Close of the signal bar (reference price).
+        legs: Optional adaptive-volatility context (e.g. recent zigzag leg sizes,
+            oldest-first) for exit sizing. Empty for detectors that don't use it.
     """
 
     fired_at: datetime
     side: Side
     score: float
     price: float
+    legs: tuple[float, ...] = ()
 
 
 class Sign(ABC):

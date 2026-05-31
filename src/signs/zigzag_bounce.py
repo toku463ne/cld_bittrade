@@ -1,0 +1,134 @@
+"""Zigzag bounce detector.
+
+Hypothesis: price tends to bounce near recent, established swing levels. We act
+the moment an *early* peak forms at the right edge — a bar that, ``mid_size``
+bars later (i.e. now), is the local extreme of its ``size``-left / ``mid_size``-
+right window — and bet it will mature into a *confirmed* peak (``size`` bars on
+the right, knowable only in the future) **when it sits near a recent confirmed
+peak of the same type**:
+
+- early HIGH near a recent confirmed HIGH (resistance)  -> SHORT (rejection)
+- early LOW  near a recent confirmed LOW  (support)     -> LONG  (bounce)
+
+Causality: every decision at bar ``t`` uses only bars ``≤ t``. The early-peak
+check looks ``mid_size`` bars back; the recent confirmed peaks come from
+:func:`~src.indicators.zigzag.detect_peaks` over the trailing window (those peaks
+already have ``size`` bars of right-context within the window, so they are known
+at ``t``). No look-ahead.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+from src.core.types import Side
+from src.indicators.zigzag import confirmed_leg_sizes, detect_peaks
+from src.signs.base import FireEvent, Sign
+
+
+class ZigzagBounceSign(Sign):
+    """Fires when a right-edge early peak sits near a recent confirmed peak."""
+
+    name = "zigzag_bounce"
+
+    def __init__(
+        self,
+        size: int = 10,
+        mid_size: int = 3,
+        lookback: int = 72,
+        tol_pct: float = 0.005,
+        n_legs: int = 6,
+    ) -> None:
+        if mid_size >= size:
+            raise ValueError("mid_size must be < size")
+        self.size = size
+        self.mid_size = mid_size
+        self.lookback = lookback
+        self.tol_pct = tol_pct
+        self.n_legs = n_legs
+        # Trailing window needed to evaluate one decision (left context for the
+        # early peak + lookback of confirmed peaks + their own right-context).
+        self.window = lookback + 2 * size + mid_size + 2
+        self.required_indicators = [f"zigzag_{size}_{mid_size}"]
+
+    def _eval_end(
+        self, highs: list[float], lows: list[float]
+    ) -> tuple[Side, float, tuple[float, ...]] | None:
+        """Evaluate whether the LAST bar of the window triggers a bounce.
+
+        Returns ``(side, score, legs)`` or ``None``. The early-peak candidate is
+        the bar ``mid_size`` positions before the end.
+        """
+        n = len(highs)
+        ep_idx = n - 1 - self.mid_size
+        left = ep_idx - self.size
+        if left < 0:
+            return None
+
+        # Right-edge early peak: extreme over [left .. now].
+        seg_high = highs[left:n]
+        seg_low = lows[left:n]
+        is_high = highs[ep_idx] == max(seg_high)
+        is_low = lows[ep_idx] == min(seg_low)
+        if is_high == is_low:  # neither, or ambiguous flat window
+            return None
+
+        peaks = detect_peaks(highs, lows, self.size, self.mid_size)
+        recent = [
+            p
+            for p in peaks
+            if p.is_confirmed and p.bar_index >= ep_idx - self.lookback
+        ]
+        if is_high:
+            ep_price = highs[ep_idx]
+            cand = [p for p in recent if p.is_high]
+            side = Side.SHORT
+        else:
+            ep_price = lows[ep_idx]
+            cand = [p for p in recent if not p.is_high]
+            side = Side.LONG
+        if not cand or ep_price <= 0.0:
+            return None
+
+        nearest = min(cand, key=lambda p: abs(p.price - ep_price))
+        dist = abs(nearest.price - ep_price) / ep_price
+        if dist > self.tol_pct:
+            return None
+
+        score = max(0.0, min(1.0, 1.0 - dist / self.tol_pct))
+        legs = confirmed_leg_sizes(peaks)[-self.n_legs :]
+        return side, score, legs
+
+    def last_fire(self, df: pd.DataFrame) -> FireEvent | None:  # noqa: D102 (override)
+        if df.empty:
+            return None
+        res = self._eval_end(df["high"].tolist(), df["low"].tolist())
+        if res is None:
+            return None
+        side, score, legs = res
+        return FireEvent(
+            fired_at=df.index[-1].to_pydatetime(),
+            side=side,
+            score=score,
+            price=float(df["close"].iloc[-1]),
+            legs=legs,
+        )
+
+    def detect(self, df: pd.DataFrame) -> list[FireEvent]:  # noqa: D102 (inherited)
+        if df.empty:
+            return []
+        highs = df["high"].tolist()
+        lows = df["low"].tolist()
+        closes = df["close"].tolist()
+        idx = df.index
+        fires: list[FireEvent] = []
+        w = self.window
+        for t in range(len(df)):
+            w0 = max(0, t - w + 1)
+            res = self._eval_end(highs[w0 : t + 1], lows[w0 : t + 1])
+            if res is not None:
+                side, score, legs = res
+                fires.append(
+                    FireEvent(idx[t].to_pydatetime(), side, score, float(closes[t]), legs)
+                )
+        return fires

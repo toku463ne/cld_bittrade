@@ -90,17 +90,23 @@ class Signal:
     score: float = 1.0
     reason: str = ""
     meta: dict[str, float] = field(default_factory=dict)
+    exit_config: ExitConfig | None = None
+    """Optional per-trade exit config (e.g. from an :class:`ExitRule`). When set,
+    the simulator uses it instead of the strategy's static ``get_exit_rules()``."""
 
 
 @dataclass(frozen=True, slots=True)
 class ExitConfig:
     """Exit-rule parameters returned by ``Strategy.get_exit_rules()``.
 
-    Any subset may be active. ``*_atr_mult`` values are multiples of the ATR at
-    entry; ``*_pct`` values are fractional moves from entry price. ``time_stop``
-    is measured in bars.
+    Any subset may be active. ``*_abs`` values are absolute price distances;
+    ``*_atr_mult`` values are multiples of the ATR at entry; ``*_pct`` values are
+    fractional moves from entry price. ``time_stop`` is measured in bars. When
+    several are set, distance precedence is ``abs`` > ``atr_mult`` > ``pct``.
 
     Attributes:
+        tp_abs: Take-profit distance in absolute price units.
+        sl_abs: Stop-loss distance in absolute price units.
         tp_atr_mult: Take-profit distance as a multiple of entry ATR.
         sl_atr_mult: Stop-loss distance as a multiple of entry ATR.
         tp_pct: Take-profit distance as a fraction of entry price.
@@ -109,6 +115,8 @@ class ExitConfig:
         time_stop_bars: Force-exit after this many bars held.
     """
 
+    tp_abs: float | None = None
+    sl_abs: float | None = None
     tp_atr_mult: float | None = None
     sl_atr_mult: float | None = None
     tp_pct: float | None = None

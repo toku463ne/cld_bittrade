@@ -41,13 +41,20 @@ class OpenPosition:
 
 
 def _tp_sl_distances(pos: OpenPosition, cfg: ExitConfig) -> tuple[float | None, float | None]:
-    """Return absolute (tp_distance, sl_distance) in price units, or None each."""
+    """Return absolute (tp_distance, sl_distance) in price units, or None each.
+
+    Distance precedence: ``abs`` > ``atr_mult`` (when ATR is known) > ``pct``.
+    """
     tp = sl = None
-    if cfg.tp_atr_mult is not None and pos.entry_atr > 0.0:
+    if cfg.tp_abs is not None:
+        tp = cfg.tp_abs
+    elif cfg.tp_atr_mult is not None and pos.entry_atr > 0.0:
         tp = cfg.tp_atr_mult * pos.entry_atr
     elif cfg.tp_pct is not None:
         tp = cfg.tp_pct * pos.entry_price
-    if cfg.sl_atr_mult is not None and pos.entry_atr > 0.0:
+    if cfg.sl_abs is not None:
+        sl = cfg.sl_abs
+    elif cfg.sl_atr_mult is not None and pos.entry_atr > 0.0:
         sl = cfg.sl_atr_mult * pos.entry_atr
     elif cfg.sl_pct is not None:
         sl = cfg.sl_pct * pos.entry_price

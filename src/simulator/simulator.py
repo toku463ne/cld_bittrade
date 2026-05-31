@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from src.core.types import Bar, ExitReason, Signal, Trade
+from src.core.types import Bar, ExitConfig, ExitReason, Signal, Trade
 from src.exit.rules import OpenPosition, evaluate_exit
 from src.indicators import atr
 from src.strategy.base import Strategy
@@ -93,13 +93,14 @@ class Simulator:
         pending: Signal | None = None
         pending_atr: float = 0.0
         pos: OpenPosition | None = None
+        pos_cfg: ExitConfig = exit_cfg  # exit config for the currently open trade
         entry_time = bars[0].timestamp if bars else None
         entry_idx = 0
 
         for i, bar in enumerate(bars):
             # 1. Manage an open position on the current bar.
             if pos is not None:
-                result = evaluate_exit(pos, bar, exit_cfg)
+                result = evaluate_exit(pos, bar, pos_cfg)
                 if result is not None:
                     reason, exit_price = result
                     trade = self._close(pos, entry_time, bar, exit_price, reason, i - entry_idx)
@@ -116,6 +117,8 @@ class Simulator:
                     entry_price=bar.open,
                     entry_atr=pending_atr,
                 )
+                # Per-trade exit config (e.g. ZS TP/SL) overrides the static one.
+                pos_cfg = pending.exit_config or exit_cfg
                 entry_time = bar.timestamp
                 entry_idx = i
                 pending = None
