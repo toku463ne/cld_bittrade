@@ -29,7 +29,7 @@ class ZigzagBounceStrategy(Strategy):
         self,
         size: int = 10,
         mid_size: int = 3,
-        lookback: int = 72,
+        windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
         tp_mult: float = 1.0,
         sl_mult: float = 0.6,
@@ -40,7 +40,7 @@ class ZigzagBounceStrategy(Strategy):
     ) -> None:
         super().__init__()
         self._sign = ZigzagBounceSign(
-            size=size, mid_size=mid_size, lookback=lookback, tol_pct=tol_pct
+            size=size, mid_size=mid_size, windows=windows, tol_pct=tol_pct
         )
         self._exit_rule = ZsTpSl(
             tp_mult=tp_mult,

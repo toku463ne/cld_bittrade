@@ -77,7 +77,7 @@ def test_bounce_sign_shorts_early_high_near_recent_high() -> None:
     # Construct hourly bars: an old confirmed high near price P, then price comes
     # back up to ~P forming a right-edge early high -> expect a SHORT fire.
     size, mid = 10, 3
-    sign = ZigzagBounceSign(size=size, mid_size=mid, lookback=72, tol_pct=0.01)
+    sign = ZigzagBounceSign(size=size, mid_size=mid, windows=(60, 120, 180), tol_pct=0.01)
     ts0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     n = 120
     highs = [12_000_000.0] * n

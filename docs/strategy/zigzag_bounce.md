@@ -64,14 +64,17 @@ check — *not* the indicator's mid-series early classification):
    `[T − mid_size − size, T]` (`size` bars left + the `mid_size` bars now on its
    right). High → early high; low → early low. (A bar that is *both* — a flat
    window — is rejected as ambiguous.)
-2. **Near a recent confirmed peak of the same type:** among confirmed peaks
-   within `lookback` bars (from `detect_peaks` over the trailing window), the
-   nearest same-type peak must be within `tol_pct` of the early peak's price.
+2. **Near the *outstanding* confirmed peak of the same type:** the outstanding
+   peak is the most extreme same-type confirmed peak (highest confirmed high /
+   lowest confirmed low) within an **expanding window** — try the most recent
+   `60` bars; if it contains no same-type confirmed peak, expand to `120`, then
+   `180`. The early peak must be within `tol_pct` of that outstanding peak.
+   (Bouncing off the standout level, not merely the nearest minor peak.)
 
 Direction:
 
-- early **high** near a recent confirmed **high** (resistance) → **SHORT**
-- early **low** near a recent confirmed **low** (support) → **LONG**
+- early **high** near the outstanding confirmed **high** (resistance) → **SHORT**
+- early **low** near the outstanding confirmed **low** (support) → **LONG**
 
 Score `= 1 − dist/tol_pct` (closer to the level → higher confidence).
 
@@ -110,7 +113,7 @@ regimes and tighten in quiet ones.
 |-------|---------|---------|
 | `size` | 10 | Confirmed-peak half-window |
 | `mid_size` | 3 | Early-peak right-window |
-| `lookback` | 72 | Bars to search for a recent confirmed level (≈3 days @ 1h) |
+| `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
 | `sl_mult` | 0.6 | SL = `sl_mult × band` |
@@ -120,7 +123,7 @@ regimes and tighten in quiet ones.
 | `max_bars` | 24 | Time stop (≈1 day @ 1h) |
 
 The strategy's internal buffer/warmup equal the sign's trailing window
-(`lookback + 2·size + mid_size + 2`) so per-bar and benchmark evaluation match.
+(`max(windows) + 2·size + mid_size + 5`) so per-bar and benchmark evaluation match.
 
 ---
 
@@ -172,8 +175,9 @@ Re-benchmark once the collector has accumulated more hourly history.
 - **Catching a falling knife:** an early peak near support can keep going; the
   ZS stop (`sl_mult × band`) caps the loss, but a run of failed bounces in a
   trend will bleed via fees + stops.
-- **Level staleness:** `lookback` bounds how old a level may be; too large and
-  irrelevant old levels trigger, too small and real S/R is missed.
+- **Level staleness:** the expanding `windows` bound how old the outstanding
+  level may be; too large and stale levels trigger, too small and real S/R is
+  missed.
 - **Sparse fires on short history** — confirmed peaks need `2·size` bars, so 1h
   data accrues levels slowly.
 

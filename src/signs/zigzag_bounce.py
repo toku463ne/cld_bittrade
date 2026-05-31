@@ -22,7 +22,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.core.types import Side
-from src.indicators.zigzag import confirmed_leg_sizes, detect_peaks
+from src.indicators.zigzag import Peak, confirmed_leg_sizes, detect_peaks
 from src.signs.base import FireEvent, Sign
 
 
@@ -35,21 +35,48 @@ class ZigzagBounceSign(Sign):
         self,
         size: int = 10,
         mid_size: int = 3,
-        lookback: int = 72,
+        windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
         n_legs: int = 6,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
+        if not windows:
+            raise ValueError("windows must be non-empty")
         self.size = size
         self.mid_size = mid_size
-        self.lookback = lookback
+        # Expanding lookback windows for the "outstanding" peak: try the first;
+        # if no confirmed same-type peak is found, expand to the next.
+        self.windows = tuple(sorted(windows))
         self.tol_pct = tol_pct
         self.n_legs = n_legs
-        # Trailing window needed to evaluate one decision (left context for the
-        # early peak + lookback of confirmed peaks + their own right-context).
-        self.window = lookback + 2 * size + mid_size + 2
+        # Trailing window: widest lookback + left context for the early peak +
+        # the confirmed peaks' own right-context.
+        self.window = self.windows[-1] + 2 * size + mid_size + 5
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
+
+    def _outstanding(
+        self, peaks: list[Peak], is_high: bool, ep_idx: int
+    ) -> Peak | None:
+        """The 'outstanding' confirmed peak: the most extreme same-type peak in
+        the smallest expanding window (60 -> 120 -> 180) that contains one.
+
+        For a high it is the highest confirmed high; for a low, the lowest
+        confirmed low. Returns the :class:`Peak` or ``None`` if no same-type
+        confirmed peak exists within the widest window.
+        """
+        for win in self.windows:
+            lo = ep_idx - win
+            cand = [
+                p
+                for p in peaks
+                if p.is_confirmed and p.is_high == is_high and lo <= p.bar_index < ep_idx
+            ]
+            if cand:
+                return max(cand, key=lambda p: p.price) if is_high else min(
+                    cand, key=lambda p: p.price
+                )
+        return None
 
     def _eval_end(
         self, highs: list[float], lows: list[float]
@@ -57,7 +84,8 @@ class ZigzagBounceSign(Sign):
         """Evaluate whether the LAST bar of the window triggers a bounce.
 
         Returns ``(side, score, legs)`` or ``None``. The early-peak candidate is
-        the bar ``mid_size`` positions before the end.
+        the bar ``mid_size`` positions before the end; it must sit within
+        ``tol_pct`` of the *outstanding* confirmed peak of the same type.
         """
         n = len(highs)
         ep_idx = n - 1 - self.mid_size
@@ -66,35 +94,24 @@ class ZigzagBounceSign(Sign):
             return None
 
         # Right-edge early peak: extreme over [left .. now].
-        seg_high = highs[left:n]
-        seg_low = lows[left:n]
-        is_high = highs[ep_idx] == max(seg_high)
-        is_low = lows[ep_idx] == min(seg_low)
+        is_high = highs[ep_idx] == max(highs[left:n])
+        is_low = lows[ep_idx] == min(lows[left:n])
         if is_high == is_low:  # neither, or ambiguous flat window
             return None
 
         peaks = detect_peaks(highs, lows, self.size, self.mid_size)
-        recent = [
-            p
-            for p in peaks
-            if p.is_confirmed and p.bar_index >= ep_idx - self.lookback
-        ]
-        if is_high:
-            ep_price = highs[ep_idx]
-            cand = [p for p in recent if p.is_high]
-            side = Side.SHORT
-        else:
-            ep_price = lows[ep_idx]
-            cand = [p for p in recent if not p.is_high]
-            side = Side.LONG
-        if not cand or ep_price <= 0.0:
+        ep_price = highs[ep_idx] if is_high else lows[ep_idx]
+        if ep_price <= 0.0:
             return None
 
-        nearest = min(cand, key=lambda p: abs(p.price - ep_price))
-        dist = abs(nearest.price - ep_price) / ep_price
+        outstanding = self._outstanding(peaks, is_high, ep_idx)
+        if outstanding is None:
+            return None
+        dist = abs(outstanding.price - ep_price) / ep_price
         if dist > self.tol_pct:
             return None
 
+        side = Side.SHORT if is_high else Side.LONG
         score = max(0.0, min(1.0, 1.0 - dist / self.tol_pct))
         legs = confirmed_leg_sizes(peaks)[-self.n_legs :]
         return side, score, legs
