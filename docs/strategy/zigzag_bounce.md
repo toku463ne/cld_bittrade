@@ -88,6 +88,12 @@ check — *not* the indicator's mid-series early classification):
      deep, long-standing floor/ceiling is never consulted if a shallow recent
      level exists (e.g. a clean retest of a weekly low gets matched to a minor
      low 175k away and misses). Nearest-in-price still wins among all candidates.
+     With `dominant_reverse` the dominant block *also* adds opposite-type
+     **broken** levels (role reversal at the dominant horizon — the dominant
+     extreme itself can't be broken, so these are earlier, since-exceeded
+     swings); `require_break` gates it, and it is independent of the near-window
+     `reverse_levels`. It **regressed** on the interim sample (it references
+     broken supports during the selloff and doubles max DD), so default off.
 
    Direction is still set by the early peak's own type (below).
 
@@ -149,6 +155,7 @@ regimes and tighten in quiet ones.
 | `mid_size` | 3 | Early-peak right-window |
 | `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
 | `dominant_window` | `None` | If set, also reference the same-type extreme over this long lookback (~168 ≈ 1 week @ 1h) — a long-standing, unbroken floor/ceiling — even when nearer minor peaks exist. `None` = off. |
+| `dominant_reverse` | `False` | If set (with `dominant_window`), also add opposite-type *broken* levels over the dominant lookback (a prior high broken above → support; a prior low broken below → resistance). `require_break` gates it. Independent of `reverse_levels`. Regressed on the interim sample — A/B once data is deep. |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
 | `sl_mult` | 1.0 | SL = `sl_mult × band` |
@@ -240,3 +247,4 @@ Re-benchmark once the collector has accumulated more hourly history.
 | 2026-05-31 | Initial implementation (zigzag indicator, ZS TP/SL exit, strategy). Runs on 1h; not yet benchmarked. |
 | 2026-05-31 | Add opt-in `winsorize_k` (MAD high-side leg clipping) to the ZS band so a single abnormal leg can't inflate TP/SL. Default off. |
 | 2026-05-31 | Add opt-in `dominant_window` (reference the long-horizon unbroken same-type extreme as an extra candidate) so bounces off a dominant weekly floor/ceiling fire even when nearer minor peaks exist. Default off; on the interim 1h sample it improved net/Sharpe/win-rate (e.g. catches the 5/14 retest of the 5/08 floor). |
+| 2026-05-31 | Add opt-in `dominant_reverse` (opposite-type broken levels over the dominant lookback — role reversal at the dominant horizon, independent of `reverse_levels`). Default off; regressed on the interim sample (net +110→−573 at dom=120, DD doubled). |

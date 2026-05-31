@@ -50,6 +50,7 @@ class ZigzagBounceSign(Sign):
         reverse_levels: bool = False,
         require_break: bool = True,
         dominant_window: int | None = None,
+        dominant_reverse: bool = False,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
@@ -68,6 +69,13 @@ class ZigzagBounceSign(Sign):
         # floor/ceiling (e.g. a weekly low retest). Nearest-in-price still wins.
         # None (default) = today's expanding-window-only behavior.
         self.dominant_window = dominant_window
+        # Optional role reversal at the dominant horizon (independent of the
+        # near-window reverse_levels): also add opposite-type confirmed peaks
+        # within dominant_window that price later BROKE (a prior high broken
+        # above -> support for a long; a prior low broken below -> resistance for
+        # a short). require_break gates it. The dominant *extreme* itself can't
+        # be broken, so this surfaces earlier, since-exceeded swings. Default off.
+        self.dominant_reverse = dominant_reverse
         self.tol_pct = tol_pct
         # Optional volatility-scaled "near" band: when set, tolerance =
         # tol_leg_frac × EWA(recent zigzag legs) instead of tol_pct × price, so
@@ -87,6 +95,37 @@ class ZigzagBounceSign(Sign):
         self.window = widest + 2 * size + mid_size + 5
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
 
+    def _reverse_refs(
+        self,
+        cand: list[Peak],
+        ep_idx: int,
+        is_high: bool,
+        highs: list[float],
+        lows: list[float],
+    ) -> list[Peak]:
+        """Opposite-type role-reversal candidates among ``cand``.
+
+        A prior high becomes support (for a long) / a prior low becomes
+        resistance (for a short). If ``require_break`` the level must have been
+        *crossed* since it formed — early high: a prior LOW broken BELOW; early
+        low: a prior HIGH broken ABOVE.
+        """
+        out: list[Peak] = []
+        for p in cand:
+            if p.is_high == is_high:
+                continue
+            if self.require_break:
+                seg_lo = p.bar_index + 1
+                broke = (
+                    min(lows[seg_lo : ep_idx + 1]) < p.price
+                    if is_high
+                    else max(highs[seg_lo : ep_idx + 1]) > p.price
+                )
+                if not broke:
+                    continue
+            out.append(p)
+        return out
+
     def _outstanding(
         self,
         peaks: list[Peak],
@@ -105,15 +144,15 @@ class ZigzagBounceSign(Sign):
           peak (highest high for an early high / lowest low for an early low) —
           a normal resistance/support retest.
         - **Role-reversal** (only if ``reverse_levels``): an opposite-type
-          confirmed peak — a prior high as support, a prior low as resistance.
-          If ``require_break`` (default), it must have been *crossed* (price
-          traded through it) to count. Both default OFF/strict because same-type
-          matching was cleanest on the interim sample; flip them to A/B once
-          there is enough data.
-        - **Dominant level** (only if ``dominant_window``): the most-extreme
-          same-type confirmed peak over the long lookback, added even when the
-          expanding window already found nearer minor peaks, so price can bounce
-          off a long-standing floor/ceiling. Nearest-in-price still wins overall.
+          confirmed peak — see :meth:`_reverse_refs`. Default OFF because
+          same-type matching was cleanest on the interim sample.
+        - **Dominant level** (only if ``dominant_window``): over the long
+          lookback, the most-extreme same-type confirmed peak (added even when
+          the expanding window found nearer minor peaks, so price can bounce off
+          a long-standing floor/ceiling), plus — only if ``dominant_reverse`` —
+          opposite-type broken levels (role reversal at the dominant horizon).
+
+        Nearest-in-price wins across all candidates.
         """
         refs: list[Peak] = []
         for win in self.windows:
@@ -126,37 +165,24 @@ class ZigzagBounceSign(Sign):
                 refs.append(max(same, key=lambda p: p.price) if is_high
                             else min(same, key=lambda p: p.price))
             if self.reverse_levels:
-                for p in cand:
-                    if p.is_high == is_high:
-                        continue
-                    if self.require_break:
-                        # early high: a prior LOW becomes resistance only if price
-                        # later broke BELOW it; early low: a prior HIGH becomes
-                        # support only if price later broke ABOVE it.
-                        seg_lo = p.bar_index + 1
-                        broke = (
-                            min(lows[seg_lo : ep_idx + 1]) < p.price
-                            if is_high
-                            else max(highs[seg_lo : ep_idx + 1]) > p.price
-                        )
-                        if not broke:
-                            continue
-                    refs.append(p)
+                refs.extend(self._reverse_refs(cand, ep_idx, is_high, highs, lows))
             if refs:
                 break  # first non-empty expanding window only (existing behavior)
 
         # Dominant level: the same-type extreme over the long lookback. By being
         # the extreme it is by definition unbroken since it formed, so it is the
         # strongest standing support/resistance — included as an extra candidate.
+        # With dominant_reverse, also surface opposite-type broken levels (the
+        # extreme itself can't be broken, so these are earlier, exceeded swings).
         if self.dominant_window is not None:
             lo = ep_idx - self.dominant_window
-            dom = [
-                p for p in peaks
-                if p.is_confirmed and p.is_high == is_high and lo <= p.bar_index < ep_idx
-            ]
-            if dom:
-                refs.append(max(dom, key=lambda p: p.price) if is_high
-                            else min(dom, key=lambda p: p.price))
+            dom_cand = [p for p in peaks if p.is_confirmed and lo <= p.bar_index < ep_idx]
+            same = [p for p in dom_cand if p.is_high == is_high]
+            if same:
+                refs.append(max(same, key=lambda p: p.price) if is_high
+                            else min(same, key=lambda p: p.price))
+            if self.dominant_reverse:
+                refs.extend(self._reverse_refs(dom_cand, ep_idx, is_high, highs, lows))
 
         if refs:
             return min(refs, key=lambda p: abs(p.price - ep_price))

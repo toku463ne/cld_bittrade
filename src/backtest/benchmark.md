@@ -160,6 +160,16 @@ win 44%→**50%**, same maxDD — it catches e.g. the 5/14 retest of the 5/08
 12,430,000 floor (score 0.98). Promising but tiny-sample; default off, sweep +
 A/B once history is deep before considering it the default.
 
+**Dominant role-reversal (`dominant_reverse`) — opt-in, default off.** Adds
+opposite-type *broken* levels over the dominant lookback (a prior high broken
+above → support; a prior low broken below → resistance), independent of the
+near-window `reverse_levels`. **Regressed** on the interim sample — at dom=120
+it took IS net +110 → **−573** (Sharpe +0.052 → −0.256) and doubled max DD: a
+nearer broken opposite-level wins the nearest-price contest and swaps the exit
+band on trades that were fine on the dominant floor. Same theme as the
+near-window reversal (shorts into broken supports during the selloff). Off by
+default; A/B once history is deep.
+
 **ZS-band winsorize (`winsorize_k`) — opt-in, default off.** Added to cap an
 abnormally large recent zigzag leg from inflating TP/SL (MAD high-side clip).
 Tuner sweep (`--sweep-winsor`, size=10/mid=3) on this month is **neutral**: on
