@@ -11,6 +11,7 @@ registered strategies appear automatically.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import dash
@@ -65,8 +66,9 @@ def _chart_tab() -> html.Div:
                         options=[
                             {"label": "Bollinger", "value": "bb"},
                             {"label": "RSI", "value": "rsi"},
+                            {"label": "Trades", "value": "trades"},
                         ],
-                        value=["bb", "rsi"],
+                        value=["bb", "rsi", "trades"],
                         inline=True,
                     ),
                     html.Button("Reload", id="chart-reload", n_clicks=0),
@@ -189,7 +191,10 @@ def _autoscale_figure(
         raise PreventUpdate  # not an x-zoom/pan event
 
     df = load_cache(Timeframe(timeframe)).to_frame()
-    ranges = window_yranges(df, str(x0), str(x1), show_bb=show_bb, show_rsi=show_rsi)
+    try:
+        ranges = window_yranges(df, str(x0), str(x1), show_bb=show_bb, show_rsi=show_rsi)
+    except (ValueError, TypeError):
+        raise PreventUpdate  # non-datetime range (e.g. an empty figure's -1..6)
     if not ranges:
         raise PreventUpdate
     for ax, rng in ranges.items():
@@ -206,11 +211,13 @@ def create_app() -> dash.Dash:
         [
             html.H2("BTC/JPY Scalping Bot"),
             dcc.Tabs(
-                [
-                    dcc.Tab(label="Chart", children=_chart_tab()),
-                    dcc.Tab(label="Backtest", children=_backtest_tab()),
-                    dcc.Tab(label="Maintenance", children=_maintenance_tab()),
-                ]
+                id="tabs",
+                value="chart",
+                children=[
+                    dcc.Tab(label="Chart", value="chart", children=_chart_tab()),
+                    dcc.Tab(label="Backtest", value="backtest", children=_backtest_tab()),
+                    dcc.Tab(label="Maintenance", value="maintenance", children=_maintenance_tab()),
+                ],
             ),
         ],
         style={"fontFamily": "sans-serif", "margin": "16px"},
@@ -225,13 +232,21 @@ def _register_callbacks(app: dash.Dash) -> None:
         Input("chart-reload", "n_clicks"),
         State("chart-timeframe", "value"),
         State("chart-toggles", "value"),
+        State("chart-strategy", "value"),
     )
-    def _update_chart(_clicks: int, timeframe: str, toggles: list[str]):  # type: ignore[no-untyped-def]
-        cache = load_cache(Timeframe(timeframe))
+    def _update_chart(_clicks: int, timeframe: str, toggles: list[str], strategy: str):  # type: ignore[no-untyped-def]
+        tf = Timeframe(timeframe)
+        cache = load_cache(tf)
+        df = cache.to_frame()
+        toggles = toggles or []
+        trades = None
+        if "trades" in toggles and strategy and cache.bars:
+            trades = Simulator(get_strategy(strategy)).run(cache.bars).trades
         return build_chart(
-            cache.to_frame(),
-            show_bb="bb" in (toggles or []),
-            show_rsi="rsi" in (toggles or []),
+            df,
+            show_bb="bb" in toggles,
+            show_rsi="rsi" in toggles,
+            trades=trades,
         )
 
     @app.callback(
@@ -252,29 +267,33 @@ def _register_callbacks(app: dash.Dash) -> None:
         )
 
     @app.callback(
-        Output("bt-graph", "figure", allow_duplicate=True),
-        Input("bt-graph", "relayoutData"),
-        State("bt-graph", "figure"),
-        State("bt-timeframe", "value"),
-        prevent_initial_call=True,
-    )
-    def _autoscale_bt_y(relayout, figure, timeframe):  # type: ignore[no-untyped-def]
-        # The Backtest chart always renders Bollinger + RSI (build_chart defaults).
-        return _autoscale_figure(relayout, figure, timeframe, show_bb=True, show_rsi=True)
-
-    @app.callback(
         Output("bt-graph", "figure"),
         Output("bt-metrics", "children"),
+        Input("tabs", "value"),
         Input("bt-run", "n_clicks"),
-        State("bt-timeframe", "value"),
-        State("bt-strategy", "value"),
+        Input("bt-timeframe", "value"),
+        Input("bt-strategy", "value"),
+        Input("bt-graph", "relayoutData"),
+        State("bt-graph", "figure"),
     )
-    def _run_backtest(_clicks: int, timeframe: str, strategy: str):  # type: ignore[no-untyped-def]
+    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, relayout, figure):  # type: ignore[no-untyped-def]
+        # Single owner of bt-graph so a graph-mount relayout can't race the render
+        # through a duplicate output. Branch on what triggered the callback.
+        if active_tab != "backtest":
+            raise PreventUpdate
+
+        if dash.ctx.triggered_id == "bt-graph":
+            # Zoom/pan on the backtest chart -> autoscale only, keep metrics.
+            return _autoscale_figure(
+                relayout, figure, timeframe, show_bb=True, show_rsi=True
+            ), dash.no_update
+
+        # Tab opened / timeframe / strategy / Run button -> (re)render results.
         tf = Timeframe(timeframe)
         cache = load_cache(tf)
         df = cache.to_frame()
         if df.empty or not strategy:
-            return build_chart(df), "No data. Run OHLCV download first."
+            return build_chart(df), "No data for this timeframe. Collect/backtest first."
         sim = Simulator(get_strategy(strategy)).run(cache.bars)
         result = run_cycle(strategy, tf)
         fig = build_chart(df, trades=sim.trades)
@@ -343,10 +362,16 @@ def _format_metrics(result: object) -> str:
 
 
 def main() -> None:
-    """Launch the development server."""
+    """Launch the development server.
+
+    Set ``VIZ_DEBUG=true`` to enable Dash dev tools: the server auto-restarts on
+    code edits and the browser hot-reloads, so UI changes apply without a manual
+    restart + hard refresh.
+    """
     configure_logging(get_settings().log_level)
+    debug = os.getenv("VIZ_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
     app = create_app()
-    app.run(host="0.0.0.0", port=8050, debug=False)
+    app.run(host="0.0.0.0", port=8050, debug=debug)
 
 
 if __name__ == "__main__":

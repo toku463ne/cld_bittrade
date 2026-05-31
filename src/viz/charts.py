@@ -198,34 +198,55 @@ def window_yranges(
 
 
 def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
-    """Add entry/exit markers to the price panel (Backtest tab)."""
+    """Add entry/exit markers to the price panel.
+
+    Markers are grouped into a few legend-visible traces (long/short entries,
+    TP/stop exits) rather than one trace per point, so they are easy to see and
+    toggle. Each point keeps a per-trade hover tooltip.
+    """
     from src.core.types import ExitReason, Side
 
-    for t in trades:
-        entry_color = "green" if t.side is Side.LONG else "red"
-        symbol = "triangle-up" if t.side is Side.LONG else "triangle-down"
+    def _entry_group(side: Side, name: str, color: str, symbol: str) -> None:
+        pts = [t for t in trades if t.side is side]
+        if not pts:
+            return
         fig.add_trace(
             go.Scatter(
-                x=[t.entry_time], y=[t.entry_price], mode="markers",
-                marker=dict(symbol=symbol, color=entry_color, size=11),
-                name="entry", showlegend=False,
-                hovertext=f"{t.side.value} entry {t.entry_price:.0f}",
+                x=[t.entry_time for t in pts],
+                y=[t.entry_price for t in pts],
+                mode="markers",
+                marker=dict(symbol=symbol, color=color, size=13,
+                            line=dict(width=1.2, color="black")),
+                name=name,
+                hovertext=[f"{side.value} entry @ {t.entry_price:,.0f}" for t in pts],
+                hoverinfo="text",
             ),
             row=1, col=1,
         )
-        filled = t.exit_reason is ExitReason.TAKE_PROFIT
+
+    def _exit_group(name: str, symbol: str, keep: object) -> None:
+        pts = [t for t in trades if (t.exit_reason is ExitReason.TAKE_PROFIT) is keep]
+        if not pts:
+            return
         fig.add_trace(
             go.Scatter(
-                x=[t.exit_time], y=[t.exit_price], mode="markers",
-                marker=dict(
-                    symbol="circle" if filled else "circle-open",
-                    color=entry_color, size=9,
-                ),
-                name="exit", showlegend=False,
-                hovertext=(
-                    f"exit {t.exit_price:.0f} | PnL {t.pnl:.1f} | "
+                x=[t.exit_time for t in pts],
+                y=[t.exit_price for t in pts],
+                mode="markers",
+                marker=dict(symbol=symbol, color="#222", size=9,
+                            line=dict(width=1.2, color="#222")),
+                name=name,
+                hovertext=[
+                    f"exit @ {t.exit_price:,.0f} | PnL {t.pnl:+,.1f} JPY | "
                     f"{t.bars_held} bars | {t.exit_reason.value}"
-                ),
+                    for t in pts
+                ],
+                hoverinfo="text",
             ),
             row=1, col=1,
         )
+
+    _entry_group(Side.LONG, "Long entry ▲", "#2ca02c", "triangle-up")
+    _entry_group(Side.SHORT, "Short entry ▼", "#d62728", "triangle-down")
+    _exit_group("Exit — TP", "circle", True)
+    _exit_group("Exit — SL/stop", "circle-open", False)
