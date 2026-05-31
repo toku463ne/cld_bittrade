@@ -64,12 +64,13 @@ check — *not* the indicator's mid-series early classification):
    `[T − mid_size − size, T]` (`size` bars left + the `mid_size` bars now on its
    right). High → early high; low → early low. (A bar that is *both* — a flat
    window — is rejected as ambiguous.)
-2. **Near the *outstanding* confirmed peak of the same type:** the outstanding
-   peak is the most extreme same-type confirmed peak (highest confirmed high /
-   lowest confirmed low) within an **expanding window** — try the most recent
-   `60` bars; if it contains no same-type confirmed peak, expand to `120`, then
-   `180`. The early peak must be within `tol_pct` of that outstanding peak.
-   (Bouncing off the standout level, not merely the nearest minor peak.)
+2. **Near an *outstanding* level (either type — S/R role reversal):** within an
+   **expanding window** — most recent `60` bars, else `120`, else `180` — take
+   the recent extreme **high** and extreme **low**, and require the early peak to
+   be within `tol_pct` of **whichever is nearer in price**. Matching is by price
+   level, not peak type, so a prior swing high can act as **support** for a later
+   low (and a prior low as **resistance** for a later high). Direction is still
+   set by the early peak's own type (below).
 
 Direction:
 

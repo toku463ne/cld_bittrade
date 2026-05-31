@@ -56,26 +56,30 @@ class ZigzagBounceSign(Sign):
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
 
     def _outstanding(
-        self, peaks: list[Peak], is_high: bool, ep_idx: int
+        self, peaks: list[Peak], ep_price: float, ep_idx: int
     ) -> Peak | None:
-        """The 'outstanding' confirmed peak: the most extreme same-type peak in
-        the smallest expanding window (60 -> 120 -> 180) that contains one.
+        """The outstanding level near the early peak, allowing S/R role reversal.
 
-        For a high it is the highest confirmed high; for a low, the lowest
-        confirmed low. Returns the :class:`Peak` or ``None`` if no same-type
-        confirmed peak exists within the widest window.
+        Within the smallest expanding window (60 -> 120 -> 180) that contains a
+        confirmed peak, takes the recent extreme HIGH and extreme LOW and returns
+        whichever is nearest in price to the early peak. Matching is by price
+        level regardless of peak type, so a prior swing high can act as support
+        for a later low (and a prior low as resistance for a later high). The
+        trade direction is still set by the early peak's type (handled by the
+        caller); this only selects the reference level.
         """
         for win in self.windows:
             lo = ep_idx - win
-            cand = [
-                p
-                for p in peaks
-                if p.is_confirmed and p.is_high == is_high and lo <= p.bar_index < ep_idx
-            ]
+            cand = [p for p in peaks if p.is_confirmed and lo <= p.bar_index < ep_idx]
             if cand:
-                return max(cand, key=lambda p: p.price) if is_high else min(
-                    cand, key=lambda p: p.price
-                )
+                extremes: list[Peak] = []
+                highs = [p for p in cand if p.is_high]
+                lows = [p for p in cand if not p.is_high]
+                if highs:
+                    extremes.append(max(highs, key=lambda p: p.price))
+                if lows:
+                    extremes.append(min(lows, key=lambda p: p.price))
+                return min(extremes, key=lambda p: abs(p.price - ep_price))
         return None
 
     def _eval_end(
@@ -106,7 +110,7 @@ class ZigzagBounceSign(Sign):
         if ep_price <= 0.0:
             return None
 
-        outstanding = self._outstanding(peaks, is_high, ep_idx)
+        outstanding = self._outstanding(peaks, ep_price, ep_idx)
         if outstanding is None:
             return None
         dist = abs(outstanding.price - ep_price) / ep_price
