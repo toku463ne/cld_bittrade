@@ -56,16 +56,20 @@ class Row:
     max_dd: float
 
 
-def _grid(quick: bool) -> list[tuple[int, int, float, float, int]]:
-    sizes, mids, tps, sls, mbs = (
+def _grid(
+    quick: bool,
+    sizes: list[int] | None = None,
+    mids: list[int] | None = None,
+) -> list[tuple[int, int, float, float, int]]:
+    base_sizes, base_mids, tps, sls, mbs = (
         (QUICK_SIZES, QUICK_MIDS, QUICK_TPS, QUICK_SLS, QUICK_MAXBARS)
         if quick
         else (SIZES, MIDS, TPS, SLS, MAX_BARS)
     )
     return [
         (s, m, tp, sl, mb)
-        for s in sizes
-        for m in mids
+        for s in (sizes or base_sizes)
+        for m in (mids or base_mids)
         if m < s
         for tp in tps
         for sl in sls
@@ -73,12 +77,19 @@ def _grid(quick: bool) -> list[tuple[int, int, float, float, int]]:
     ]
 
 
-def tune(timeframe: Timeframe, *, quick: bool, top: int) -> list[Row]:
+def tune(
+    timeframe: Timeframe,
+    *,
+    quick: bool,
+    top: int,
+    sizes: list[int] | None = None,
+    mids: list[int] | None = None,
+) -> list[Row]:
     """Run the sweep and return rows sorted by net total return (desc)."""
     bars = load_cache(timeframe).bars
     if not bars:
         raise RuntimeError(f"No {timeframe.value} bars; collect history first.")
-    combos = _grid(quick)
+    combos = _grid(quick, sizes, mids)
     logger.info("Tuning zigzag_bounce on {} {} bars over {} combos",
                 len(bars), timeframe.value, len(combos))
 
@@ -116,10 +127,18 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=15)
     parser.add_argument("--min-trades", type=int, default=4,
                         help="Hide combos with fewer than this many trades.")
+    parser.add_argument("--size", type=int, default=None, help="Restrict to one size.")
+    parser.add_argument("--mid", type=int, default=None, help="Restrict to one mid_size.")
     args = parser.parse_args()
 
     configure_logging(get_settings().log_level)
-    rows = tune(Timeframe(args.timeframe), quick=args.quick, top=10_000)
+    rows = tune(
+        Timeframe(args.timeframe),
+        quick=args.quick,
+        top=10_000,
+        sizes=[args.size] if args.size else None,
+        mids=[args.mid] if args.mid else None,
+    )
 
     # Best tp/sl per (size, mid) so EVERY size is visible (not just the winners).
     best_by_pair: dict[tuple[int, int], Row] = {}

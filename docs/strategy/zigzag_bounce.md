@@ -116,7 +116,7 @@ regimes and tighten in quiet ones.
 | `windows` | (60,120,180) | Expanding lookback (bars) for the outstanding peak |
 | `tol_pct` | 0.005 | Max distance (fraction) of early peak to the level |
 | `tp_mult` | 1.0 | TP = `tp_mult × band` |
-| `sl_mult` | 0.6 | SL = `sl_mult × band` |
+| `sl_mult` | 1.0 | SL = `sl_mult × band` |
 | `alpha` | 0.3 | EWA smoothing (≈2-leg half-life) |
 | `min_legs` | 3 | Legs needed before trusting the EWA band |
 | `fallback_pct` | 0.01 | Fallback band (fraction of price) |
@@ -125,11 +125,15 @@ regimes and tighten in quiet ones.
 The strategy's internal buffer/warmup equal the sign's trailing window
 (`max(windows) + 2·size + mid_size + 5`) so per-bar and benchmark evaluation match.
 
-> `max_bars` defaults to **48** (≈2 days @ 1h): a preliminary tune found that the
-> previous 24-bar stop cut bounces off too early (most exits were losing
-> time-stops); 48 improved net return / win rate broadly across settings. Still a
-> small-sample finding — re-tune with more 1h history
-> (`src/backtest/analysis/tune_zigzag_bounce.py` sweeps `max_bars`).
+> **Provisional, small-sample tune** (re-tune with more 1h history;
+> `src/backtest/analysis/tune_zigzag_bounce.py` sweeps size/mid/tp/sl/max_bars,
+> incl. `--size/--mid` to focus one config):
+> - `max_bars` **48** (≈2 days @ 1h): the previous 24-bar stop cut bounces off
+>   early (most exits were losing time-stops); 48 improved results broadly.
+> - `sl_mult` **1.0** (was 0.6): on size=10/mid=3 the tighter 0.6 stop was
+>   ~break-even while a wider 1.0 stop was best — a tight stop gets knocked out on
+>   noise before the bounce plays out. (6-trade sample; the *direction* of the
+>   finding is more trustworthy than the magnitude.)
 
 The Backtest tab visualises each entry on hover: TP/SL segments over the trade's
 lifetime, an "exit" marker, and a dotted connector to the **outstanding peak**

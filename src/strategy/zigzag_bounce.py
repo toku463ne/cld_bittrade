@@ -32,7 +32,7 @@ class ZigzagBounceStrategy(Strategy):
         windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
         tp_mult: float = 1.0,
-        sl_mult: float = 0.6,
+        sl_mult: float = 1.0,
         alpha: float = 0.3,
         min_legs: int = 3,
         fallback_pct: float = 0.01,
