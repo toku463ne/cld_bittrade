@@ -115,6 +115,88 @@ def build_chart(
     return fig
 
 
+def _pos_extreme(series: pd.Series, fn: str) -> float | None:
+    """Min/max of a series ignoring the 0.0 warmup sentinel."""
+    vals = series[series > 0.0]
+    if vals.empty:
+        return None
+    return float(vals.min() if fn == "min" else vals.max())
+
+
+def window_yranges(
+    df: pd.DataFrame,
+    x0: str,
+    x1: str,
+    *,
+    show_bb: bool = True,
+    show_rsi: bool = True,
+) -> dict[str, list[float]]:
+    """Compute per-panel y-axis ranges for the visible x-window.
+
+    Used to auto-rescale the y-axes when the user zooms/pans the shared x-axis,
+    so a narrow time window isn't squashed against the full-history price range.
+
+    Args:
+        df: The full time-indexed OHLCV frame currently plotted.
+        x0: Visible window start (Plotly ``xaxis.range[0]``, wall-clock string).
+        x1: Visible window end (Plotly ``xaxis.range[1]``).
+        show_bb: Whether Bollinger Bands are shown (included in the price range).
+        show_rsi: Whether the RSI panel is present.
+
+    Returns:
+        Mapping of subplot y-axis name (``yaxis`` price / ``yaxis2`` ATR /
+        ``yaxis3`` RSI) to a ``[min, max]`` range. Empty if no bars are visible.
+    """
+    if df.empty:
+        return {}
+    start, end = pd.to_datetime(x0), pd.to_datetime(x1)
+    idx = df.index
+    if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None:
+        naive: pd.DatetimeIndex = idx.tz_localize(None)
+    else:
+        naive = pd.DatetimeIndex(idx)
+    mask = (naive >= start) & (naive <= end)
+    win = df[mask]
+    if win.empty:
+        return {}
+    close = df["close"]
+
+    # --- Price panel: candle extremes (+ Bollinger envelope if shown) ---
+    lo = float(win["low"].min())
+    hi = float(win["high"].max())
+    if show_bb:
+        bb = bollinger_bands(close)[mask]
+        bl = _pos_extreme(bb["bb_lower"], "min")
+        bu = _pos_extreme(bb["bb_upper"], "max")
+        if bl is not None:
+            lo = min(lo, bl)
+        if bu is not None:
+            hi = max(hi, bu)
+    pad = (hi - lo) * 0.06 or hi * 0.001
+    ranges: dict[str, list[float]] = {"yaxis": [lo - pad, hi + pad]}
+
+    # --- ATR panel ---
+    atr_s = atr(df)
+    avg = atr_average(atr_s)
+    mins = [v for v in (_pos_extreme(atr_s[mask], "min"), _pos_extreme(avg[mask], "min")) if v is not None]
+    maxs = [v for v in (_pos_extreme(atr_s[mask], "max"), _pos_extreme(avg[mask], "max")) if v is not None]
+    amin = min(mins) if mins else 0.0
+    amax = max(maxs) if maxs else 1.0
+    apad = (amax - amin) * 0.08 or amax * 0.05
+    ranges["yaxis2"] = [max(0.0, amin - apad), amax + apad]
+
+    # --- RSI panel (fixed-ish band, padded to the visible swing) ---
+    if show_rsi:
+        r = rsi(close)[mask]
+        rmin = _pos_extreme(r, "min")
+        rmax = _pos_extreme(r, "max")
+        if rmin is not None and rmax is not None:
+            ranges["yaxis3"] = [max(0.0, rmin - 5.0), min(100.0, rmax + 5.0)]
+        else:
+            ranges["yaxis3"] = [0.0, 100.0]
+    return ranges
+
+
 def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
     """Add entry/exit markers to the price panel (Backtest tab)."""
     from src.core.types import ExitReason, Side

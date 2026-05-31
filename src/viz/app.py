@@ -11,8 +11,11 @@ registered strategies appear automatically.
 
 from __future__ import annotations
 
+from typing import Any
+
 import dash
 from dash import Input, Output, State, dcc, html
+from dash.exceptions import PreventUpdate
 
 from src.backtest.cycle import run_cycle
 from src.config import get_settings
@@ -22,7 +25,7 @@ from src.logging_setup import configure_logging
 from src.simulator import Simulator
 from src.strategy.registry import all_strategies, get_strategy
 from src.viz import tasks
-from src.viz.charts import build_chart
+from src.viz.charts import build_chart, window_yranges
 
 _TIMEFRAMES = [tf.value for tf in Timeframe]
 
@@ -138,6 +141,64 @@ def _maintenance_tab() -> html.Div:
     )
 
 
+def _autoscale_figure(
+    relayout: dict[str, Any] | None,
+    figure: dict[str, Any] | None,
+    timeframe: str,
+    *,
+    show_bb: bool,
+    show_rsi: bool,
+) -> dict[str, Any]:
+    """Rescale a 3-panel figure's y-axes to the visible x-window on zoom/pan.
+
+    Shared by the Chart and Backtest tabs. A narrow time slice would otherwise be
+    flattened against the full-history price range (Plotly does not auto-rescale
+    y on x-zoom).
+
+    Args:
+        relayout: The graph's ``relayoutData``.
+        figure: The current figure dict.
+        timeframe: Timeframe whose OHLCV to reload for the window extents.
+        show_bb: Whether Bollinger Bands are plotted (affects the price range).
+        show_rsi: Whether the RSI panel is present.
+
+    Returns:
+        The updated figure dict.
+
+    Raises:
+        PreventUpdate: If the event is not an x-zoom/pan/reset.
+    """
+    if not relayout or not figure:
+        raise PreventUpdate
+    layout = figure["layout"]
+
+    # Reset (double-click / autoscale on any panel): re-enable auto-range.
+    if relayout.get("autosize") or any(
+        k.startswith("xaxis") and k.endswith(".autorange") for k in relayout
+    ):
+        for ax in ("yaxis", "yaxis2", "yaxis3"):
+            if ax in layout:
+                layout[ax].pop("range", None)
+                layout[ax]["autorange"] = True
+        return figure
+
+    # A zoom/pan on any (shared) x-axis: xaxis / xaxis2 / xaxis3 .range[...].
+    x0 = next((v for k, v in relayout.items() if k.endswith(".range[0]") and "xaxis" in k), None)
+    x1 = next((v for k, v in relayout.items() if k.endswith(".range[1]") and "xaxis" in k), None)
+    if x0 is None or x1 is None:
+        raise PreventUpdate  # not an x-zoom/pan event
+
+    df = load_cache(Timeframe(timeframe)).to_frame()
+    ranges = window_yranges(df, str(x0), str(x1), show_bb=show_bb, show_rsi=show_rsi)
+    if not ranges:
+        raise PreventUpdate
+    for ax, rng in ranges.items():
+        layout.setdefault(ax, {})
+        layout[ax]["range"] = rng
+        layout[ax]["autorange"] = False
+    return figure
+
+
 def create_app() -> dash.Dash:
     """Build and return the Dash app (callbacks registered)."""
     app = dash.Dash(__name__, title="BTC/JPY Scalping Bot")
@@ -172,6 +233,34 @@ def _register_callbacks(app: dash.Dash) -> None:
             show_bb="bb" in (toggles or []),
             show_rsi="rsi" in (toggles or []),
         )
+
+    @app.callback(
+        Output("chart-graph", "figure", allow_duplicate=True),
+        Input("chart-graph", "relayoutData"),
+        State("chart-graph", "figure"),
+        State("chart-timeframe", "value"),
+        State("chart-toggles", "value"),
+        prevent_initial_call=True,
+    )
+    def _autoscale_chart_y(relayout, figure, timeframe, toggles):  # type: ignore[no-untyped-def]
+        return _autoscale_figure(
+            relayout,
+            figure,
+            timeframe,
+            show_bb="bb" in (toggles or []),
+            show_rsi="rsi" in (toggles or []),
+        )
+
+    @app.callback(
+        Output("bt-graph", "figure", allow_duplicate=True),
+        Input("bt-graph", "relayoutData"),
+        State("bt-graph", "figure"),
+        State("bt-timeframe", "value"),
+        prevent_initial_call=True,
+    )
+    def _autoscale_bt_y(relayout, figure, timeframe):  # type: ignore[no-untyped-def]
+        # The Backtest chart always renders Bollinger + RSI (build_chart defaults).
+        return _autoscale_figure(relayout, figure, timeframe, show_bb=True, show_rsi=True)
 
     @app.callback(
         Output("bt-graph", "figure"),
@@ -243,8 +332,11 @@ def _format_metrics(result: object) -> str:
         f"Win rate       {m_in.win_rate:>10.3f} {m_oos.win_rate:>10.3f}",
         f"Max DD         {m_in.max_dd:>10.4f} {m_oos.max_dd:>10.4f}",
         f"Total return   {m_in.total_return:>10.4f} {m_oos.total_return:>10.4f}",
+        f"Fees (JPY)     {m_in.total_cost:>10.1f} {m_oos.total_cost:>10.1f}",
         f"# trades       {m_in.n_trades:>10d} {m_oos.n_trades:>10d}",
         "",
+        "All return/Sharpe figures are NET of trading fees.",
+        "Buy & Hold benchmark is gross (no trading cost).",
         "OVERFIT if OOS Sharpe < 0 or OOS DD > 2x IS DD.",
     ]
     return "\n".join(lines)
