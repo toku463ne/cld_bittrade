@@ -80,7 +80,7 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 20:04 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h`. **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48. Portfolio NET of fees._
+_Last run: 2026-05-31 21:10 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48, `winsorize_k=None` (off). Portfolio NET of fees. Numbers unchanged from the 20:04 run — back-paging stalled at 2026-04-30 so the data window did not grow._
 
 **Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
@@ -138,6 +138,14 @@ FAILs. No directional edge demonstrated. The one persistently-positive signal is
 score ranks fires even though the base DR is sub-0.5; a flag to watch, not
 trade. Role-reversal options exist but underperformed here. Re-evaluate (and
 A/B the options) once months of 1h history exist.
+
+**ZS-band winsorize (`winsorize_k`) — opt-in, default off.** Added to cap an
+abnormally large recent zigzag leg from inflating TP/SL (MAD high-side clip).
+Tuner sweep (`--sweep-winsor`, size=10/mid=3) on this month is **neutral**: on
+the best config (tp1.0/sl0.5/age12) `k=3.0` matches net return (0.0105) with a
+hair better Sharpe (0.066 vs 0.065) / maxDD (0.0246 vs 0.0252); on wider-stop
+configs it's marginally worse. Too few extreme legs in one month for the cap to
+bind materially — kept off by default; re-sweep with deeper history.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.

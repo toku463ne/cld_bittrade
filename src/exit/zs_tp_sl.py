@@ -21,8 +21,42 @@ so it plugs into this project's existing exit evaluator unchanged.
 
 from __future__ import annotations
 
+import statistics
+
 from src.core.types import ExitConfig
 from src.exit.base import ExitContext, ExitRule
+
+# MAD -> std consistency factor (so ``k`` reads like "k sigma" for normal data).
+_MAD_TO_SIGMA = 1.4826
+
+
+def winsorize_high(legs: tuple[float, ...], k: float) -> tuple[float, ...]:
+    """Cap abnormally large legs down to ``median + k·1.4826·MAD``.
+
+    Robust (median/MAD based) outlier rejection on the **high side only**: an
+    abnormally large recent leg is what inflates the EWA band and blows up
+    TP/SL; small legs do not, so they are left alone. With ``alpha < 0.5`` the
+    newest leg carries the most weight, so a single outlier in that slot
+    dominates a plain EWA — clipping it first keeps the band representative of
+    the typical swing.
+
+    Args:
+        legs: Leg sizes in price units, oldest-first.
+        k: Robust threshold in MAD-sigmas (``≈3`` ≈ 3-sigma). Must be > 0.
+
+    Returns:
+        The legs with any value above the cap clamped to it. Returned unchanged
+        if there are fewer than 3 legs or the MAD is zero (degenerate spread,
+        where any cap would over-clip).
+    """
+    if len(legs) < 3:
+        return legs
+    med = statistics.median(legs)
+    mad = statistics.median(abs(x - med) for x in legs)
+    if mad <= 0.0:
+        return legs
+    cap = med + k * _MAD_TO_SIGMA * mad
+    return tuple(min(x, cap) for x in legs)
 
 
 def ewa(legs: tuple[float, ...], alpha: float) -> float:
@@ -54,6 +88,9 @@ class ZsTpSl(ExitRule):
         min_legs: Minimum legs before the EWA is trusted; otherwise fall back.
         fallback_pct: Fallback band as a fraction of entry price.
         max_bars: Hard time-stop (bars).
+        winsorize_k: If set, cap abnormally large legs at ``median + k·1.4826·MAD``
+            before the EWA (see :func:`winsorize_high`). ``None`` (default) leaves
+            the raw legs unchanged. ``≈3`` ≈ 3-sigma. Must be > 0 when set.
     """
 
     def __init__(
@@ -64,21 +101,29 @@ class ZsTpSl(ExitRule):
         min_legs: int = 3,
         fallback_pct: float = 0.01,
         max_bars: int = 40,
+        winsorize_k: float | None = None,
     ) -> None:
         if not 0.0 < alpha <= 1.0:
             raise ValueError("alpha must be in (0, 1]")
+        if winsorize_k is not None and winsorize_k <= 0.0:
+            raise ValueError("winsorize_k must be > 0 when set")
         self.tp_mult = tp_mult
         self.sl_mult = sl_mult
         self.alpha = alpha
         self.min_legs = min_legs
         self.fallback_pct = fallback_pct
         self.max_bars = max_bars
+        self.winsorize_k = winsorize_k
         self.name = f"zs_tp{tp_mult}_sl{sl_mult}_a{alpha}"
+        if winsorize_k is not None:
+            self.name += f"_w{winsorize_k}"
 
     def band(self, ctx: ExitContext) -> float:
         """Return the volatility band (price units) for this entry."""
         legs = ctx.zs_history
         if len(legs) >= self.min_legs:
+            if self.winsorize_k is not None:
+                legs = winsorize_high(legs, self.winsorize_k)
             return ewa(legs, self.alpha)
         return ctx.entry_price * self.fallback_pct
 

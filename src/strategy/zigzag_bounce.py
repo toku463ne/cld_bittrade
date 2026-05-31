@@ -40,6 +40,7 @@ class ZigzagBounceStrategy(Strategy):
         min_legs: int = 3,
         fallback_pct: float = 0.01,
         max_bars: int = 48,
+        winsorize_k: float | None = None,
     ) -> None:
         super().__init__()
         self._sign = ZigzagBounceSign(
@@ -54,6 +55,7 @@ class ZigzagBounceStrategy(Strategy):
             min_legs=min_legs,
             fallback_pct=fallback_pct,
             max_bars=max_bars,
+            winsorize_k=winsorize_k,
         )
         self.required_indicators = self._sign.required_indicators
         # Bounded buffer == the sign's trailing window so on_bar and the

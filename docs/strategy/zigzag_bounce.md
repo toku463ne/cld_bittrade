@@ -107,10 +107,19 @@ The band is an **exponentially weighted average of recent zigzag leg sizes**
 (`confirmed_leg_sizes`, oldest-first, newest weighted by `alpha`):
 
 ```
+legs = winsorize_high(legs, k)          if winsorize_k is set  (cap high outliers)
 band = ewa(legs, alpha)                 if len(legs) >= min_legs
      = entry_price × fallback_pct        otherwise
 TP distance = tp_mult × band            SL distance = sl_mult × band
 ```
+
+Because the newest leg carries the most weight (`alpha < 0.5`), a single
+abnormally large recent leg dominates a plain EWA and blows up TP/SL. The
+opt-in `winsorize_k` clips any leg above `median + k·1.4826·MAD` (high side
+only — small legs aren't the problem) down to that cap *before* the EWA, so
+the band stays representative of the typical swing (e.g. legs
+`[2.1,1.8,2.4,2.0,1.9,9.5]` → band `4.27 → 2.30` at `k=3`). Skipped when there
+are <3 legs or the MAD is zero (degenerate spread).
 
 The rule produces a per-trade `ExitConfig(tp_abs, sl_abs, time_stop_bars)` at
 entry; the strategy attaches it to the `Signal` (`exit_config`), and the
@@ -136,6 +145,7 @@ regimes and tighten in quiet ones.
 | `min_legs` | 3 | Legs needed before trusting the EWA band |
 | `fallback_pct` | 0.01 | Fallback band (fraction of price) |
 | `max_bars` | 48 | Time stop / "trade age" (≈2 days @ 1h) |
+| `winsorize_k` | `None` | If set, cap legs above `median + k·1.4826·MAD` before the EWA (`≈3` ≈ 3σ). Robust outlier rejection on the **high side only** — keeps an abnormally large recent leg from inflating the band. `None` = off. |
 
 The strategy's internal buffer/warmup equal the sign's trailing window
 (`max(windows) + 2·size + mid_size + 5`) so per-bar and benchmark evaluation match.
@@ -217,3 +227,4 @@ Re-benchmark once the collector has accumulated more hourly history.
 | Date | Change |
 |------|--------|
 | 2026-05-31 | Initial implementation (zigzag indicator, ZS TP/SL exit, strategy). Runs on 1h; not yet benchmarked. |
+| 2026-05-31 | Add opt-in `winsorize_k` (MAD high-side leg clipping) to the ZS band so a single abnormal leg can't inflate TP/SL. Default off. |
