@@ -31,6 +31,7 @@ class ZigzagBounceStrategy(Strategy):
         mid_size: int = 3,
         windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
+        tol_leg_frac: float | None = None,
         reverse_levels: bool = False,
         require_break: bool = True,
         tp_mult: float = 1.0,
@@ -43,6 +44,7 @@ class ZigzagBounceStrategy(Strategy):
         super().__init__()
         self._sign = ZigzagBounceSign(
             size=size, mid_size=mid_size, windows=windows, tol_pct=tol_pct,
+            tol_leg_frac=tol_leg_frac,
             reverse_levels=reverse_levels, require_break=require_break,
         )
         self._exit_rule = ZsTpSl(

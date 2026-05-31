@@ -81,6 +81,11 @@ check — *not* the indicator's mid-series early classification):
 
    Direction is still set by the early peak's own type (below).
 
+   The **"near" band** defaults to a fixed `tol_pct × price`, but can be made
+   **volatility-scaled** via `tol_leg_frac` (opt-in): `tol_leg_frac × EWA(recent
+   zigzag legs)`, widening in volatile swings and tightening in quiet ones
+   (falls back to `tol_pct` when there are no legs yet).
+
 Direction:
 
 - early **high** near the outstanding confirmed **high** (resistance) → **SHORT**

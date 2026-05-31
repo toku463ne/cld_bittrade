@@ -26,6 +26,14 @@ from src.indicators.zigzag import Peak, confirmed_leg_sizes, detect_peaks
 from src.signs.base import FireEvent, Sign
 
 
+def _leg_ewa(legs: tuple[float, ...], alpha: float = 0.3) -> float:
+    """EWA of zigzag leg sizes (oldest-first; newest weighted by ``alpha``)."""
+    out = legs[0]
+    for leg in legs[1:]:
+        out = alpha * leg + (1.0 - alpha) * out
+    return out
+
+
 class ZigzagBounceSign(Sign):
     """Fires when a right-edge early peak sits near a recent confirmed peak."""
 
@@ -37,6 +45,7 @@ class ZigzagBounceSign(Sign):
         mid_size: int = 3,
         windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
+        tol_leg_frac: float | None = None,
         n_legs: int = 6,
         reverse_levels: bool = False,
         require_break: bool = True,
@@ -51,6 +60,11 @@ class ZigzagBounceSign(Sign):
         # if no confirmed same-type peak is found, expand to the next.
         self.windows = tuple(sorted(windows))
         self.tol_pct = tol_pct
+        # Optional volatility-scaled "near" band: when set, tolerance =
+        # tol_leg_frac × EWA(recent zigzag legs) instead of tol_pct × price, so
+        # "near" widens/tightens with the market's own swing size. Falls back to
+        # tol_pct when there are no legs yet. Default None (fixed-pct baseline).
+        self.tol_leg_frac = tol_leg_frac
         self.n_legs = n_legs
         # Optional S/R role reversal (off by default — same-type was cleanest on
         # the interim sample). When on, opposite-type levels also qualify; with
@@ -148,13 +162,20 @@ class ZigzagBounceSign(Sign):
         outstanding = self._outstanding(peaks, ep_price, ep_idx, is_high, highs, lows)
         if outstanding is None:
             return None
-        dist = abs(outstanding.price - ep_price) / ep_price
-        if dist > self.tol_pct:
+
+        legs = confirmed_leg_sizes(peaks)[-self.n_legs :]
+        # "Near" band: volatility-scaled (fraction of a recent zigzag leg) when
+        # tol_leg_frac is set and legs exist; else fixed fraction of price.
+        if self.tol_leg_frac is not None and legs:
+            band = self.tol_leg_frac * _leg_ewa(legs)
+        else:
+            band = self.tol_pct * ep_price
+        gap = abs(outstanding.price - ep_price)
+        if band <= 0.0 or gap > band:
             return None
 
         side = Side.SHORT if is_high else Side.LONG
-        score = max(0.0, min(1.0, 1.0 - dist / self.tol_pct))
-        legs = confirmed_leg_sizes(peaks)[-self.n_legs :]
+        score = max(0.0, min(1.0, 1.0 - gap / band))
         return side, score, legs, outstanding.bar_index, outstanding.price
 
     def last_fire(self, df: pd.DataFrame) -> FireEvent | None:  # noqa: D102 (override)
