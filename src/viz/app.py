@@ -216,18 +216,30 @@ def _slice_window(
     return df[mask]
 
 
-def _ohlc_store(df: pd.DataFrame) -> dict[str, list[float]]:
-    """Build a {ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
+def _naive_iso(x: Any) -> str:
+    """Parse a timestamp to a tz-naive wall-clock ISO string.
 
-    Keyed by the bar timestamp's ISO form. Plotly emits hover ``x`` in the same
-    (tz-aware) form as the axis, and the callback re-parses through pandas, so
-    keys match regardless of formatting.
+    Plotly's hover-event ``x`` is the *displayed* (tz-naive) value, while the
+    figure's data ``x`` is tz-aware. Normalising both sides to naive wall-clock
+    makes the OHLC lookup robust to that difference (and to formatting/seconds).
+    """
+    ts: pd.Timestamp = pd.Timestamp(x)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    return str(ts.isoformat())
+
+
+def _ohlc_store(df: pd.DataFrame) -> dict[str, list[float]]:
+    """Build a {naive-ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
+
+    Keyed by tz-naive wall-clock ISO so it matches Plotly's hover ``x`` (which is
+    tz-naive), parsed the same way via :func:`_naive_iso` in the callback.
     """
     out: dict[str, list[float]] = {}
     for ts, o, h, low, c in zip(
         df.index, df["open"], df["high"], df["low"], df["close"], strict=False
     ):
-        out[pd.Timestamp(ts).isoformat()] = [float(o), float(h), float(low), float(c)]
+        out[_naive_iso(ts)] = [float(o), float(h), float(low), float(c)]
     return out
 
 
@@ -533,7 +545,7 @@ def _register_callbacks(app: dash.Dash) -> None:
         if not points or not store:
             raise PreventUpdate
         try:
-            key = pd.to_datetime(points[0].get("x")).isoformat()
+            key = _naive_iso(points[0].get("x"))
         except (ValueError, TypeError):
             raise PreventUpdate
         ohlc = store.get(key)
