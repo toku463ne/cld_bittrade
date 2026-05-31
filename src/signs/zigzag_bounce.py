@@ -38,6 +38,8 @@ class ZigzagBounceSign(Sign):
         windows: tuple[int, ...] = (60, 120, 180),
         tol_pct: float = 0.005,
         n_legs: int = 6,
+        reverse_levels: bool = False,
+        require_break: bool = True,
     ) -> None:
         if mid_size >= size:
             raise ValueError("mid_size must be < size")
@@ -50,36 +52,69 @@ class ZigzagBounceSign(Sign):
         self.windows = tuple(sorted(windows))
         self.tol_pct = tol_pct
         self.n_legs = n_legs
+        # Optional S/R role reversal (off by default — same-type was cleanest on
+        # the interim sample). When on, opposite-type levels also qualify; with
+        # require_break they must have been crossed. A/B these once data is deep.
+        self.reverse_levels = reverse_levels
+        self.require_break = require_break
         # Trailing window: widest lookback + left context for the early peak +
         # the confirmed peaks' own right-context.
         self.window = self.windows[-1] + 2 * size + mid_size + 5
         self.required_indicators = [f"zigzag_{size}_{mid_size}"]
 
     def _outstanding(
-        self, peaks: list[Peak], ep_price: float, ep_idx: int
+        self,
+        peaks: list[Peak],
+        ep_price: float,
+        ep_idx: int,
+        is_high: bool,
+        highs: list[float],
+        lows: list[float],
     ) -> Peak | None:
-        """The outstanding level near the early peak, allowing S/R role reversal.
+        """The outstanding reference level near the early peak.
 
-        Within the smallest expanding window (60 -> 120 -> 180) that contains a
-        confirmed peak, takes the recent extreme HIGH and extreme LOW and returns
-        whichever is nearest in price to the early peak. Matching is by price
-        level regardless of peak type, so a prior swing high can act as support
-        for a later low (and a prior low as resistance for a later high). The
-        trade direction is still set by the early peak's type (handled by the
-        caller); this only selects the reference level.
+        Within the smallest expanding window (60 -> 120 -> 180) that yields a
+        confirmed peak, the nearest-in-price reference wins among:
+
+        - **Same-type standout** (always): the most extreme same-type confirmed
+          peak (highest high for an early high / lowest low for an early low) —
+          a normal resistance/support retest.
+        - **Role-reversal** (only if ``reverse_levels``): an opposite-type
+          confirmed peak — a prior high as support, a prior low as resistance.
+          If ``require_break`` (default), it must have been *crossed* (price
+          traded through it) to count. Both default OFF/strict because same-type
+          matching was cleanest on the interim sample; flip them to A/B once
+          there is enough data.
         """
         for win in self.windows:
             lo = ep_idx - win
             cand = [p for p in peaks if p.is_confirmed and lo <= p.bar_index < ep_idx]
-            if cand:
-                extremes: list[Peak] = []
-                highs = [p for p in cand if p.is_high]
-                lows = [p for p in cand if not p.is_high]
-                if highs:
-                    extremes.append(max(highs, key=lambda p: p.price))
-                if lows:
-                    extremes.append(min(lows, key=lambda p: p.price))
-                return min(extremes, key=lambda p: abs(p.price - ep_price))
+            if not cand:
+                continue
+            refs: list[Peak] = []
+            same = [p for p in cand if p.is_high == is_high]
+            if same:
+                refs.append(max(same, key=lambda p: p.price) if is_high
+                            else min(same, key=lambda p: p.price))
+            if self.reverse_levels:
+                for p in cand:
+                    if p.is_high == is_high:
+                        continue
+                    if self.require_break:
+                        # early high: a prior LOW becomes resistance only if price
+                        # later broke BELOW it; early low: a prior HIGH becomes
+                        # support only if price later broke ABOVE it.
+                        seg_lo = p.bar_index + 1
+                        broke = (
+                            min(lows[seg_lo : ep_idx + 1]) < p.price
+                            if is_high
+                            else max(highs[seg_lo : ep_idx + 1]) > p.price
+                        )
+                        if not broke:
+                            continue
+                    refs.append(p)
+            if refs:
+                return min(refs, key=lambda p: abs(p.price - ep_price))
         return None
 
     def _eval_end(
@@ -110,7 +145,7 @@ class ZigzagBounceSign(Sign):
         if ep_price <= 0.0:
             return None
 
-        outstanding = self._outstanding(peaks, ep_price, ep_idx)
+        outstanding = self._outstanding(peaks, ep_price, ep_idx, is_high, highs, lows)
         if outstanding is None:
             return None
         dist = abs(outstanding.price - ep_price) / ep_price

@@ -64,13 +64,22 @@ check — *not* the indicator's mid-series early classification):
    `[T − mid_size − size, T]` (`size` bars left + the `mid_size` bars now on its
    right). High → early high; low → early low. (A bar that is *both* — a flat
    window — is rejected as ambiguous.)
-2. **Near an *outstanding* level (either type — S/R role reversal):** within an
-   **expanding window** — most recent `60` bars, else `120`, else `180` — take
-   the recent extreme **high** and extreme **low**, and require the early peak to
-   be within `tol_pct` of **whichever is nearer in price**. Matching is by price
-   level, not peak type, so a prior swing high can act as **support** for a later
-   low (and a prior low as **resistance** for a later high). Direction is still
-   set by the early peak's own type (below).
+2. **Near an *outstanding* level:** within an **expanding window** — most recent
+   `60` bars, else `120`, else `180` — the early peak must be within `tol_pct` of
+   the nearest qualifying level:
+   - the **same-type standout** (highest high for an early high / lowest low for
+     an early low) — a normal resistance/support retest. **(default)**
+   - optionally, **role-reversal** (`reverse_levels=True`): an opposite-type
+     confirmed peak — a prior high as support, a prior low as resistance —
+     requiring a prior **break** of the level unless `require_break=False`.
+
+   **Defaults: `reverse_levels=False`** (same-type only). On the interim ~1-month
+   1h sample, role reversal *regressed* (it shorts into broken supports during a
+   selloff); both variants (with/without break) underperformed same-type. The
+   options exist to **A/B once there is enough data** — the concept (polarity
+   flip) is sound, the sample just didn't support it.
+
+   Direction is still set by the early peak's own type (below).
 
 Direction:
 

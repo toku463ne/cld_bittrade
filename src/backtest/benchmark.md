@@ -80,63 +80,64 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 18:01 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` (DB: btc_bot_bt). Exit defaults: tp_mult 1.0, sl_mult 1.0, max_bars 48 (provisionally tuned). Portfolio figures NET of fees._
+_Last run: 2026-05-31 20:04 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h`. **Default = same-type level matching** (`reverse_levels=False`). Exit: tp 1.0 / sl 1.0 / max_bars 48. Portfolio NET of fees._
 
-**Data window:** 2026-05-04 → 2026-05-31 UTC+9 — 648 × 1h bars (~27 days, one
+**Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
 calendar month). In-sample = first 80%, OOS = most recent 20%.
 
-> ⚠️ **INTERIM — sample far too small + tuned on this data.** n=15 in-sample
-> fires / 4 trades, one walk-forward period; the exit params were tuned on this
-> same window (circular). The ≥4/5-months gate cannot be evaluated. Pipeline
-> check, not evidence. The cron watcher re-runs as 1h history deepens.
+> ⚠️ **INTERIM — no edge; default reverted to same-type.** As data grew the
+> same-type DR slipped 0.467 → **0.412** and IS Sharpe +0.115 → **−0.105**, i.e.
+> the earlier slight positive was small-sample luck. S/R **role reversal** was
+> tested and *regressed* on this window (DR 0.389 no-break / 0.417 break-check,
+> IS net down to −500 JPY) — so it's kept as an **opt-in** (`reverse_levels` /
+> `require_break`) to A/B once history is deep, not the default.
 
 ### Multi-Month Benchmark (in-sample)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|------|----------|--------|
-| 2026-05 | 15 | 0.467 | -0.00141 | 1.000 |
+| 2026-05 | 17 | 0.412 | -0.00405 | 1.000 |
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 15 | 0.467 | -0.0014 |
-| bear | 1  | 0.000 | -0.0155 |
-| bull | 14 | 0.500 | -0.0004 |
+| all  | 17 | 0.412 | -0.0041 |
+| bear | 3  | 0.333 | -0.0126 |
+| bull | 14 | 0.429 | -0.0022 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 15 |
-| Spearman ρ | +0.300 |
-| Q4 − Q1 spread | +0.0179 |
+| n | 17 |
+| Spearman ρ | +0.488 |
+| Q4 − Q1 spread | +0.0219 |
 
 ### OOS (most recent 20%)
 
 | period | n_fires | DR | mean_r | perm_p |
 |--------|---------|-------|----------|--------|
-| 2026-05 | 3 | 0.667 | -0.00089 | 1.000 |
+| 2026-05 | 5 | 0.800 | +0.00967 | 1.000 |
 
 ### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | +0.115 | 0.000 (0 trades) |
-| Max DD | 0.0152 | — |
-| # trades | 4 | 0 |
-| Trading fees | 99.2 JPY | — |
-| Net PnL (min lot) | +102 JPY | — |
-| Buy-and-hold BTC/JPY (gross) | -0.0583 | — |
+| Sharpe | -0.105 | 0.000 (0 trades) |
+| Max DD | 0.0190 | — |
+| # trades | 7 | 0 |
+| Trading fees | 175.9 JPY | — |
+| Net PnL (min lot) | -183 JPY | — |
+| Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
 
-**Verdict: REJECT (interim).** The provisionally-tuned exit (wider SL 1.0,
-longer age 48) flipped the in-sample portfolio from a loss to a small gain
-(Sharpe -0.47 → +0.115, net -265 → +102 JPY) — but on **4 trades, tuned on this
-same window** (overfit/circular), and the **sign's own DR is 0.467 (< coin
-flip)** with `perm_p = 1.0`, so there's no demonstrated directional edge; the
-positive net is payoff asymmetry from a couple of winners. Per-month validation
-still FAILs. Score calibration ρ +0.30 (Q4−Q1 +0.018) is a faint flag-to-watch,
-not readable at n=15. No conclusion until months of 1h history exist.
+**Verdict: REJECT (interim).** Default same-type matching: in-sample DR 0.412
+(< coin flip), `perm_p` 1.0, net −183 JPY / Sharpe −0.105; per-month validation
+FAILs. No directional edge demonstrated. The one persistently-positive signal is
+**score calibration** (ρ rising 0.26 → 0.49 across runs, Q4−Q1 +0.022) — the
+score ranks fires even though the base DR is sub-0.5; a flag to watch, not
+trade. Role-reversal options exist but underperformed here. Re-evaluate (and
+A/B the options) once months of 1h history exist.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
