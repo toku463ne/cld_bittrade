@@ -22,7 +22,9 @@ def build_chart(
     *,
     show_bb: bool = True,
     show_rsi: bool = True,
+    show_zigzag: bool = False,
     trades: list[Trade] | None = None,
+    height: int = 820,
 ) -> go.Figure:
     """Build the shared three-panel chart figure.
 
@@ -30,13 +32,16 @@ def build_chart(
         df: Time-indexed OHLCV DataFrame.
         show_bb: Overlay Bollinger Bands on the price panel.
         show_rsi: Include the RSI panel.
+        show_zigzag: Overlay the zigzag (connected confirmed peaks + early peaks).
         trades: Optional trades to mark on the price panel (Backtest tab).
+        height: Figure height in pixels (the price panel scales with it).
 
     Returns:
         A Plotly :class:`~plotly.graph_objects.Figure`.
     """
     rows = 3 if show_rsi else 2
-    row_heights = [0.6, 0.2, 0.2] if show_rsi else [0.7, 0.3]
+    # Give the price panel the lion's share of the (now-tall) figure.
+    row_heights = [0.74, 0.13, 0.13] if show_rsi else [0.82, 0.18]
     fig = make_subplots(
         rows=rows,
         cols=1,
@@ -86,6 +91,9 @@ def build_chart(
             row=1, col=1,
         )
 
+    if show_zigzag:
+        _add_zigzag(fig, df)
+
     if trades:
         _add_trade_markers(fig, trades)
 
@@ -106,13 +114,47 @@ def build_chart(
         fig.add_hline(y=30, line=dict(color="grey", dash="dot"), row=3, col=1)
 
     fig.update_layout(
-        height=820,
+        height=height,
         xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", y=1.04),
+        legend=dict(orientation="h", y=1.02),
         margin=dict(l=40, r=20, t=40, b=30),
         template="plotly_white",
     )
     return fig
+
+
+def _add_zigzag(fig: go.Figure, df: pd.DataFrame, size: int = 10, middle_size: int = 3) -> None:
+    """Overlay the zigzag: connected confirmed peaks + early-peak markers."""
+    from src.indicators.zigzag import detect_peaks
+
+    peaks = detect_peaks(df["high"].tolist(), df["low"].tolist(), size, middle_size)
+    if not peaks:
+        return
+    confirmed = [p for p in peaks if p.is_confirmed]
+    if len(confirmed) >= 2:
+        fig.add_trace(
+            go.Scatter(
+                x=[df.index[p.bar_index] for p in confirmed],
+                y=[p.price for p in confirmed],
+                mode="lines+markers",
+                name=f"Zigzag({size})",
+                line=dict(color="#111", width=1),
+                marker=dict(color="#111", size=7),
+            ),
+            row=1, col=1,
+        )
+    early = [p for p in peaks if not p.is_confirmed]
+    if early:
+        fig.add_trace(
+            go.Scatter(
+                x=[df.index[p.bar_index] for p in early],
+                y=[p.price for p in early],
+                mode="markers",
+                name="Zigzag early",
+                marker=dict(symbol="circle-open", color="#888", size=8),
+            ),
+            row=1, col=1,
+        )
 
 
 def _pos_extreme(series: pd.Series, fn: str) -> float | None:

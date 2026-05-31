@@ -15,6 +15,7 @@ import os
 from typing import Any
 
 import dash
+import pandas as pd
 from dash import Input, Output, State, dcc, html
 from dash.exceptions import PreventUpdate
 
@@ -23,8 +24,7 @@ from src.config import get_settings
 from src.core.types import Timeframe
 from src.data.cache import load_cache
 from src.logging_setup import configure_logging
-from src.simulator import Simulator
-from src.strategy.registry import all_strategies, get_strategy
+from src.strategy.registry import all_strategies
 from src.viz import tasks
 from src.viz.charts import build_chart, window_yranges
 
@@ -59,21 +59,29 @@ def _chart_tab() -> html.Div:
                 [
                     html.Label("Timeframe"),
                     _timeframe_dropdown("chart-timeframe"),
-                    html.Label("Strategy"),
-                    _strategy_dropdown("chart-strategy"),
                     dcc.Checklist(
                         id="chart-toggles",
                         options=[
                             {"label": "Bollinger", "value": "bb"},
                             {"label": "RSI", "value": "rsi"},
-                            {"label": "Trades", "value": "trades"},
+                            {"label": "Zigzag", "value": "zigzag"},
                         ],
-                        value=["bb", "rsi", "trades"],
+                        value=["bb", "rsi", "zigzag"],
                         inline=True,
+                    ),
+                    html.Label("Period"),
+                    dcc.DatePickerRange(
+                        id="chart-daterange",
+                        display_format="YYYY-MM-DD",
+                        clearable=True,
                     ),
                     html.Button("Reload", id="chart-reload", n_clicks=0),
                 ],
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
+            ),
+            html.Div(
+                "No date range = most recent 600 bars.",
+                style={"fontSize": "12px", "color": "#888", "margin": "4px 0"},
             ),
             dcc.Graph(id="chart-graph"),
         ]
@@ -141,6 +149,46 @@ def _maintenance_tab() -> html.Div:
             ),
         ]
     )
+
+
+def _slice_window(
+    df: pd.DataFrame,
+    start_date: str | None,
+    end_date: str | None,
+    *,
+    default_bars: int,
+) -> pd.DataFrame:
+    """Restrict a chart frame to a date range, or the most recent N bars.
+
+    Args:
+        df: Full time-indexed OHLCV frame.
+        start_date: Inclusive start date (``YYYY-MM-DD``) or ``None``.
+        end_date: Inclusive end date or ``None``.
+        default_bars: Bars to keep when no date range is chosen (recency window).
+
+    Returns:
+        The sliced frame.
+    """
+    if df.empty:
+        return df
+    if not start_date and not end_date:
+        return df.tail(default_bars)
+    idx = df.index
+    naive = (
+        idx.tz_localize(None)
+        if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None
+        else pd.DatetimeIndex(idx)
+    )
+    start_ts = pd.to_datetime(start_date) if start_date else None
+    end_ts = pd.to_datetime(end_date) + pd.Timedelta(days=1) if end_date else None
+    if start_ts is not None and end_ts is not None:
+        mask = (naive >= start_ts) & (naive < end_ts)
+    elif start_ts is not None:
+        mask = naive >= start_ts
+    else:
+        assert end_ts is not None  # guaranteed: not both None (checked above)
+        mask = naive < end_ts
+    return df[mask]
 
 
 def _is_zoom_relayout(relayout: dict[str, Any] | None) -> bool:
@@ -252,23 +300,22 @@ def _register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("chart-graph", "figure"),
         Input("chart-reload", "n_clicks"),
+        Input("chart-daterange", "start_date"),
+        Input("chart-daterange", "end_date"),
         State("chart-timeframe", "value"),
         State("chart-toggles", "value"),
-        State("chart-strategy", "value"),
     )
-    def _update_chart(_clicks: int, timeframe: str, toggles: list[str], strategy: str):  # type: ignore[no-untyped-def]
+    def _update_chart(_clicks, start_date, end_date, timeframe, toggles):  # type: ignore[no-untyped-def]
         tf = Timeframe(timeframe)
-        cache = load_cache(tf)
-        df = cache.to_frame()
         toggles = toggles or []
-        trades = None
-        if "trades" in toggles and strategy and cache.bars:
-            trades = Simulator(get_strategy(strategy)).run(cache.bars).trades
+        df = load_cache(tf).to_frame()
+        df = _slice_window(df, start_date, end_date, default_bars=600)
         return build_chart(
             df,
             show_bb="bb" in toggles,
             show_rsi="rsi" in toggles,
-            trades=trades,
+            show_zigzag="zigzag" in toggles,
+            height=820,
         )
 
     @app.callback(
