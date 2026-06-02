@@ -7,6 +7,55 @@ via the probe scripts in `src/backtest/analysis/`.
 
 ---
 
+## 2026-06-02 (latest) — Maker / market-making pivot: closed (efficiently priced)
+
+### Headline
+
+The one direction with positive-expectancy *potential* — stop paying the spread,
+**earn** it as a maker on commission-free FX_BTC_JPY. Tested on **1.36M real
+bitFlyer tape executions** (33 days, w/ aggressor side, already in the bt DB).
+**Closed: no retail-accessible edge.** The spread exactly compensates adverse
+selection (efficient market); the only profitable maker variant is speed/queue
+based, which a retail REST/WS bot cannot replicate.
+
+### Step 1 — spread vs adverse selection (`maker_spread_probe.py`)
+
+Effective spread ~**1.3 bp** (side-based) / 0.70 bp (Roll); adverse selection ~**0**
+(slightly favorable, −0.02 to −0.07 bp) over horizons 5–500 trades. Encouraging —
+spread > adverse unconditionally. But that's an upper bound: the 1.3 bp touch is
+owned by latency-advantaged HFT; retail is back-of-queue.
+
+### Step 2 — quote-distance fill sim (`maker_quote_distance_probe.py`)
+
+Rest a limit at distance d from mid, fill on trade-through (limits fill at the
+limit price — no gap bug), resolve a symmetric ±d first-passage barrier from
+subsequent trades (win = reverts +d to mid before −d adverse). **Win rate ≈ 0.50
+at EVERY distance** (1 bp → 50 bp): 0.496 / 0.498 / 0.499 / 0.499 / 0.503 / 0.502.
+Net ≈ 0 (the d=30/50 positives are <1.5σ noise with 8–40% unresolved).
+
+Flat 0.50 across three orders of magnitude is the **martingale signature**: from
+the fill point the price is a random walk, so first-passage to ±d is 50/50 at every
+scale. The maker's "free half-spread" is illusory — the fill is informative, and
+the spread precisely compensates adverse selection (textbook efficient market).
+Step 1 looked positive because it measured a tiny *unconditional drift*; step 2's
+*first-passage barrier* (how a maker actually exits at target/stop) is the relevant
+test, and it's flat.
+
+### Why it's actually negative for retail, and the verdict
+
+Those 0.50s are the **optimistic** trade-through fills. A retail bot is
+back-of-queue and latency-behind, so it fills disproportionately on the adverse
+side → win rate **below 0.50** → net **negative**. The HFT makers who profit do so
+via speed/queue priority (cancel before adverse), structurally unavailable to a
+REST/WS retail stack. There is no order book collected (only the tape), so a
+queue-aware sim isn't even possible — but the martingale result makes it moot.
+
+**Closed.** Combined with all directional results, the full honest tally:
+**no retail-accessible edge on BTC/JPY** — across directional entries (every
+timeframe, signal, and fill mechanic) AND market-making.
+
+---
+
 ## 2026-06-02 (later) — Daily momentum: a lead that failed validation
 
 ### Headline
