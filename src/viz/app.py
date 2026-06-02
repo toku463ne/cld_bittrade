@@ -18,17 +18,41 @@ import dash
 import pandas as pd
 from dash import Input, Output, State, dcc, html
 from dash.exceptions import PreventUpdate
+from sqlalchemy import select
 
 from src.backtest.cycle import run_cycle
 from src.config import get_settings
 from src.core.types import Timeframe
 from src.data.cache import load_cache
+from src.db import get_session
 from src.logging_setup import configure_logging
+from src.models import OHLCV
 from src.strategy.registry import all_strategies
 from src.viz import tasks
 from src.viz.charts import build_chart, window_yranges
 
 _TIMEFRAMES = [tf.value for tf in Timeframe]
+
+# Chart default window (no Period filter): load up to ~1 year of bars but cap the
+# candle count for browser responsiveness, render the most recent 2 weeks, and let
+# the user scroll/zoom across the loaded range (double-click resets to the full
+# load). A Period date range overrides this and shows exactly that span.
+_MAX_LOAD_BARS = 8760  # ≈ 1 year of 1h candles; also the cap for finer timeframes.
+
+
+def _load_view_bars(tf: Timeframe) -> tuple[int, int]:
+    """``(bars to load, bars in the initial 2-week view)`` for a timeframe."""
+    per_year = (365 * 24 * 3600) // tf.seconds
+    per_2w = (14 * 24 * 3600) // tf.seconds
+    load = min(per_year, _MAX_LOAD_BARS)
+    return load, min(per_2w, load)
+
+
+def _products() -> list[str]:
+    """Distinct product codes in the OHLCV table (for the chart product picker)."""
+    with get_session() as s:
+        found = s.execute(select(OHLCV.product).distinct().order_by(OHLCV.product)).scalars().all()
+    return sorted({get_settings().product_code, *found})
 
 
 def _timeframe_dropdown(id_: str) -> dcc.Dropdown:
@@ -38,6 +62,18 @@ def _timeframe_dropdown(id_: str) -> dcc.Dropdown:
         value="5m",
         clearable=False,
         style={"width": "120px"},
+    )
+
+
+def _product_dropdown(id_: str) -> dcc.Dropdown:
+    prods = _products()
+    default = get_settings().product_code
+    return dcc.Dropdown(
+        id=id_,
+        options=[{"label": p, "value": p} for p in prods],
+        value=default if default in prods else prods[0],
+        clearable=False,
+        style={"width": "170px"},
     )
 
 
@@ -59,6 +95,8 @@ def _chart_tab() -> html.Div:
                 [
                     html.Label("Timeframe"),
                     _timeframe_dropdown("chart-timeframe"),
+                    html.Label("Product"),
+                    _product_dropdown("chart-product"),
                     dcc.Checklist(
                         id="chart-toggles",
                         options=[
@@ -80,7 +118,8 @@ def _chart_tab() -> html.Div:
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
             ),
             html.Div(
-                "No date range = most recent 600 bars.",
+                "No date range = up to ~1 year loaded, last 2 weeks shown — "
+                "scroll/zoom to pan, double-click to reset. Set a Period to filter.",
                 style={"fontSize": "12px", "color": "#888", "margin": "4px 0"},
             ),
             # Explicit pixel height so the bare graph matches the Backtest tab's
@@ -217,6 +256,28 @@ def _slice_window(
         assert end_ts is not None  # guaranteed: not both None (checked above)
         mask = naive < end_ts
     return df[mask]
+
+
+def _apply_initial_view(
+    fig: Any, df: pd.DataFrame, view_bars: int, *, show_bb: bool, show_rsi: bool
+) -> None:
+    """Set the figure's initial x-window to the last ``view_bars`` and rescale y.
+
+    The full ``df`` (up to ~1 year) stays loaded so the user can scroll/zoom across
+    it; only the visible window starts at the most recent 2 weeks, with the y-axes
+    pre-scaled to that window (else a 2-week slice is squashed against the year's
+    price range). Double-click re-enables autorange over the whole load.
+    """
+    idx = df.index
+    naive = (
+        idx.tz_localize(None)
+        if isinstance(idx, pd.DatetimeIndex) and idx.tz is not None
+        else pd.DatetimeIndex(idx)
+    )
+    x0, x1 = naive[-view_bars].isoformat(), naive[-1].isoformat()
+    fig.update_xaxes(range=[x0, x1])
+    for ax, rng in window_yranges(df, x0, x1, show_bb=show_bb, show_rsi=show_rsi).items():
+        fig.layout[ax].update(range=rng, autorange=False)
 
 
 def _naive_iso(x: Any) -> str:
@@ -366,6 +427,7 @@ def _autoscale_figure(
     figure: dict[str, Any] | None,
     timeframe: str,
     *,
+    product: str | None = None,
     show_bb: bool,
     show_rsi: bool,
 ) -> dict[str, Any]:
@@ -408,7 +470,7 @@ def _autoscale_figure(
     if x0 is None or x1 is None:
         raise PreventUpdate  # not an x-zoom/pan event
 
-    df = load_cache(Timeframe(timeframe)).to_frame()
+    df = load_cache(Timeframe(timeframe), product=product).to_frame()
     try:
         ranges = window_yranges(df, str(x0), str(x1), show_bb=show_bb, show_rsi=show_rsi)
     except (ValueError, TypeError):
@@ -451,34 +513,39 @@ def _register_callbacks(app: dash.Dash) -> None:
         Input("chart-daterange", "start_date"),
         Input("chart-daterange", "end_date"),
         State("chart-timeframe", "value"),
+        State("chart-product", "value"),
         State("chart-toggles", "value"),
     )
-    def _update_chart(_clicks, start_date, end_date, timeframe, toggles):  # type: ignore[no-untyped-def]
+    def _update_chart(_clicks, start_date, end_date, timeframe, product, toggles):  # type: ignore[no-untyped-def]
         tf = Timeframe(timeframe)
         toggles = toggles or []
-        df = load_cache(tf).to_frame()
-        df = _slice_window(df, start_date, end_date, default_bars=600)
-        return build_chart(
-            df,
-            show_bb="bb" in toggles,
-            show_rsi="rsi" in toggles,
-            show_zigzag="zigzag" in toggles,
-            height=820,
-        )
+        show_bb, show_rsi, show_zz = "bb" in toggles, "rsi" in toggles, "zigzag" in toggles
+        df = load_cache(tf, product=product).to_frame()
+        if not start_date and not end_date:
+            load_bars, view_bars = _load_view_bars(tf)
+            df = df.tail(load_bars)
+            fig = build_chart(df, show_bb=show_bb, show_rsi=show_rsi, show_zigzag=show_zz, height=820)
+            if len(df) > view_bars:
+                _apply_initial_view(fig, df, view_bars, show_bb=show_bb, show_rsi=show_rsi)
+            return fig
+        df = _slice_window(df, start_date, end_date, default_bars=_MAX_LOAD_BARS)
+        return build_chart(df, show_bb=show_bb, show_rsi=show_rsi, show_zigzag=show_zz, height=820)
 
     @app.callback(
         Output("chart-graph", "figure", allow_duplicate=True),
         Input("chart-graph", "relayoutData"),
         State("chart-graph", "figure"),
         State("chart-timeframe", "value"),
+        State("chart-product", "value"),
         State("chart-toggles", "value"),
         prevent_initial_call=True,
     )
-    def _autoscale_chart_y(relayout, figure, timeframe, toggles):  # type: ignore[no-untyped-def]
+    def _autoscale_chart_y(relayout, figure, timeframe, product, toggles):  # type: ignore[no-untyped-def]
         return _autoscale_figure(
             relayout,
             figure,
             timeframe,
+            product=product,
             show_bb="bb" in (toggles or []),
             show_rsi="rsi" in (toggles or []),
         )
