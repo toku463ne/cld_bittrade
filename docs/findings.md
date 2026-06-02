@@ -7,6 +7,68 @@ via the probe scripts in `src/backtest/analysis/`.
 
 ---
 
+## 2026-06-02 (later) — Daily momentum: a lead that failed validation
+
+### Headline
+
+Tested whether a **daily** timeframe escapes the intraday dead-end (intraday
+mean-reverts; daily momentum is a different, well-evidenced phenomenon). It
+produced the project's **first positive gross edge** — but it **failed
+validation**: the result is in-sample / regime-only, out-of-sample negative, not
+statistically significant, and largely long-side beta. **Reject.**
+
+### Does daily "clear the spread issue"? No — it swaps spread for SWAP carry.
+
+On daily bars the bid/ask spread is negligible vs a 2–4% daily move. But a daily
+strategy **holds for days**, paying the bitFlyer FX/CFD **SWAP point**
+(~0.04%/day ≈ **4 bp/day**, a flat charge to open positions at the daily clearing).
+Always-in-market that is ~14.6%/yr of carry. Daily does not remove cost; it
+relocates it from a one-time spread to a per-day carry that, on multi-day holds,
+**exceeds** the spread it removed. (SWAP rate is an estimate — verify before trust.)
+
+### Signals (GMO daily, 5.1y, buy & hold = +67%)
+
+`src/backtest/analysis/daily_momentum_probe.py` (signals) +
+`daily_momentum_validate.py` (rigor). NET includes swap.
+
+- **Time-series momentum** (sign of trailing L-day return, always in market):
+  L=30 gross Sharpe **0.82** / net **0.55** (+151%); L=60 net 0.26; L=120 net 0.10.
+- **Donchian breakout** (Turtle): 55/20 gross +76% / net +31% (Sharpe 0.09, n=23);
+  20/10 net-negative.
+
+### Why it fails validation (TSMOM-30, the strongest)
+
+| test | result |
+|------|--------|
+| Full-sample net Sharpe | +0.55, **t = 1.23** (insignificant; ~2 needed) |
+| IS net (2021–2025) | Sharpe +0.66, +153% |
+| **OOS net** (2025-05→2026-06) | **Sharpe −0.06, −2%** |
+| Per-year net ≥ 0 | **3/6 years** (ship gate ≈ 4/5) |
+| Long vs short contribution | long **+187%** / short +37% |
+
+The edge lives entirely in strong-trend years (2021/2023/2024); the choppier
+held-out year is flat-negative → trips the project's own **OVERFIT** flag. There is
+*some* genuine crisis-alpha (2022: strat −10% vs B&H **−73%** — it shorted the
+crash), but it is not persistent and most of the gross is just being long in a bull
+market. Donchian 55/20 also flips OOS-negative (IS +48% → OOS −17%).
+
+### The structural reason it can't be confirmed here
+
+Time-series momentum is real, but its statistical power comes from **breadth** —
+CTAs run it across *dozens* of markets at once, and the diversification makes the
+Sharpe reliable. On a **single BTC/JPY instrument over ~5 years** (≈5 independent
+trend regimes) it is inherently underpowered; you cannot reach significance, and
+OOS here it is negative. Cross-market breadth is out of scope for this
+single-instrument bot.
+
+### Verdict
+
+Least-dead idea of the project (real theory, positive gross, genuine 2022
+crash-avoidance) but **not shippable**: OOS-negative, fails per-year consistency,
+insignificant, mostly beta. Does not change the overall conclusion below.
+
+---
+
 ## 2026-06-02 — No directional edge on deep data; the fee model was wrong
 
 ### Headline
