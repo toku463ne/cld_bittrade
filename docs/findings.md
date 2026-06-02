@@ -90,6 +90,23 @@ fills beyond the level). So on 1h the level is **directionally empty both ways**
 fade fails, breakout fails — and no entry mechanic (early-peak, limit, or stop)
 can fill into a signal with no edge. Levels don't predict, period.
 
+And the **confirmed-bounce stop** (reach the level, arm a stop just beyond it,
+enter only if price reverses back through the trigger — filtering breakdowns)?
+`src/backtest/analysis/confirmed_bounce_stop_probe.py` on 1h: with realistic
+gap-aware fills, a small trigger (0.5%) is **identical to the plain fade** (DR ~0.51,
+−EV — ~all touches "confirm" so it filters nothing), and a *large* trigger (2–3%)
+that genuinely filters breakdowns makes DR **worse** (0.45–0.47): you enter after
+the easy bounce, at a worse price, into the exhaustion. The breakdown-filter
+intuition backfires because the level signal is empty — confirming a reversal just
+gets you in late on a non-edge.
+
+> **Fill-realism lesson (important).** The *first* run of this probe showed DR 0.65 /
+> mean_r **+0.43%** — a huge fake edge from a **fill bug**: it credited the stop fill
+> at the trigger price even when the bar gapped *above* it, handing the long a
+> fantasy entry near the low. The `conf% = 100%` tell flagged it; filling at the
+> gapped open instead erased the edge entirely. A naive stop-fill backtest will
+> *manufacture* alpha — model the gap, or you will ship noise.
+
 ---
 
 ## 2026-06-02 — No directional edge on deep data; the fee model was wrong
