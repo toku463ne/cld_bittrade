@@ -29,8 +29,13 @@ class FireEvent:
         legs: Optional adaptive-volatility context (e.g. recent zigzag leg sizes,
             oldest-first) for exit sizing. Empty for detectors that don't use it.
         ref_time: Optional reference level this fire keys off (e.g. the
-            "outstanding" peak for zigzag_bounce). ``None`` if not applicable.
+            "outstanding" peak for zigzag_bounce, or the *recent* anchor of a
+            trendline). ``None`` if not applicable.
         ref_price: Price of that reference level.
+        ref2_time: Optional second reference point. For a two-anchor (sloped-line)
+            fire this is the *older* anchor, so ``ref2 -> ref`` defines a line; the
+            viz draws it. ``None`` for single-level fires (no current sign sets it).
+        ref2_price: Price of that second reference level.
     """
 
     fired_at: datetime
@@ -40,6 +45,8 @@ class FireEvent:
     legs: tuple[float, ...] = ()
     ref_time: datetime | None = None
     ref_price: float | None = None
+    ref2_time: datetime | None = None
+    ref2_price: float | None = None
 
 
 class Sign(ABC):

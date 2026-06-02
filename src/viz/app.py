@@ -632,8 +632,9 @@ def main() -> None:
     """
     configure_logging(get_settings().log_level)
     debug = os.getenv("VIZ_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+    port = int(os.getenv("VIZ_PORT", "8050"))
     app = create_app()
-    app.run(host="0.0.0.0", port=8050, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=debug)
 
 
 if __name__ == "__main__":

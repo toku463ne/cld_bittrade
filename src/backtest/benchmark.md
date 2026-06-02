@@ -91,72 +91,70 @@ periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
 
 ## zigzag_bounce
 
-_Last run: 2026-05-31 23:35 (INTERIM) via `scripts/rebenchmark_sign.sh zigzag_bounce 1h` + `backtest.cycle`. **Defaults: ambiguous-wall matching** (`wall_match=True`, `wall_window=120` ≈ 5d — match the early peak to the nearest-in-price confirmed wall, so a ≤tol overshoot-and-revert fires) **+ no-chase filter** (`reject_past_peak=True` — skip a fire whose entry already broke past the most recent opposite-type swing peak). Same-type level matching. Exit: tp 1.0 / sl 1.0 / max_bars 48. Portfolio NET of fees._
+_Last run: 2026-06-02 via `scripts/rebenchmark_sign.sh zigzag_bounce 1h GMO_BTC_JPY` + `backtest.cycle --product GMO_BTC_JPY`. Same defaults (ambiguous wall matching `wall_match=True` + no-chase `reject_past_peak=True`; exit tp 1.0 / sl 1.0 / max_bars 48). Portfolio NET of fees._
 
-**Data window:** 2026-04-30 → 2026-05-31 UTC+9 — 750 × 1h bars (~31 days, one
-calendar month). In-sample = first 80%, OOS = most recent 20%.
+**Data window: DEEP — GMO_BTC_JPY 1h, 2021-04-15 → 2026-06-02, 44,718 × 1h bars
+(~5 years).** In-sample = first 80%, OOS = most recent 20%. (Supersedes the prior
+thin 1-month FX_BTC_JPY window — the `--product` flag and full GMO backfill are
+now done.)
 
-> ⚠️ **INTERIM — REJECT; the two defaults below were chosen by judgment, not by
-> passing the gate.** (1) **Wall matching** (`wall_match`) is the best selection
-> on this one month vs the prior extreme-based one (IS net −183→+125, Sharpe
-> −0.105→+0.060, fires 17→25, DR 0.412→0.480). (2) **No-chase** (`reject_past_peak`)
-> drops entries that already ran past the recent swing peak (e.g. the 5/11 long
-> that filled +2.45% above its support and stopped out); it *slightly* lowers
-> this month's net via a single-position cascade (a downstream winner gets
-> reshuffled out) but enforces a sound entry rule and improves max DD. Both still
-> leave the strategy **REJECT** (OOS 0 trades, per-month validate FAILs,
-> calibration weak ρ≈0.15). Set `wall_match=False` / `reject_past_peak=False` for
-> the prior behavior.
+> ⚠️ **REJECT (deep data) — the apparent edge was sample-illusion.** On 5 years of
+> real history the directional rate collapses to a **coin flip (DR 0.511, n=1308)**
+> and the portfolio loses money in and out of sample. The prior "best config so
+> far / IS Sharpe +0.022" verdict was built on ~1 month of thin FX data (DR
+> 0.48–0.62, 7–25 trades) and does **not** survive depth. Do not ship; do not
+> treat any wall/no-chase tuning as validated.
 
-### Multi-Month Benchmark (in-sample)
+### Multi-Month Benchmark (in-sample, signal-level — diagnostic only)
 
-| period | n_fires | DR | mean_r | perm_p |
-|--------|---------|------|----------|--------|
-| 2026-05 | 23 | 0.478 | -0.00050 | 1.000 |
+| span | n_fires | DR | mean_r | perm_p |
+|------|---------|------|----------|--------|
+| all months (2021-04 → 2025-05 IS) | 1308 | 0.511 | +0.0005 | 1.000 (every month) |
+
+Monthly DR scatters 0.35–0.71 with mean_r mostly ±0.00x and perm_p=1.000
+throughout — no month shows significance. Coin-flip aggregate.
 
 ### Regime-Split Analysis (ATR bear/bull)
 
 | regime | n | DR | mean_r |
 |--------|---|-------|---------|
-| all  | 23 | 0.478 | -0.0005 |
-| bear | 2  | 0.500 | -0.0101 |
-| bull | 21 | 0.476 | +0.0005 |
+| all  | 1308 | 0.511 | +0.0005 |
+| bear | 41   | 0.415 | -0.0028 |
+| bull | 1267 | 0.515 | +0.0006 |
 
 ### Score Calibration
 
 | metric | value |
 |--------|-------|
-| n | 23 |
-| Spearman ρ | +0.150 |
-| Q4 − Q1 spread | +0.0060 |
+| n | 1308 |
+| Spearman ρ | +0.027 |
+| Q4 − Q1 spread | +0.0017 |
 
-### OOS (most recent 20%)
-
-Portfolio OOS produced **0 trades** — the out-of-sample leg of the ship gate is
-unexercisable on this one-month window.
+ρ≈0 on deep data: `sign_score` does not rank forward return (the ρ≈0.15 on the
+1-month sample was noise).
 
 ### Portfolio metrics (ship criteria) — NET of fees
 
 | metric | in-sample | OOS |
 |--------|-----------|-----|
-| Sharpe | +0.022 | 0.000 (0 trades) |
-| Max DD | 0.0152 | — |
-| # trades | 7 | 0 |
-| Trading fees | 175.7 JPY | — |
-| Net PnL (min lot) | +40 JPY | — |
-| Buy-and-hold BTC/JPY (gross) | -0.0311 | — |
+| Sharpe | **-0.098** | **-0.054** |
+| Max DD | 1.7414 | 0.3226 |
+| # trades | 498 | 127 |
+| Trading fees | 6,600.9 JPY | — |
+| Net PnL (min lot) | **-9,070 JPY** | -3,307 JPY |
+| Buy-and-hold BTC/JPY (gross) | **+0.6662** | — |
 
-**Verdict: REJECT (interim) — best config so far, made the default.** vs the
-prior extreme-based selection, wall matching flips the in-sample portfolio
-positive and catches overshoot-and-revert bounces it missed (e.g. the 5/15 short
-off the 12.92M wall, TP); the no-chase filter then drops entries that ran past
-the recent swing peak (e.g. the 5/11 chase long), trimming net slightly this
-month (single-position cascade artifact) but improving max DD (0.0190→**0.0152**)
-and enforcing a sound rule. Net: IS Sharpe **+0.022**, net **+40 JPY**. **Still
-REJECT**: OOS 0 trades (gate unexercisable), per-month validate FAILs, mean_r
-−0.0005 net of fees, calibration weak (ρ≈0.15). A config that *trades* a touch
-better this one month, not a demonstrated edge. Re-validate once forward history
-gives the consistency gate and an OOS something to test.
+**ship = False. OVERFIT flag raised** (OOS Sharpe < 0).
+
+**Verdict: REJECT (deep data, high confidence).** Across ~5 years / 498 IS trades,
+zigzag_bounce is net-negative (IS Sharpe −0.098, OOS −0.054) and far below
+buy-and-hold (+0.67 gross, a bull era). DR 0.511 = coin flip; calibration ρ≈0.
+This closes the question the thin FX window left open: there is **no demonstrated
+mean-reversion edge** here either — consistent with the trend-following probes,
+which were all net-negative on deep GMO data too. Nothing in the project ships on
+deep history. The wall/no-chase/dominant tuning below was all measured on the
+1-month sample and is **not** validated — re-sweep only if a fresh hypothesis
+motivates it.
 
 > The opt-in notes below were measured **vs the prior extreme-based default**
 > (`wall_match=False`); re-sweep against the new wall baseline once data is deep.
