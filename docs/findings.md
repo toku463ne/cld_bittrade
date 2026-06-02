@@ -81,6 +81,15 @@ refinement moot: a better fill can't rescue a worse-than-random direction (and
 adverse selection on resting limits would make the real fills worse than this
 already-negative OHLC estimate).
 
+And the **stop/breakout** entry (trade the *break* of the level, not the fade)?
+`src/backtest/analysis/level_reaction_probe.py` on 1h: across tol 0.3–1% and
+horizon 6–24 bars, **fade DR ≈ 0.50–0.52** (mildly −EV) and **breakout DR ≈
+0.45–0.48** (below chance). Breakout `mean_r` turns faintly positive only at long
+horizons (the momentum tail) but is tiny, sub-threshold, and optimistic (a stop
+fills beyond the level). So on 1h the level is **directionally empty both ways** —
+fade fails, breakout fails — and no entry mechanic (early-peak, limit, or stop)
+can fill into a signal with no edge. Levels don't predict, period.
+
 ---
 
 ## 2026-06-02 — No directional edge on deep data; the fee model was wrong
