@@ -26,6 +26,7 @@ from src.core.types import Timeframe, Trade
 from src.data.cache import load_cache
 from src.logging_setup import configure_logging
 from src.simulator import Simulator
+from src.simulator.simulator import DEFAULT_FEE_RATE
 from src.strategy.registry import all_strategies, get_strategy
 
 
@@ -86,7 +87,12 @@ def _per_period_breakdown(
 
 
 def run_cycle(
-    strategy_name: str, timeframe: Timeframe, *, product: str | None = None, size: float = 0.001
+    strategy_name: str,
+    timeframe: Timeframe,
+    *,
+    product: str | None = None,
+    size: float = 0.001,
+    fee_rate: float | None = None,
 ) -> CycleResult:
     """Backtest one strategy and compute in-sample / OOS / benchmark metrics.
 
@@ -95,6 +101,9 @@ def run_cycle(
         timeframe: Bar timeframe.
         product: Product code (defaults to configured).
         size: Position size in BTC.
+        fee_rate: Per-side taker cost (slippage) as a fraction of price. ``None``
+            uses the simulator default (FX_BTC_JPY is commission-free; the default
+            models taker half-spread slippage). Pass explicitly for cost sweeps.
 
     Returns:
         A :class:`CycleResult`.
@@ -109,8 +118,9 @@ def run_cycle(
         )
     in_bars, oos_bars = split_in_out_sample(bars)
 
-    in_res = Simulator(get_strategy(strategy_name), size=size).run(in_bars)
-    oos_res = Simulator(get_strategy(strategy_name), size=size).run(oos_bars)
+    rate = DEFAULT_FEE_RATE if fee_rate is None else fee_rate
+    in_res = Simulator(get_strategy(strategy_name), size=size, fee_rate=rate).run(in_bars)
+    oos_res = Simulator(get_strategy(strategy_name), size=size, fee_rate=rate).run(oos_bars)
     m_in = portfolio_metrics(in_res.trades)
     m_oos = portfolio_metrics(oos_res.trades)
 
@@ -148,6 +158,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run a strategy backtest cycle.")
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'.")
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="5m")
+    parser.add_argument(
+        "--product", default=None, help="Product code (default: configured)."
+    )
+    parser.add_argument(
+        "--fee", type=float, default=None,
+        help="Per-side taker slippage (fraction). Default: simulator default.",
+    )
     args = parser.parse_args()
 
     from src.config import get_settings
@@ -155,7 +172,7 @@ def main() -> None:
     configure_logging(get_settings().log_level)
     names = all_strategies() if args.strategy == "all" else [args.strategy]
     for name in names:
-        run_cycle(name, Timeframe(args.timeframe))
+        run_cycle(name, Timeframe(args.timeframe), product=args.product, fee_rate=args.fee)
 
 
 if __name__ == "__main__":

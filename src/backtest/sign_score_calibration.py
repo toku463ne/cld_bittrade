@@ -96,12 +96,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Score calibration (Spearman + quartile EV).")
     parser.add_argument("--sign", required=True)
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="5m")
+    parser.add_argument(
+        "--product", default=None, help="Product code (default: configured)."
+    )
     args = parser.parse_args()
 
     from src.config import get_settings
 
     configure_logging(get_settings().log_level)
-    cal = calibrate(args.sign, Timeframe(args.timeframe))
+    cal = calibrate(args.sign, Timeframe(args.timeframe), product=args.product)
     logger.info(
         "n={} spearman_rho={:.4f} quartile_mean_r={} Q4-Q1={:.4f}",
         cal.n,

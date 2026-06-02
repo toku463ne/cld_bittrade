@@ -53,12 +53,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Regime-split (ATR bear/bull) analysis.")
     parser.add_argument("--sign", required=True)
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="5m")
+    parser.add_argument(
+        "--product", default=None, help="Product code (default: configured)."
+    )
     args = parser.parse_args()
 
     from src.config import get_settings
 
     configure_logging(get_settings().log_level)
-    result = regime_split(args.sign, Timeframe(args.timeframe))
+    result = regime_split(args.sign, Timeframe(args.timeframe), product=args.product)
     for regime, m in result.items():
         logger.info(
             "{:>5} | n={:<5} DR={:.3f} mean_r={:.4f}", regime, m.n, m.dr, m.mean_r

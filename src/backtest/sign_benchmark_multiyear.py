@@ -159,12 +159,17 @@ def main() -> None:
         default=["benchmark"],
         help="One or more phases to run in order.",
     )
+    parser.add_argument(
+        "--product", default=None, help="Product code (default: configured)."
+    )
     args = parser.parse_args()
 
     from src.config import get_settings
 
     configure_logging(get_settings().log_level)
-    run_multiyear(args.sign, Timeframe(args.timeframe), phases=args.phase)
+    run_multiyear(
+        args.sign, Timeframe(args.timeframe), phases=args.phase, product=args.product
+    )
 
 
 if __name__ == "__main__":
