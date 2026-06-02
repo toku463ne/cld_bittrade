@@ -67,6 +67,20 @@ Least-dead idea of the project (real theory, positive gross, genuine 2022
 crash-avoidance) but **not shippable**: OOS-negative, fails per-year consistency,
 insignificant, mostly beta. Does not change the overall conclusion below.
 
+### Addendum — daily *bounce* (mean-reversion at levels) is anti-predictive
+
+Also tested the mirror idea — does price *bounce* at prior daily zigzag levels (a
+daily zigzag_bounce, motivating a maker limit-at-the-level entry)?
+`src/backtest/analysis/daily_bounce_signal_probe.py` (signal DR/EV only — does not
+model limit fills). Across every tolerance (0.5–2%) and horizon (3–10 d), **DR is
+0.31–0.51 and mean_r is negative** (−0.9% to −3.3%/event); the long side fails even
+*with* the +67% up-drift as a tailwind. So daily levels **break through more than
+they hold** — the exact mirror of the momentum result (daily *continues*, it does
+not *fade*). This kills the daily-bounce signal and makes the maker-limit-entry
+refinement moot: a better fill can't rescue a worse-than-random direction (and
+adverse selection on resting limits would make the real fills worse than this
+already-negative OHLC estimate).
+
 ---
 
 ## 2026-06-02 — No directional edge on deep data; the fee model was wrong
