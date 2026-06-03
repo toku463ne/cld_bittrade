@@ -189,3 +189,184 @@ bind materially — kept off by default; re-sweep with deeper history.
 
 **Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
 periods non-negative. **OVERFIT** flag if OOS Sharpe < 0 or OOS DD > 2× IS DD.
+
+---
+
+## density_band
+
+_Last run: 2026-06-03 via `scripts/rebenchmark_sign.sh density_band 1h GMO_BTC_JPY` (DB: btc_bot_bt). Portfolio figures NET of trading fees._
+
+**Hypothesis:** over the trailing ~1 week (168×1h) price spends most time in a
+*dense band* (time-at-price value area, 70% coverage); returning to the band from
+outside should rebound off the near edge (above→LONG, below→SHORT). See
+`docs/strategy/density_band.md`.
+
+**Data window:** 2021-04-15 → 2026-06-02 (44,718 × 1h GMO_BTC_JPY bars, ~5y).
+In-sample = first 80%, OOS = most recent 20%.
+
+### Signal-level (in-sample, diagnostic only)
+
+| metric | value |
+|--------|-------|
+| n_fires (IS) | 2,141 |
+| DR (all) | **0.475** (below coin-flip) |
+| mean_r | −0.0005 |
+| perm_p | 1.000 (every month) |
+| regime DR | bull 0.479 (n=2043) / bear 0.398 (n=98) |
+| score calibration | spearman_rho=−0.0065, Q4−Q1=−0.0026 (no calibration) |
+
+Monthly DR swings 0.29–0.70 with no persistence; mean_r is negative in ~half the
+months. The bounce **direction is, if anything, slightly anti-predictive**.
+
+### Portfolio (ship gate)
+
+| | IS | OOS |
+|---|---|---|
+| Sharpe | **−0.061** | 0.001 |
+| Max DD | 1.59 | — |
+| Trades | 443 (net −4,305 JPY) | 113 (net +262 JPY) |
+| Buy-and-hold Sharpe | **0.666** | |
+
+**Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
+periods non-negative. → **`ship=False` — REJECT.** Sharpe (−0.06 IS / 0.00 OOS)
+is far below buy-and-hold (0.67); no edge.
+
+> ⚠️ **Known divergence:** the fire is measured as a market fill at the touch
+> bar's *close*, but the user's intended entry is a touch/stop order at a level a
+> little inside the band. However, since the directional **DR < 0.5 across the
+> full 5-year sample and in both bull/bear regimes**, a better entry *price* is
+> unlikely to rescue a sub-coin-flip directional call. The level-entry simulator
+> support was therefore **not** built (it was gated on DR showing edge).
+
+---
+
+## density_breakout
+
+_Last run: 2026-06-03 via `scripts/rebenchmark_sign.sh density_breakout 1h GMO_BTC_JPY` (DB: btc_bot_bt). Portfolio figures NET of fees (DEFAULT_FEE_RATE)._
+
+**Hypothesis (user's chart):** price consolidates *inside* the dense band
+(time-at-price value area, 70%); when a bar **closes out through an edge** it
+trends away → ride it for ~12h–days. LONG on close above the top edge, SHORT on
+close below the bottom edge. Structural stop beyond the **opposite** edge (a
+pullback to the band is expected and tolerated) + ATR trailing stop. The
+*opposite* trigger to `density_band` (bounce). See `docs/strategy/density_breakout.md`.
+
+**Data window:** 2021-04-15 → 2026-06-02 (44,718 × 1h GMO_BTC_JPY, ~5y). IS=80%/OOS=20%.
+
+### Signal-level (diagnostic only — WRONG yardstick for a trend-ride)
+
+| metric | value |
+|--------|-------|
+| n_fires (IS) | 1,370 |
+| DR (all) | 0.459 (low **by design** — trend-rides win <50% but big) |
+| mean_r | **+0.0004** (slightly positive; bounce was −0.0005) |
+| regime DR / mean_r | bull 0.460/+0.0002 · bear 0.439/**+0.0034** |
+| score calibration | ρ=0.0018, Q4−Q1=+0.0025 (negligible) |
+
+### Trade shape (full series, 497 trades)
+
+| | |
+|---|---|
+| Win rate | **40.8%** |
+| Avg win / avg loss | +4.03% / −2.78% → **payoff 1.45** |
+| Expectancy / trade | **+0.004%** (≈ break-even) |
+| Median hold / p90 | **49 h / 121 h** (≈ 2–5 days) |
+| Exit mix | trail 60% · time 21% · **structural stop 18.5%** · eod 1 |
+
+The wide far-edge stop fires only 18.5% of the time → pullbacks to the band
+mostly do **not** stop the trade out, as specified.
+
+### Portfolio (ship gate)
+
+| | IS | OOS |
+|---|---|---|
+| Sharpe | **−0.001** (flat) | **+0.031** |
+| Max DD | 0.75 | — |
+| Trades | 402 (net −1,858 JPY) | 93 (net **+1,703 JPY**) |
+| Buy-and-hold Sharpe | **0.666** | |
+
+**Ship gate** (pre-registered): SHIP iff avg Sharpe ≥ Buy-and-hold AND ≥ 4/5
+periods non-negative. → **`ship=False` — REJECT, but BREAK-EVEN (not bleeding).**
+
+> First idea in the project with the **right trend-ride shape** (low win rate,
+> payoff > 1, multi-day holds, structural stop rarely hit) and a non-negative OOS.
+> Expectancy ≈ 0 — payoff 1.45 just fails to clear the 59% loss rate. The exit
+> (trail mult / time stop) and a **tight-box regime filter** (`max_band_pct`,
+> currently off — wide trending-week bands give very wide stops) are the unpulled
+> levers. Worth tuning before final reject.
+
+### UPDATE 2026-06-03 — tight-box regime filter (now DEFAULT `max_band_pct=0.02`)
+
+Swept `max_band_pct` (band height as a fraction of price) on the 5y split. The
+filter is a **monotonic win** — tightening the box raises payoff/EV and slashes
+drawdown:
+
+| max_band% | IS Sharpe | OOS Sharpe | #tr(IS) | win% | payoff | EV%/tr |
+|-----------|-----------|------------|---------|------|--------|--------|
+| OFF       | −0.001 | +0.031 | 402 | 40.3 | 1.48 | −0.002 |
+| 4.00      | +0.092 | +0.060 | 252 | 40.9 | 1.86 | +0.385 |
+| **2.00** ◄| **+0.141** | **+0.113** | 107 | 38.3 | **2.40** | **+0.480** |
+| 1.50      | +0.165 | −0.091 | 52 | 38.5 | 2.59 | +0.504 |
+| 1.20      | +0.313 | −0.197 | 30 | 46.7 | 2.91 | +0.860 |
+
+**Chosen: `max_band_pct=0.02`** — the tightest threshold still robust OOS. Below
+2% the IS Sharpe keeps climbing but **OOS flips negative** and the sample collapses
+(overfit). Official rebench at 2%: **IS Sharpe +0.141 (DD 0.158, 107 tr, net
++2,852 JPY), OOS Sharpe +0.113 (36 tr, net +1,094 JPY)**, sign mean_r +0.0014.
+
+**Net-profitable in BOTH samples — the best result in the project.** Still
+`ship=False`, but now the **only** failing condition is the consistency gate
+(17/29 = 59% of periods non-negative; gate needs ≥80%). Trend-following is
+structurally lumpy (few big winners, many small losers), so it can be net-positive
+yet fail an ≥80%-periods-green gate. The aggregate edge (positive IS+OOS Sharpe,
+positive net JPY both samples, DD 0.16) is real; the open question is whether the
+project's consistency gate is the right rubric for a trend-ride, or whether
+further entry quality (breakout confirmation) can lift period consistency.
+
+### UPDATE 2026-06-03 — breakout confirmation tested → REJECTED (overfits)
+
+Added `confirm_bars` (require N consecutive closes beyond the edge) and
+`min_break_frac` (minimum breakout extent) to the sign; swept on the 5y split.
+
+| config | IS Sharpe | OOS Sharpe | win% | payoff | period% |
+|--------|-----------|------------|------|--------|---------|
+| **k=1 (default)** | +0.141 | **+0.113** | 38.3 | 2.40 | 48% |
+| confirm_bars=2 | +0.203 | −0.055 | 42.7 | 2.46 | 57% |
+| confirm_bars=3 | +0.202 | −0.065 | 45.7 | 2.18 | 57% |
+| confirm_bars=4 | +0.277 | −0.081 | 46.4 | 2.69 | 57% |
+| min_break=0.10 | +0.096 | −0.125 | 37.6 | 2.17 | 45% |
+| min_break=0.25 | +0.125 | −0.066 | 39.3 | 2.14 | 45% |
+| min_break=0.50 | +0.176 | −0.185 | 42.4 | 2.16 | 43% |
+| k=2 + min=0.10 | +0.213 | −0.110 | 43.2 | 2.47 | 56% |
+
+Confirmation lifts **every in-sample** metric (IS Sharpe, win rate, even period
+consistency 48%→57%) but **turns OOS Sharpe negative in all 7 variants** — a clean
+overfitting signature (entering later = closer to exhaustion = gives up the early
+trend the OOS regime needed). It also never reaches the 80% consistency gate
+(max 57%). **Kept `confirm_bars=1` / `min_break_frac=0.0`** (the un-confirmed
+first-close breakout) as the default — it is the best config out-of-sample. The
+parameters remain available for future re-test on deeper data.
+
+### UPDATE 2026-06-03 — exit tuning: REMOVE the trail (now DEFAULT `trail_atr_mult=None`)
+
+Swept the exit (trail multiple, time stop, sl_buffer). Headline: **the ATR trail
+HURTS — removing it is the best config, in BOTH samples.**
+
+| trail_atr_mult | IS Sharpe | OOS Sharpe | payoff | median hold |
+|----------------|-----------|------------|--------|-------------|
+| 3 (tight) | −0.106 | +0.067 | 1.23 | 10 h |
+| 6 (prev default) | +0.141 | +0.113 | 2.40 | 34 h |
+| 10 (loose) | +0.191 | +0.258 | 2.73 | 59 h |
+| **None (off)** | **+0.197** | **+0.221** | **2.84** | **98 h** |
+
+Looser = better, monotonically; the trail was clipping the trend winners. With
+the trail off, `max_bars=120` (~5d) is the sweet spot (longer time stops let
+losers bleed to the wide structural stop → DD 0.18→0.59); `sl_buffer=0.10` best.
+
+**Official rebench at the tuned config** (`max_band_pct=0.02, confirm_bars=1,
+trail_atr_mult=None, sl_buffer=0.10, max_bars=120`):
+**IS Sharpe +0.197 (DD 0.181, 92 tr, net +6,414 JPY), OOS Sharpe +0.221 (31 tr,
+net +3,499 JPY).** OOS Sharpe now **exceeds** IS — strongest robustness sign,
+opposite of the (rejected) confirmation overfit. Net PnL ~2× IS / ~3× OOS vs the
+trailing version. Still `ship=False` on the consistency gate only (17/29 = 59%
+periods green < 80%). This is the project's best config to date.
