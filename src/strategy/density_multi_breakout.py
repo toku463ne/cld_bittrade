@@ -160,6 +160,16 @@ class DensityMultiBreakoutStrategy(Strategy):
         self._band_lo: np.ndarray = np.array([])
         self._band_hi: np.ndarray = np.array([])
 
+    def _compute_bands(
+        self, highs: list[float], lows: list[float]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Per-bar dense band over ``[t-window, t-1]`` (the 70% value area).
+
+        Overridable so variants can swap the band definition (e.g. the
+        relative-density band) while reusing the entry/exit machinery.
+        """
+        return _rolling_bands(highs, lows, self.window, self.n_bins, self.coverage)
+
     def precompute(self, bars: list[Bar]) -> dict[object, Signal] | None:  # type: ignore[override]
         """Detect all entries over the full series and cache the rolling bands.
 
@@ -172,9 +182,7 @@ class DensityMultiBreakoutStrategy(Strategy):
         highs = [b.high for b in bars]
         lows = [b.low for b in bars]
         closes = [b.close for b in bars]
-        self._band_lo, self._band_hi = _rolling_bands(
-            highs, lows, self.window, self.n_bins, self.coverage
-        )
+        self._band_lo, self._band_hi = self._compute_bands(highs, lows)
         out: dict[object, Signal] = {}
         for t in range(self.window, len(bars)):
             lo, hi = float(self._band_lo[t]), float(self._band_hi[t])
