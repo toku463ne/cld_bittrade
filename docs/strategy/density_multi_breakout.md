@@ -13,9 +13,9 @@ trails it in strong bulls).
 | **Class** | `src/strategy/density_multi_breakout.py` → `DensityMultiBreakoutStrategy` |
 | **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (≤ `max_slots`) |
 | **Indicator** | `src/indicators/density.py` (`time_at_price_profile`, `value_area`) |
-| **Default config** | `window=168, max_band_pct=0.03, max_slots=5` (walk-forward-robust) |
+| **Default config** | `window=168, max_band_pct=0.03, max_slots=5, target_min_dist_frac=1.5` (walk-forward-robust + cost-robust) |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — clears Sharpe-vs-B&H but fails the ≥80%-periods consistency gate. IS eqSharpe **+0.85** / OOS **+1.22** vs B&H **+0.64**. See §5. |
+| **Status** | `ship=False` — clears Sharpe-vs-B&H but fails the ≥80%-periods consistency gate. IS eqSharpe **+0.90** / OOS **+0.84** vs B&H **+0.64**. See §5. |
 
 ---
 
@@ -38,13 +38,16 @@ Two-bar fill (next bar's open). Up to `max_slots=5` concurrent, any direction.
 
 Per-position `ExitConfig` + one dynamic hook:
 
-- **Target** (`tp_abs`) — the nearest *pre-existing* heavy node beyond the broken
-  edge, from a 336-bar time-at-price profile at entry. This is the engine
-  (~40 % of exits): ride to the next congestion.
+- **Target** (`tp_abs`) — the heaviest *pre-existing* node at least
+  `target_min_dist_frac × band_height` (1.5×) *beyond* the broken edge, from a
+  336-bar profile at entry. The distance floor skips the box lip so the target is
+  a real next congestion (~6 % of exits, median ~22 h / +3.4%) rather than a 1-bar
+  scalp — this is the **cost-robust** setting (see §5).
 - **Far-edge structural stop** (`sl_abs`) — beyond the *opposite* edge + a
   `sl_buffer=0.10` band-height buffer, so a pullback to the box does not stop out
-  (~32 % of exits).
-- **Time stop** — 120 bars ≈ 5 days (~24 %).
+  (~48 % of exits).
+- **Time stop** — 120 bars ≈ 5 days (~41 %; with a distant target, most winners
+  now ride to the time stop).
 - **Stall** (`dynamic_exit`) — a fresh tight box forms at a new level with price
   inside it (the trend stalled into a new consolidation); minor (~3 %).
 
@@ -70,11 +73,18 @@ SHIP if:
 
 ## 5. Results
 
-**Official rebench (GMO 1h, ~5y):** IS equity Sharpe **+0.85** / OOS **+1.22**
-(vs **B&H annualised Sharpe +0.64**); 486 IS / 154 OOS trades; exit mix
-target 40 % · stop 32 % · time 24 % · stall 3 %. **`ship=False`** — it *passes*
-(a) (eqSharpe IS +0.85 ≥ B&H +0.64) but *fails* (b), the ≥80%-periods consistency
-gate (a lumpy trend-ride, like the rest of the density family).
+**Official rebench (GMO 1h, ~5y), `target_min_dist_frac=1.5`:** IS equity Sharpe
+**+0.90** / OOS **+0.84** (vs **B&H annualised Sharpe +0.64**); 460 IS / 148 OOS
+trades; exit mix stop 48 % · time 41 % · target 6 % · stall 5 %; target exits
+median ~22 h / +3.4%. **`ship=False`** — it *passes* (a) (eqSharpe IS +0.90 ≥ B&H
++0.64) but *fails* (b), the ≥80%-periods consistency gate (a lumpy trend-ride).
+
+**Cost robustness (`density_multi_target_cost.py`).** The original lip target
+(dist 0.0) had the highest calm-cost OOS (+1.36 @ 4 bp round-trip) but was the most
+spread-fragile (IS +0.09 @ 40 bp). `target_min_dist_frac=1.5` is the chosen
+default: positive IS *and* OOS even at a stressed 40 bp round-trip (IS +0.40 /
+OOS +0.07), balanced at realistic cost (IS +0.90 / OOS +0.87 @ 4 bp). Dropping the
+target entirely is worse (OOS dies at 40 bp), so a *distant* dense target helps.
 
 **Walk-forward (6 folds, `src/backtest/analysis/density_multi_walkforward.py`):**
 positive in **all 6 folds** at this config — the only cell that is, bull and bear.

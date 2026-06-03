@@ -63,13 +63,19 @@ def _next_dense(
     target_window: int,
     n_bins: int,
     min_frac: float,
+    min_dist: float = 0.0,
 ) -> float | None:
-    """Nearest pre-existing dense node beyond ``edge`` (the target), or ``None``."""
+    """Heaviest pre-existing dense node beyond ``edge`` (the target), or ``None``.
+
+    ``min_dist`` pushes the eligible zone past the box lip: a node must sit at
+    least ``min_dist`` price units beyond the broken edge, so the target is a real
+    "next" congestion rather than the top of the box just left.
+    """
     w0 = max(0, e - target_window)
     if e - w0 < 10:
         return None
     centers, weights = time_at_price_profile(highs[w0:e], lows[w0:e], n_bins)
-    mask = centers > edge if side is Side.LONG else centers < edge
+    mask = centers > edge + min_dist if side is Side.LONG else centers < edge - min_dist
     if not mask.any():
         return None
     w = weights[mask]
@@ -101,6 +107,7 @@ class DensityMultiBreakoutStrategy(Strategy):
         min_hold: int = 6,
         target_window: int = 336,
         target_min_frac: float = 0.40,
+        target_min_dist_frac: float = 1.5,
     ) -> None:
         """Initialise the strategy (defaults = the walk-forward-robust config).
 
@@ -117,6 +124,12 @@ class DensityMultiBreakoutStrategy(Strategy):
             target_window: Trailing bars for the pre-existing dense target profile.
             target_min_frac: A target node must weigh at least this fraction of
                 the profile's point-of-control to count.
+            target_min_dist_frac: The target node must sit at least this fraction
+                of the band height *beyond* the broken edge. ``1.5`` (default)
+                skips the box lip so the target is a real next congestion — this
+                is the cost-robust setting (positive IS+OOS even at a stressed
+                40 bp round-trip; see ``density_multi_target_cost.py``). ``0.0``
+                allows the nearest node (tiny scalps, fragile to spread).
 
         Raises:
             ValueError: On non-positive ``window``/``time_stop_bars`` or
@@ -140,6 +153,7 @@ class DensityMultiBreakoutStrategy(Strategy):
         self.min_hold = min_hold
         self.target_window = target_window
         self.target_min_frac = target_min_frac
+        self.target_min_dist_frac = target_min_dist_frac
         self.required_indicators = [f"density_{window}_{n_bins}"]
         self.warmup = window + 2
         self.max_buffer = window + 2
@@ -183,6 +197,7 @@ class DensityMultiBreakoutStrategy(Strategy):
             target = _next_dense(
                 highs, lows, t, near, side,
                 target_window=self.target_window, n_bins=self.n_bins, min_frac=self.target_min_frac,
+                min_dist=self.target_min_dist_frac * band_h,
             )
             cfg = ExitConfig(
                 sl_abs=abs(c - stop),

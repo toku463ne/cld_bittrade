@@ -380,23 +380,32 @@ Promotes the `density_multi_probe` research to a real, registered strategy
 `src/simulator/multi_simulator.py`). Same dense-breakout entry as
 `density_breakout` but **holds up to 5 overlapping slots** and **exits into the
 next dense zone** (target = nearest pre-existing heavy node beyond the broken
-edge, from a 336-bar profile at entry) — plus the far-edge structural stop, a
-120-bar time stop, and a small "stall" exit (a fresh tight box forms at the new
-level). Config = the walk-forward-robust cell: `window=168, max_band_pct=0.03,
-5 slots`.
+edge, ≥ `target_min_dist_frac × band_height` *beyond* the lip, from a 336-bar
+profile at entry) — plus the far-edge structural stop, a 120-bar time stop, and a
+small "stall" exit (a fresh tight box forms at the new level). Config = the
+walk-forward-robust cell: `window=168, max_band_pct=0.03, 5 slots,
+target_min_dist_frac=1.5`.
 
 **Judged by the annualised mark-to-market EQUITY Sharpe**, not per-trade Sharpe:
 overlapping positions make per-trade Sharpe understate the diversification (it is
-only ~0.12 here while the equity Sharpe is ~0.85). `run_cycle` routes any
+only ~0.1 here while the equity Sharpe is ~0.9). `run_cycle` routes any
 `max_slots > 1` strategy to the MultiSimulator and ships it iff
 `equity_sharpe_IS >= B&H_annualised_Sharpe` AND ≥80% of periods are non-negative.
 
-**Official rebench (GMO 1h, ~5y):** IS equity Sharpe **+0.85** / OOS **+1.22**
-(vs **B&H IS annualised Sharpe +0.64**); per-trade Sharpe IS +0.12 / OOS +0.14;
-486 IS / 154 OOS trades; exit mix take(target) 40% · stop 32% · time 24% ·
-stall 3% · eod 1%. **`ship=False`** — it clears the Sharpe-vs-B&H condition but
-fails the ≥80%-periods consistency gate (a lumpy trend-ride/diversifier, the same
-gate that the single-position density family fails).
+**Target distance (`target_min_dist_frac=1.5`) — the cost-robust default.** The
+original tiny target (nearest node at the box lip) exited in ~1 h at ~+0.1% — the
+most spread-fragile part. Requiring the target ≥ 1.5 band-heights beyond the edge
+turns those into real captures (median ~22 h / +3.4%) and survives a stressed
+40 bp round-trip (positive IS *and* OOS), at the cost of some calm-cost OOS. See
+`src/backtest/analysis/density_multi_target_cost.py` for the variant × cost grid
+(dist 0.0 OOS +1.36 @4bp but IS +0.09 @40bp; dist 1.5 IS +0.40 / OOS +0.07 @40bp).
+
+**Official rebench (GMO 1h, ~5y), `target_min_dist_frac=1.5`:** IS equity Sharpe
+**+0.90** / OOS **+0.84** (vs **B&H IS annualised Sharpe +0.64**); per-trade Sharpe
+IS ~+0.1; 460 IS / 148 OOS trades; exit mix stop 48% · time 41% · target 6% ·
+stall 5% · eod 1%; target exits median ~22 h / +3.4%. **`ship=False`** — it clears
+the Sharpe-vs-B&H condition but fails the ≥80%-periods consistency gate (a lumpy
+trend-ride/diversifier, the same gate the single-position density family fails).
 
 **Walk-forward (6 folds, `density_multi_walkforward.py`):** positive in **all 6
 folds** (the only config that is) — bull AND bear. But the honest anchored
