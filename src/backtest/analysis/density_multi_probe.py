@@ -71,6 +71,12 @@ class Config:
     use_target: bool = True  # False = no dense target (far-stop + time only)
     target_min_dist_frac: float = 0.0  # target node must be >= this x band-height
     #                                    BEYOND the broken edge (skip the box lip)
+    dedup_band_frac: float = 0.0  # suppress a same-side re-entry until the band
+    #   center has moved >= this x band-height from the last accepted same-side
+    #   entry (0 = off; ~1.0 = "one entry per side per dense box").
+    dedup_concurrent: bool = False  # True = dedup only against OPEN same-side
+    #   positions (re-entry allowed once the prior box position has closed),
+    #   rather than persistently against the last accepted entry.
 
 
 @dataclass(slots=True)
@@ -84,6 +90,7 @@ class _Pos:
     stop: float
     target: float | None
     band_h: float
+    band_center: float = 0.0
 
 
 def _precompute_bands(
@@ -198,6 +205,7 @@ def simulate(
     n_fires = 0
     realised = 0.0
     equity: list[float] = []
+    last_center: dict[Side, float | None] = {Side.LONG: None, Side.SHORT: None}
 
     for t in range(n):
         bar = bars[t]
@@ -223,12 +231,28 @@ def simulate(
             stop = (far - cfg.sl_buffer * band_h) if side is Side.LONG else (far + cfg.sl_buffer * band_h)
             target = _next_dense(highs, lows, t, near, side, cfg, band_h) if cfg.use_target else None
             book.append(
-                _Pos(side, bar.open, bar.timestamp, t, stop, target, band_h)
+                _Pos(side, bar.open, bar.timestamp, t, stop, target, band_h, 0.5 * (band_lo + band_hi))
             )
         pending = None
 
-        # 3. Detect a new fire at this bar -> pending for next bar.
+        # 3. Detect a new fire at this bar -> pending for next bar. Dedup: skip a
+        # same-side re-entry until the dense box has moved (one entry per side per
+        # dense), so a single breakout's re-fires don't stack correlated slots.
         sig = _entry_at(t, closes, bl, bh, cfg)
+        if sig is not None and cfg.dedup_band_frac > 0.0:
+            side, blo, bhi = sig
+            center, band_h = 0.5 * (blo + bhi), bhi - blo
+            tol = cfg.dedup_band_frac * band_h
+            if cfg.dedup_concurrent:
+                # Suppress only if an OPEN same-side position is on ~the same box.
+                if any(p.side is side and abs(center - p.band_center) < tol for p in book):
+                    sig = None
+            else:
+                lc = last_center[side]
+                if lc is not None and abs(center - lc) < tol:
+                    sig = None  # same dense box, same side -> suppressed
+                else:
+                    last_center[side] = center
         if sig is not None:
             n_fires += 1
             pending = sig
