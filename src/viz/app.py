@@ -643,6 +643,16 @@ def _format_metrics(result: object) -> str:
         f"Strategy: {result.strategy}",
         f"SHIP: {result.ship}",
         f"Buy & Hold BTC/JPY: {result.benchmark_return:+.4f}",
+    ]
+    if result.multi:
+        lines += [
+            "",
+            "MULTI-POSITION — judged by annualised EQUITY Sharpe (per-trade below"
+            " is diagnostic):",
+            f"  Equity Sharpe  IS {result.equity_sharpe_in:>+7.3f}   "
+            f"OOS {result.equity_sharpe_oos:>+7.3f}   (B&H IS {result.bench_sharpe:+.3f})",
+        ]
+    lines += [
         "",
         "                 in-sample      OOS",
         f"Sharpe         {m_in.sharpe:>10.3f} {m_oos.sharpe:>10.3f}",

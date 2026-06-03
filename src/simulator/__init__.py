@@ -5,6 +5,7 @@ filled at the open of bar T+1. Exits are evaluated bar-by-bar via
 :mod:`src.exit.rules`.
 """
 
+from src.simulator.multi_simulator import MultiSimulator
 from src.simulator.simulator import SimResult, Simulator
 
-__all__ = ["Simulator", "SimResult"]
+__all__ = ["Simulator", "SimResult", "MultiSimulator"]

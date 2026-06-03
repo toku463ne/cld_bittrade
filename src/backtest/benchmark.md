@@ -370,3 +370,41 @@ net +3,499 JPY).** OOS Sharpe now **exceeds** IS — strongest robustness sign,
 opposite of the (rejected) confirmation overfit. Net PnL ~2× IS / ~3× OOS vs the
 trailing version. Still `ship=False` on the consistency gate only (17/29 = 59%
 periods green < 80%). This is the project's best config to date.
+
+---
+
+## density_multi_breakout (multi-position promotion) — modest regime-robust diversifier
+
+Promotes the `density_multi_probe` research to a real, registered strategy
+(`src/strategy/density_multi_breakout.py`, routed through the new
+`src/simulator/multi_simulator.py`). Same dense-breakout entry as
+`density_breakout` but **holds up to 5 overlapping slots** and **exits into the
+next dense zone** (target = nearest pre-existing heavy node beyond the broken
+edge, from a 336-bar profile at entry) — plus the far-edge structural stop, a
+120-bar time stop, and a small "stall" exit (a fresh tight box forms at the new
+level). Config = the walk-forward-robust cell: `window=168, max_band_pct=0.03,
+5 slots`.
+
+**Judged by the annualised mark-to-market EQUITY Sharpe**, not per-trade Sharpe:
+overlapping positions make per-trade Sharpe understate the diversification (it is
+only ~0.12 here while the equity Sharpe is ~0.85). `run_cycle` routes any
+`max_slots > 1` strategy to the MultiSimulator and ships it iff
+`equity_sharpe_IS >= B&H_annualised_Sharpe` AND ≥80% of periods are non-negative.
+
+**Official rebench (GMO 1h, ~5y):** IS equity Sharpe **+0.85** / OOS **+1.22**
+(vs **B&H IS annualised Sharpe +0.64**); per-trade Sharpe IS +0.12 / OOS +0.14;
+486 IS / 154 OOS trades; exit mix take(target) 40% · stop 32% · time 24% ·
+stall 3% · eod 1%. **`ship=False`** — it clears the Sharpe-vs-B&H condition but
+fails the ≥80%-periods consistency gate (a lumpy trend-ride/diversifier, the same
+gate that the single-position density family fails).
+
+**Walk-forward (6 folds, `density_multi_walkforward.py`):** positive in **all 6
+folds** (the only config that is) — bull AND bear. But the honest anchored
+walk-forward (re-select the cell on past data only) is modest: 3/5 folds, mean
+test equity Sharpe +0.19. **Character: a market-neutral-ish diversifier** — beats
+buy-and-hold when B&H is down (2022 bear, recent decline), trails it in strong
+bulls. The "closer dense for more entries" idea (shorter windows) did NOT survive
+walk-forward; slot sweep confirmed 5 slots (1-slot is weak 3/6; >6 saturates).
+Numbers differ slightly from the probe (+0.71/+1.36) due to the per-position
+`evaluate_exit` ordering + distance-from-fill modeling vs the probe's absolute
+levels; entry counts and exit mix match the probe.
