@@ -55,19 +55,19 @@ def _products() -> list[str]:
     return sorted({get_settings().product_code, *found})
 
 
-def _timeframe_dropdown(id_: str) -> dcc.Dropdown:
+def _timeframe_dropdown(id_: str, value: str = "5m") -> dcc.Dropdown:
     return dcc.Dropdown(
         id=id_,
         options=[{"label": tf, "value": tf} for tf in _TIMEFRAMES],
-        value="5m",
+        value=value if value in _TIMEFRAMES else "5m",
         clearable=False,
         style={"width": "120px"},
     )
 
 
-def _product_dropdown(id_: str) -> dcc.Dropdown:
+def _product_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
     prods = _products()
-    default = get_settings().product_code
+    default = value or get_settings().product_code
     return dcc.Dropdown(
         id=id_,
         options=[{"label": p, "value": p} for p in prods],
@@ -77,12 +77,13 @@ def _product_dropdown(id_: str) -> dcc.Dropdown:
     )
 
 
-def _strategy_dropdown(id_: str) -> dcc.Dropdown:
+def _strategy_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
     names = all_strategies()
+    default = value if value in names else (names[0] if names else None)
     return dcc.Dropdown(
         id=id_,
         options=[{"label": n, "value": n} for n in names],
-        value=names[0] if names else None,
+        value=default,
         clearable=False,
         style={"width": "260px"},
     )
@@ -136,9 +137,11 @@ def _backtest_tab() -> html.Div:
             html.Div(
                 [
                     html.Label("Timeframe"),
-                    _timeframe_dropdown("bt-timeframe"),
+                    _timeframe_dropdown("bt-timeframe", value="1h"),
+                    html.Label("Product"),
+                    _product_dropdown("bt-product", value="GMO_BTC_JPY"),
                     html.Label("Strategy"),
-                    _strategy_dropdown("bt-strategy"),
+                    _strategy_dropdown("bt-strategy", value="density_breakout"),
                     dcc.Checklist(
                         id="bt-toggles",
                         options=[
@@ -557,13 +560,14 @@ def _register_callbacks(app: dash.Dash) -> None:
         Input("tabs", "value"),
         Input("bt-run", "n_clicks"),
         Input("bt-timeframe", "value"),
+        Input("bt-product", "value"),
         Input("bt-strategy", "value"),
         Input("bt-toggles", "value"),
         Input("bt-graph", "relayoutData"),
         Input("bt-graph", "hoverData"),
         State("bt-graph", "figure"),
     )
-    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, toggles, relayout, hoverdata, figure):  # type: ignore[no-untyped-def]
+    def _backtest_tab_cb(active_tab, _clicks, timeframe, product, strategy, toggles, relayout, hoverdata, figure):  # type: ignore[no-untyped-def]
         # Single owner of bt-graph so a graph-mount relayout can't race the render
         # through a duplicate output. RENDER unless this is unambiguously a
         # zoom or an entry-marker hover; that keeps rendering deterministic
@@ -586,13 +590,13 @@ def _register_callbacks(app: dash.Dash) -> None:
 
         # Tab opened / timeframe / strategy / toggles / Run button / mount -> render.
         tf = Timeframe(timeframe)
-        cache = load_cache(tf)
+        cache = load_cache(tf, product=product)
         df = cache.to_frame()
         if df.empty or not strategy:
-            return build_chart(df), "No data for this timeframe. Collect/backtest first.", {}
+            return build_chart(df), "No data for this timeframe/product. Collect/backtest first.", {}
         # run_cycle already simulates in-sample + OOS; reuse its trades for the
         # chart instead of a third full simulation.
-        result = run_cycle(strategy, tf)
+        result = run_cycle(strategy, tf, product=product)
         fig = build_chart(
             df,
             show_bb=show_bb,
