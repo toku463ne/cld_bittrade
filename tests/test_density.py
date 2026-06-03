@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from src.core.types import Side
-from src.indicators.density import time_at_price_profile, value_area
+from src.indicators.density import relative_dense_band, time_at_price_profile, value_area
 from src.signs.density_band import DensityBandSign
 from src.signs.density_breakout import DensityBreakoutSign
 
@@ -32,6 +32,29 @@ def test_profile_concentrates_where_price_dwells() -> None:
     poc, lo, hi = value_area(centers, weights, coverage=0.70)
     assert 100.0 <= poc <= 102.0
     assert lo >= 99.0 and hi <= 104.0  # value area hugs the dwell zone
+
+
+def test_relative_dense_band_finds_peak_in_wide_range() -> None:
+    # Strong concentration around 100 plus wide excursions: the absolute value
+    # area would be wide, but the relative band hugs the peak.
+    highs = [100.5] * 30 + [120.0, 80.0, 121.0, 79.0]
+    lows = [99.5] * 30 + [118.0, 78.0, 119.0, 77.0]
+    centers, weights = time_at_price_profile(highs, lows, n_bins=80)
+    band = relative_dense_band(centers, weights, sigma_r=1.0, min_poc_ratio=2.0)
+    assert band is not None
+    lo, hi = band
+    assert lo <= 100.0 <= hi
+    assert (hi - lo) < 10.0  # hugs the peak, not the full 80->120 range
+
+
+def test_relative_dense_band_rejects_flat_period() -> None:
+    # Near-uniform coverage (no real dense): the POC backstop returns None.
+    rng = np.random.default_rng(11)
+    base = list(100.0 + rng.uniform(-10, 10, 60))
+    highs = [c + 0.5 for c in base]
+    lows = [c - 0.5 for c in base]
+    centers, weights = time_at_price_profile(highs, lows, n_bins=40)
+    assert relative_dense_band(centers, weights, sigma_r=1.0, min_poc_ratio=3.0) is None
 
 
 def test_flat_bar_deposits_full_weight() -> None:

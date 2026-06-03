@@ -105,6 +105,64 @@ def time_at_price_profile(
     return centers, weights
 
 
+def relative_dense_band(
+    centers: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    sigma_r: float = 1.0,
+    min_poc_ratio: float = 2.0,
+) -> tuple[float, float] | None:
+    """Dense band defined *relative* to the period's own density distribution.
+
+    Instead of an absolute width filter, a price level is "dense" when its
+    time-weight stands out from the window's distribution: ``weight >= mean +
+    sigma_r * std``. The band is the contiguous run of such bins around the
+    Point-of-Control (busiest bin), so it adapts to the regime — it appears in any
+    period with a real concentration, regardless of the absolute price range, and
+    a higher ``sigma_r`` demands a sharper peak (narrower band, fewer fires).
+
+    A scale-free backstop rejects structureless periods: the POC must hold at
+    least ``min_poc_ratio`` times the uniform-expectation weight
+    (``total / n_bins``); a roughly uniform histogram (no real dense) fails it.
+
+    Args:
+        centers: Bin centre prices (length ``n``), ascending.
+        weights: Time weight per bin (length ``n``).
+        sigma_r: Threshold in standard deviations above the mean bin weight.
+        min_poc_ratio: Minimum POC weight as a multiple of the uniform weight.
+
+    Returns:
+        ``(band_lo, band_hi)`` bin-centre bounds of the dense band, or ``None`` if
+        the period has no real concentration (backstop) or a degenerate band.
+
+    Raises:
+        ValueError: On length mismatch, empty input, or non-positive ``sigma_r``.
+    """
+    if centers.shape != weights.shape:
+        raise ValueError("centers and weights must have the same length")
+    n = centers.size
+    if n == 0:
+        raise ValueError("profile must be non-empty")
+    if sigma_r <= 0.0:
+        raise ValueError("sigma_r must be > 0")
+
+    total = float(weights.sum())
+    if total <= 0.0:
+        return None
+    poc_i = int(np.argmax(weights))
+    if float(weights[poc_i]) < min_poc_ratio * (total / n):
+        return None  # too flat / no real dense zone
+
+    thr = float(weights.mean()) + sigma_r * float(weights.std())
+    lo_i = hi_i = poc_i
+    while lo_i - 1 >= 0 and float(weights[lo_i - 1]) >= thr:
+        lo_i -= 1
+    while hi_i + 1 < n and float(weights[hi_i + 1]) >= thr:
+        hi_i += 1
+    if hi_i <= lo_i:
+        return None  # single-bin spike: too tight to trade as a box
+    return float(centers[lo_i]), float(centers[hi_i])
+
+
 def value_area(
     centers: NDArray[np.float64],
     weights: NDArray[np.float64],
