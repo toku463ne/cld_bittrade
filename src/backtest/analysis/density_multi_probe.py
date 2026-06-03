@@ -68,6 +68,9 @@ class Config:
     min_hold: int = 6
     target_window: int = 336
     target_min_frac: float = 0.40  # a target node must be >= this x the POC weight
+    use_target: bool = True  # False = no dense target (far-stop + time only)
+    target_min_dist_frac: float = 0.0  # target node must be >= this x band-height
+    #                                    BEYOND the broken edge (skip the box lip)
 
 
 @dataclass(slots=True)
@@ -100,14 +103,23 @@ def _precompute_bands(
 
 
 def _next_dense(
-    highs: list[float], lows: list[float], e: int, edge: float, side: Side, cfg: Config
+    highs: list[float], lows: list[float], e: int, edge: float, side: Side, cfg: Config,
+    band_h: float = 0.0,
 ) -> float | None:
-    """Nearest pre-existing dense node beyond ``edge`` (the target), or ``None``."""
+    """Heaviest pre-existing dense node beyond ``edge`` (the target), or ``None``.
+
+    ``cfg.target_min_dist_frac`` pushes the eligible zone past the box lip: a node
+    must sit at least ``target_min_dist_frac x band_h`` beyond the broken edge.
+    """
     w0 = max(0, e - cfg.target_window)
     if e - w0 < 10:
         return None
     centers, weights = time_at_price_profile(highs[w0:e], lows[w0:e], cfg.n_bins)
-    mask = centers > edge if side is Side.LONG else centers < edge
+    floor = cfg.target_min_dist_frac * band_h
+    if side is Side.LONG:
+        mask = centers > edge + floor
+    else:
+        mask = centers < edge - floor
     if not mask.any():
         return None
     w = weights[mask]
@@ -209,7 +221,7 @@ def simulate(
             near = band_hi if side is Side.LONG else band_lo
             far = band_lo if side is Side.LONG else band_hi
             stop = (far - cfg.sl_buffer * band_h) if side is Side.LONG else (far + cfg.sl_buffer * band_h)
-            target = _next_dense(highs, lows, t, near, side, cfg)
+            target = _next_dense(highs, lows, t, near, side, cfg, band_h) if cfg.use_target else None
             book.append(
                 _Pos(side, bar.open, bar.timestamp, t, stop, target, band_h)
             )
