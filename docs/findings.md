@@ -7,7 +7,103 @@ via the probe scripts in `src/backtest/analysis/`.
 
 ---
 
-## 2026-06-02 (latest) — Maker / market-making pivot: closed (efficiently priced)
+## 2026-06-04 (latest) — Density value-area BREAKOUT: the first walk-forward-robust edge (a diversifier)
+
+### Headline
+
+The "no directional edge" conclusion (below) holds for *single-position taker
+mean-reversion / trend / cross-venue*. But a **breakout out of the time-at-price
+value-area box** — held multi-position and exited into the next dense zone — is the
+project's **first edge that survives walk-forward**: a modest, regime-robust,
+**market-neutral-ish diversifier**. It is NOT a buy-and-hold beater (it trails B&H
+in bulls) and it fails the strict consistency ship gate, so it is **shipped code,
+not live-traded**. Every attempt to get *more entries* from it failed — the edge is
+in **selectivity, not count**.
+
+### The progression (what worked vs didn't)
+
+- **density_band — bounce INTO the edge** → REJECT. DR 0.475 (sub-coin-flip),
+  net-negative. Fading the value-area edge has no edge.
+- **density_breakout — ride OUT of the box** → first net-profitable single-position
+  result. Tuned (`max_band_pct=0.02`, no ATR trail, far-edge stop + 120-bar time
+  stop): IS Sharpe +0.197 / OOS +0.221, net +6.4k / +3.5k JPY. `ship=False` only on
+  the ≥80%-periods consistency gate (trend-rides are lumpy).
+- **density_multi_breakout — multi-position + exit-into-next-dense** → the real
+  result (below).
+
+### The multi-position strategy (the headline edge)
+
+Hold up to **5 overlapping slots**; enter on a close out of the **tight**
+value-area box (`window=168` ≈ 1 wk, `max_band_pct=0.03`); exit into the **next
+pre-existing dense zone** (target ≥ 1.5 band-heights beyond the broken edge) or the
+far-edge structural stop / 120-bar time stop / a minor "stall" exit. Config:
+`w=168, mbp=0.03, 5 slots, target_min_dist_frac=1.5`.
+
+**Metric note (important).** Per-trade Sharpe is the WRONG yardstick for
+overlapping positions — it ignores how many overlap and reads only ~0.1 here. The
+correct metric is the **annualised mark-to-market EQUITY Sharpe**, benchmarked
+against buy-and-hold's *own* annualised Sharpe. `run_cycle` routes any
+`max_slots > 1` strategy to the new `MultiSimulator` and ships iff
+`equity_sharpe_IS ≥ B&H_annualised_Sharpe` AND ≥ 80 % of periods non-negative.
+
+Result (GMO 1h, ~5 y; B&H annualised Sharpe IS +0.64 / OOS −0.60):
+
+| | IS eqSharpe | OOS eqSharpe |
+|---|---|---|
+| **density_multi_breakout** | **+0.90** | **+0.84** |
+| buy-and-hold | +0.64 | −0.60 |
+
+**Walk-forward (6 folds, `density_multi_walkforward.py`):** positive in **all 6**
+(bull AND bear) — the only config that is. But the *honest* anchored walk-forward
+(re-select params on past data only) is modest: **3/5 folds, mean test eqSharpe
++0.19**. Character: a **diversifier** — beats B&H when B&H is down (2022 bear,
+2025-26 decline), trails it in strong bulls. `ship=False` (consistency gate).
+
+### Slot sweep & cost
+
+- **Slots** (`density_multi_slotsweep.py`): single-position is weak (3/6 folds);
+  4–5 hit 6/6; > 6 saturates (rarely > ~6 concurrent signals). `unit` is
+  Sharpe-invariant (scales only net JPY / JPY-DD). Keep 5.
+- **Cost** (`density_multi_target_cost.py`): survives calm FX cost (4–10 bp
+  round-trip). The original target exited at the box lip (~1 h / +0.1 % scalps,
+  spread-fragile); `target_min_dist_frac = 1.5` turns those into ~22 h / +3.4 %
+  captures and survives a stressed **40 bp** round-trip (IS +0.40 / OOS +0.07), at
+  some calm-cost OOS.
+
+### "More entries" — three failures (selectivity is the edge)
+
+| attempt | result |
+|---|---|
+| shorter window (closer dense) | overfit — won 2 recent folds, lost bulls/early |
+| one-entry-per-dense (band dedup, `density_multi_dedup.py`) | persistent craters OOS; concurrent trades OOS for IS — same-box re-entries are **load-bearing** (pyramiding into a confirming move) |
+| relative-density band (`mean + R·σ`, `density_relative_probe.py`) | ~3× entries but a **regime artifact**: IS-negative / OOS-positive, 5/6 folds negative. The absolute tight-box filter is a **quality gate**, not arbitrary |
+
+Consistent lesson: for this setup more density = more noise. More *surviving*
+entries would need a **different, equally selective** setup, not a looser version of
+this one.
+
+### Code / reproducibility
+
+Strategy: `src/strategy/density_multi_breakout.py` (+ `density_multi_relative.py`,
+registered experimental / do-not-trade for UI inspection). Simulator:
+`src/simulator/multi_simulator.py`. Indicator: `src/indicators/density.py`
+(`time_at_price_profile`, `value_area`, `relative_dense_band`). Probes in
+`src/backtest/analysis/`: `density_multi_probe`, `_walkforward`, `_slotsweep`,
+`_target_cost`, `_dedup`, `density_relative_probe`. Docs:
+`docs/strategy/density_breakout.md`, `density_multi_breakout.md`.
+
+### How this updates the bottom line below
+
+The 2026-06-02 "no demonstrated edge" stands for *single-position taker directional
+signals*. This adds one qualifier: a **multi-position density-box breakout** is a
+genuine, walk-forward-robust, **modest market-neutral diversifier** — the first
+thing in the project to clear walk-forward — but it does not beat buy-and-hold in
+bulls and fails the strict consistency gate, so it is not live-traded. A narrow,
+honest positive beside the dead-ends, not a refutation of them.
+
+---
+
+## 2026-06-02 — Maker / market-making pivot: closed (efficiently priced)
 
 ### Headline
 
