@@ -23,7 +23,7 @@ from dash import ClientsideFunction, Input, Output, State, dcc, html
 from dash.exceptions import PreventUpdate
 from sqlalchemy import select
 
-from src.backtest.cycle import run_cycle
+from src.backtest.cycle import CycleResult, run_cycle
 from src.config import get_settings
 from src.core.types import Timeframe
 from src.data.cache import load_cache
@@ -46,6 +46,12 @@ _TIMEFRAMES = [tf.value for tf in Timeframe]
 #      + an in-memory memo. A restart reads the pickle instead of re-simulating;
 #      the fingerprint (#bars + last timestamp) invalidates it when data changes,
 #      and the "Run backtest" button forces a recompute.
+#
+# The fingerprint tracks *data*, not *code*: when CycleResult's schema changes
+# (new fields), old pickles deserialize without them and crash on attribute
+# access. _CACHE_VERSION is folded into the key so any schema change invalidates
+# stale pickles — bump it whenever CycleResult's fields change.
+_CACHE_VERSION = "v2-multi"
 _DATA_CACHE: dict[tuple[str | None, str], Any] = {}
 _CYCLE_MEMO: dict[tuple[str, str, str | None, str], Any] = {}
 _CYCLE_DIR = Path(os.environ.get("VIZ_CACHE_DIR", ".viz_cache"))
@@ -78,12 +84,22 @@ def _run_cycle_cached(
     if not force and key in _CYCLE_MEMO:
         return _CYCLE_MEMO[key]
 
-    digest = hashlib.sha1("__".join(map(str, key)).encode()).hexdigest()[:16]
+    digest = hashlib.sha1(
+        "__".join((*map(str, key), _CACHE_VERSION)).encode()
+    ).hexdigest()[:16]
     path = _CYCLE_DIR / f"{strategy}_{tf.value}_{product}_{digest}.pkl"
+    result = None
     if not force and path.exists():
-        with path.open("rb") as fh:
-            result = pickle.load(fh)
-    else:
+        try:
+            with path.open("rb") as fh:
+                loaded = pickle.load(fh)
+            # Guard against schema drift even within a version: a result missing
+            # current fields is recomputed rather than crashing a render.
+            if isinstance(loaded, CycleResult) and hasattr(loaded, "multi"):
+                result = loaded
+        except Exception:  # noqa: BLE001 — any unpickling failure → recompute
+            result = None
+    if result is None:
         result = run_cycle(strategy, tf, product=product)
         _CYCLE_DIR.mkdir(parents=True, exist_ok=True)
         with path.open("wb") as fh:
@@ -635,8 +651,6 @@ def _register_callbacks(app: dash.Dash) -> None:
 
 
 def _format_metrics(result: object) -> str:
-    from src.backtest.cycle import CycleResult
-
     assert isinstance(result, CycleResult)
     m_in, m_oos = result.in_sample, result.oos
     lines = [

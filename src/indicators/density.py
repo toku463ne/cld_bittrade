@@ -18,8 +18,19 @@ unit-testable in isolation.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 from numpy.typing import NDArray
+
+VolTransform = Literal["linear", "sqrt", "log"]
+"""Concave compression applied to volume before the per-window mean-normalisation.
+
+``linear`` = raw volume (heavy-tailed; pair with ``vol_clip``). ``sqrt`` = a mild
+compression that tames the tail while keeping volume informative (recommended).
+``log`` = ``log1p``; compresses so hard it nearly erases volume differences,
+collapsing toward the time-at-price profile — kept only for A/B completeness.
+"""
 
 
 def time_at_price_profile(
@@ -101,6 +112,159 @@ def time_at_price_profile(
             np.searchsorted(edges, flat_prices, side="right") - 1, 0, n_bins - 1
         )
         np.add.at(weights, idx, 1.0)
+
+    return centers, weights
+
+
+def volume_acceptance_profile(
+    opens: NDArray[np.float64] | list[float],
+    highs: NDArray[np.float64] | list[float],
+    lows: NDArray[np.float64] | list[float],
+    closes: NDArray[np.float64] | list[float],
+    volumes: NDArray[np.float64] | list[float],
+    n_bins: int,
+    body_ratio: float = 0.7,
+    lo: float | None = None,
+    hi: float | None = None,
+    vol_clip: float | None = None,
+    vol_transform: VolTransform = "linear",
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Build a *volume-at-price* profile with body/wick acceptance weighting.
+
+    Unlike :func:`time_at_price_profile` (each bar = 1.0 of "time", spread
+    uniformly over its range), this is a volume profile that also treats the
+    candle **body** (open->close) as *acceptance* and the **wicks** as
+    *rejection*:
+
+    - Each bar deposits a total weight of ``norm_vol`` = the (optionally
+      transformed) volume divided by the window mean of the same — so the window
+      sums to the bar count when volume is flat, keeping the :func:`value_area`
+      coverage logic unchanged. ``vol_transform`` applies a concave compression
+      first (volume is heavy-tailed), and ``vol_clip`` caps the result so a single
+      outsized print cannot define the whole band. Both compose; normalisation is
+      always applied *after* the transform so per-bar conservation still holds.
+    - That weight is distributed *within* the bar toward the body: the body span
+      is weighted ``body_ratio`` and the wick span ``1 - body_ratio``. Crucially
+      the per-bar total stays ``norm_vol`` regardless of candle shape — the
+      normaliser is the body/wick-weighted height, not the raw ``high - low`` —
+      so magnitude (volume) and shape (body/wick) are never confounded.
+
+    Args:
+        opens: Per-bar open prices.
+        highs: Per-bar high prices.
+        lows: Per-bar low prices.
+        closes: Per-bar close prices.
+        volumes: Per-bar traded volume (non-negative).
+        n_bins: Number of equal-width price bins.
+        body_ratio: Weight on the body span vs the wicks, in ``[0, 1]``. ``0.5``
+            recovers uniform-within-bar weighting (volume profile, no acceptance
+            tilt); ``> 0.5`` favours the body (market-profile "acceptance").
+        lo: Lower price bound. Defaults to ``min(lows)``.
+        hi: Upper price bound. Defaults to ``max(highs)``.
+        vol_clip: If set, clip ``norm_vol`` to at most this multiple of the mean
+            (e.g. ``8.0``). ``None`` disables clipping.
+        vol_transform: Concave compression applied to volume before
+            normalisation — see :data:`VolTransform`. ``"sqrt"`` is the
+            recommended tail-tamer; ``"log"`` over-compresses.
+
+    Returns:
+        ``(centers, weights)`` — bin centre prices and the volume-acceptance
+        weight per bin. ``weights`` sums to ``sum(norm_vol)`` (= bar count when
+        volume is flat) whenever the bounds enclose every bar.
+
+    Raises:
+        ValueError: On bad ``n_bins`` / ``body_ratio`` / ``vol_clip``, empty or
+            mismatched inputs.
+    """
+    if n_bins < 1:
+        raise ValueError("n_bins must be >= 1")
+    if not 0.0 <= body_ratio <= 1.0:
+        raise ValueError("body_ratio must be in [0, 1]")
+    if vol_clip is not None and vol_clip <= 0.0:
+        raise ValueError("vol_clip must be > 0 when set")
+
+    o = np.asarray(opens, dtype=np.float64)
+    h = np.asarray(highs, dtype=np.float64)
+    low_arr = np.asarray(lows, dtype=np.float64)
+    c = np.asarray(closes, dtype=np.float64)
+    v = np.asarray(volumes, dtype=np.float64)
+    if not (o.shape == h.shape == low_arr.shape == c.shape == v.shape):
+        raise ValueError("opens/highs/lows/closes/volumes must share a length")
+    if h.size == 0:
+        raise ValueError("inputs must be non-empty")
+
+    # Concave compression first (volume is heavy-tailed), then mean-normalise so
+    # each bar's total contribution is norm_vol. Normalising *after* the transform
+    # keeps the per-bar conservation property and makes sqrt/log scale-invariant.
+    vt = np.clip(v, 0.0, None)
+    if vol_transform == "sqrt":
+        vt = np.sqrt(vt)
+    elif vol_transform == "log":
+        vt = np.log1p(vt)
+    elif vol_transform != "linear":
+        raise ValueError(f"unknown vol_transform {vol_transform!r}")
+    # If volume is absent/degenerate (mean <= 0), fall back to equal weight so the
+    # profile degrades gracefully to a body/wick-shaped time profile, not NaNs.
+    mean_vt = float(vt.mean())
+    norm = np.ones_like(vt) if mean_vt <= 0.0 else vt / mean_vt
+    if vol_clip is not None:
+        norm = np.minimum(norm, vol_clip)
+
+    lo_b = float(low_arr.min()) if lo is None else float(lo)
+    hi_b = float(h.max()) if hi is None else float(hi)
+    if hi_b <= lo_b:
+        # Degenerate (flat) window: a single price holds all the weight.
+        centers = np.full(n_bins, lo_b, dtype=np.float64)
+        weights = np.zeros(n_bins, dtype=np.float64)
+        weights[n_bins // 2] = float(norm.sum())
+        return centers, weights
+
+    edges = np.linspace(lo_b, hi_b, n_bins + 1)
+    left = edges[:-1]
+    right = edges[1:]
+    centers = 0.5 * (left + right)
+
+    # Clip every span to the global bounds so weight is conserved exactly.
+    bar_lo = np.clip(low_arr, lo_b, hi_b)
+    bar_hi = np.clip(h, lo_b, hi_b)
+    body_bot = np.clip(np.minimum(o, c), lo_b, hi_b)
+    body_top = np.clip(np.maximum(o, c), lo_b, hi_b)
+
+    full_overlap = np.clip(
+        np.minimum(bar_hi[:, None], right[None, :])
+        - np.maximum(bar_lo[:, None], left[None, :]),
+        0.0,
+        None,
+    )
+    body_overlap = np.clip(
+        np.minimum(body_top[:, None], right[None, :])
+        - np.maximum(body_bot[:, None], left[None, :]),
+        0.0,
+        None,
+    )
+    wick_overlap = np.clip(full_overlap - body_overlap, 0.0, None)
+
+    # Per-bar normaliser = the same body/wick-weighted height the numerator sums
+    # to, so each bar deposits exactly norm_vol (sum_j numer_j / denom == 1).
+    body_h = body_top - body_bot
+    wick_h = np.clip((bar_hi - bar_lo) - body_h, 0.0, None)
+    denom = body_h * body_ratio + wick_h * (1.0 - body_ratio)
+    numer = body_overlap * body_ratio + wick_overlap * (1.0 - body_ratio)
+
+    weights = np.zeros(n_bins, dtype=np.float64)
+    good = denom > 0.0
+    if good.any():
+        contrib = (norm[good][:, None] * numer[good]) / denom[good][:, None]
+        weights += contrib.sum(axis=0)
+
+    # Degenerate bars (denom == 0: flat high == low, or body_ratio at an extreme
+    # zeroing the only non-empty span) deposit their full norm_vol at the close.
+    if (~good).any():
+        flat_c = np.clip(c[~good], lo_b, hi_b)
+        idx = np.clip(
+            np.searchsorted(edges, flat_c, side="right") - 1, 0, n_bins - 1
+        )
+        np.add.at(weights, idx, norm[~good])
 
     return centers, weights
 

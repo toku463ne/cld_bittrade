@@ -14,6 +14,7 @@ from collections.abc import Callable
 from src.strategy.base import Strategy
 from src.strategy.density_band import DensityBandStrategy
 from src.strategy.density_breakout import DensityBreakoutStrategy
+from src.strategy.density_breakout_vol import DensityBreakoutVolStrategy
 from src.strategy.density_multi_breakout import DensityMultiBreakoutStrategy
 from src.strategy.density_multi_relative import DensityMultiRelativeStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
@@ -27,6 +28,7 @@ STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     ZigzagBounceStrategy.name: ZigzagBounceStrategy,
     DensityBandStrategy.name: DensityBandStrategy,
     DensityBreakoutStrategy.name: DensityBreakoutStrategy,
+    DensityBreakoutVolStrategy.name: DensityBreakoutVolStrategy,
     DensityMultiBreakoutStrategy.name: DensityMultiBreakoutStrategy,
     DensityMultiRelativeStrategy.name: DensityMultiRelativeStrategy,
 }

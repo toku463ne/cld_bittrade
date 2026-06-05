@@ -233,6 +233,14 @@ See `docs/evaluation_criteria.md` for the ship/reject rubric.
 
 Per-period columns: `period`, `n_fires`, `DR`, `total_return`, `max_DD`, `win_rate`
 
+> **Caveat (consistency gate):** the period units above are display defaults. For
+> the **ship consistency gate**, the period must hold *several* trades or the
+> non-neg% just collapses into the win rate. For a low-frequency strategy (e.g. a
+> ~24-trade/yr 1h trend-ride) "1 week" is too short and manufactures false
+> "fails consistency" verdicts — gate on the coarsest period giving ≥~5
+> trades/period AND ≥~12–15 periods (a **quarter** for such a strategy). See
+> `docs/evaluation_criteria.md` §6.4.
+
 **OOS (Out-of-Sample) metrics**
 - Training: all months except the most recent 20% of available bars
 - OOS: most recent 20% of available bars

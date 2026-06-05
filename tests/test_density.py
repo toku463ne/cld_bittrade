@@ -9,9 +9,15 @@ import pandas as pd
 import pytest
 
 from src.core.types import Side
-from src.indicators.density import relative_dense_band, time_at_price_profile, value_area
+from src.indicators.density import (
+    relative_dense_band,
+    time_at_price_profile,
+    value_area,
+    volume_acceptance_profile,
+)
 from src.signs.density_band import DensityBandSign
 from src.signs.density_breakout import DensityBreakoutSign
+from src.signs.density_breakout_vol import DensityBreakoutVolSign
 
 
 def test_profile_weight_is_one_per_ranged_bar() -> None:
@@ -75,6 +81,149 @@ def test_value_area_rejects_bad_coverage() -> None:
     centers, weights = time_at_price_profile([1.0, 2.0], [0.0, 1.0], n_bins=4)
     with pytest.raises(ValueError):
         value_area(centers, weights, coverage=0.0)
+
+
+# --- volume_acceptance_profile -------------------------------------------------
+
+
+def test_volume_profile_per_bar_weight_is_conserved_regardless_of_shape() -> None:
+    # THE invariant the naive `/ (high - low)` formula violates: with equal
+    # volume, every bar contributes exactly 1.0 of weight no matter its body/wick
+    # shape (marubozu, doji, top-heavy, bottom-heavy). Total == bar count.
+    opens =  [100.0, 100.0, 105.0, 101.0, 109.0]  # noqa: E222
+    closes = [110.0, 100.1, 95.0, 101.2, 91.0]    # marubozu, ~doji, mixed...
+    highs =  [110.0, 106.0, 105.5, 108.0, 110.0]  # noqa: E222
+    lows =   [100.0, 94.0, 94.5, 92.0, 90.0]      # noqa: E222
+    vols =   [1.0, 1.0, 1.0, 1.0, 1.0]            # noqa: E222
+    for br in (0.1, 0.5, 0.7, 0.9):
+        _, w = volume_acceptance_profile(
+            opens, highs, lows, closes, vols, n_bins=64, body_ratio=br
+        )
+        assert w.sum() == pytest.approx(len(opens)), f"body_ratio={br}"
+
+
+def test_volume_profile_total_tracks_normalised_volume() -> None:
+    # With non-flat volume the total equals sum(norm_vol) = sum(v)/mean(v).
+    opens = [100.0, 200.0, 300.0]
+    closes = [101.0, 201.0, 301.0]
+    highs = [102.0, 202.0, 302.0]
+    lows = [99.0, 199.0, 299.0]
+    vols = [1.0, 4.0, 7.0]
+    _, w = volume_acceptance_profile(opens, highs, lows, closes, vols, n_bins=80)
+    expected = sum(vols) / (sum(vols) / len(vols))  # == n bars
+    assert w.sum() == pytest.approx(expected)
+
+
+def test_volume_profile_volume_dominates_the_poc() -> None:
+    # Two equal-shape bars in different price regions; the high-volume one wins
+    # the Point-of-Control, which a pure time profile (equal weight) would not.
+    opens = [100.0, 200.0]
+    closes = [101.0, 201.0]
+    highs = [101.0, 201.0]
+    lows = [100.0, 200.0]
+    vols = [1.0, 20.0]  # second region traded 20x
+    centers, w = volume_acceptance_profile(opens, highs, lows, closes, vols, n_bins=60)
+    poc = float(centers[int(np.argmax(w))])
+    assert 200.0 <= poc <= 201.0
+
+
+def test_volume_profile_body_weighting_makes_the_body_the_poc() -> None:
+    # A bar with a small body up high and a long lower rejection wick. A
+    # body-heavy ratio raises the *per-bin density* in the body, so the busiest
+    # bin (POC) lands in the body even though the wick spans far more price.
+    opens, closes = [109.0], [110.0]   # body in [109, 110]
+    highs, lows = [110.0], [90.0]      # long lower wick down to 90
+    vols = [1.0]
+    centers, w = volume_acceptance_profile(
+        opens, highs, lows, closes, vols, n_bins=40, body_ratio=0.9
+    )
+    poc = float(centers[int(np.argmax(w))])
+    assert poc >= 108.0  # POC sits in the body, not the long wick
+    # Per-bin density in the body strictly exceeds the wick (9:1 at ratio 0.9).
+    body_bins = w[centers >= 109.0]
+    wick_bins = w[(centers < 109.0) & (w > 0)]
+    assert body_bins.mean() > wick_bins.mean()
+
+
+def test_volume_profile_body_ratio_half_matches_uniform_volume_profile() -> None:
+    # body_ratio == 0.5 weights body and wick equally => mass spreads uniformly
+    # across the bar's range, i.e. a plain volume profile with no acceptance tilt.
+    opens, closes = [109.0], [110.0]
+    highs, lows = [110.0], [90.0]
+    vols = [3.0]
+    centers, w = volume_acceptance_profile(
+        opens, highs, lows, closes, vols, n_bins=40, body_ratio=0.5
+    )
+    covered = w[w > 0]
+    # All covered bins carry equal weight (uniform spread over [90, 110]).
+    assert covered.std() == pytest.approx(0.0, abs=1e-9)
+    assert w.sum() == pytest.approx(1.0)  # single bar => norm_vol == 1
+
+
+def test_volume_profile_flat_bar_deposits_full_weight() -> None:
+    centers, w = volume_acceptance_profile(
+        [100.0], [100.0], [100.0], [100.0], [5.0], n_bins=11
+    )
+    assert w.sum() == pytest.approx(1.0)  # single bar => norm_vol == 1
+
+
+def test_volume_profile_zero_volume_falls_back_to_equal_weight() -> None:
+    opens = [100.0, 200.0]
+    closes = [101.0, 201.0]
+    highs = [102.0, 202.0]
+    lows = [99.0, 199.0]
+    _, w = volume_acceptance_profile(opens, highs, lows, closes, [0.0, 0.0], n_bins=60)
+    assert w.sum() == pytest.approx(2.0)  # degrades to 1.0 per bar
+
+
+def test_volume_profile_rejects_bad_body_ratio() -> None:
+    with pytest.raises(ValueError):
+        volume_acceptance_profile([1.0], [2.0], [0.0], [1.0], [1.0], n_bins=4, body_ratio=1.5)
+
+
+def test_volume_profile_rejects_unknown_transform() -> None:
+    with pytest.raises(ValueError):
+        volume_acceptance_profile(
+            [1.0], [2.0], [0.0], [1.0], [1.0], n_bins=4, vol_transform="cube"  # type: ignore[arg-type]
+        )
+
+
+def test_volume_profile_transforms_preserve_conservation() -> None:
+    # Each transform must keep the window total at the bar count (per-bar weight
+    # averages 1 after the post-transform normalisation), and stay scale-free.
+    rng = np.random.default_rng(21)
+    n = 50
+    closes = list(100.0 + np.cumsum(rng.normal(0, 0.5, n)))
+    opens = [closes[0]] + closes[:-1]
+    highs = [max(o, c) + 0.4 for o, c in zip(opens, closes)]
+    lows = [min(o, c) - 0.4 for o, c in zip(opens, closes)]
+    vols = list(np.exp(rng.normal(2.0, 1.5, n)))  # heavy-tailed (log-normal)
+    for tr in ("linear", "sqrt", "log"):
+        _, w = volume_acceptance_profile(
+            opens, highs, lows, closes, vols, n_bins=64, vol_transform=tr, vol_clip=None
+        )
+        assert w.sum() == pytest.approx(float(n)), f"{tr} broke conservation"
+
+
+def test_volume_profile_transform_compression_ordering() -> None:
+    # On a heavy-tailed volume window, log compresses more than sqrt compresses
+    # more than linear: the share captured by the highest-volume bins shrinks.
+    rng = np.random.default_rng(22)
+    n = 200
+    base = 100.0
+    closes = list(base + rng.normal(0, 0.2, n))  # all bars in a tight band
+    opens = list(closes)
+    highs = [c + 0.1 for c in closes]
+    lows = [c - 0.1 for c in closes]
+    vols = list(np.exp(rng.normal(2.0, 1.8, n)))  # strong right tail
+    shares = {}
+    for tr in ("linear", "sqrt", "log"):
+        _, w = volume_acceptance_profile(
+            opens, highs, lows, closes, vols, n_bins=80, vol_transform=tr, vol_clip=None
+        )
+        top = np.sort(w)[-8:].sum()  # weight in the 8 busiest bins
+        shares[tr] = top / w.sum()
+    assert shares["linear"] > shares["sqrt"] > shares["log"]
 
 
 def _frame(highs: list[float], lows: list[float], closes: list[float]) -> pd.DataFrame:
@@ -180,3 +329,66 @@ def test_breakout_max_band_pct_filters_wide_box() -> None:
     closes = base_close + [100.0, 130.0]
     tight = DensityBreakoutSign(window=win, n_bins=40, max_band_pct=0.02)
     assert tight.last_fire(_frame(highs, lows, closes)) is None
+
+
+# --- density_breakout_vol sign (A/B sibling) -----------------------------------
+
+
+def _vol_frame(
+    opens: list[float],
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    volumes: list[float],
+) -> pd.DataFrame:
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    idx = pd.DatetimeIndex(
+        [start + timedelta(hours=i) for i in range(len(highs))], name="timestamp"
+    )
+    return pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=idx,
+    )
+
+
+def test_breakout_vol_fires_long_on_close_above_top() -> None:
+    # Same setup as the time-based sibling: consolidate in a band around 100,
+    # then close out above the top edge. The volume profile must still fire.
+    win = 30
+    rng = np.random.default_rng(3)
+    base_close = list(100.0 + rng.normal(0, 0.3, win))
+    opens = list(base_close)
+    highs = [c + 0.5 for c in base_close]
+    lows = [c - 0.5 for c in base_close]
+    vols = [1.0] * win
+    opens += [100.2, 100.2]
+    closes = base_close + [100.2, 103.0]
+    highs = highs + [100.7, 103.5]
+    lows = lows + [99.7, 100.4]
+    vols += [1.0, 1.0]
+    sign = DensityBreakoutVolSign(window=win, n_bins=40, coverage=0.70)
+    fire = sign.last_fire(_vol_frame(opens, highs, lows, closes, vols))
+    assert fire is not None
+    assert fire.side is Side.LONG
+    assert fire.ref_price is not None and fire.ref2_price is not None
+    assert fire.ref2_price < fire.ref_price  # ref=top edge, ref2=bottom edge
+
+
+def test_breakout_vol_detect_matches_last_fire_no_lookahead() -> None:
+    # detect() over the full frame must agree with last_fire() on each prefix:
+    # a fire at index t may only use bars <= t (the profile excludes bar t).
+    win = 20
+    rng = np.random.default_rng(7)
+    n = 90
+    closes = list(100.0 + np.cumsum(rng.normal(0, 0.4, n)))
+    opens = [closes[0]] + closes[:-1]
+    highs = [max(o, c) + 0.6 for o, c in zip(opens, closes)]
+    lows = [min(o, c) - 0.6 for o, c in zip(opens, closes)]
+    vols = list(1.0 + rng.uniform(0, 5, n))
+    df = _vol_frame(opens, highs, lows, closes, vols)
+    sign = DensityBreakoutVolSign(window=win, n_bins=30, max_band_pct=None)
+    fires = {f.fired_at for f in sign.detect(df)}
+    for t in range(len(df)):
+        lf = sign.last_fire(df.iloc[: t + 1])
+        if lf is not None:
+            assert lf.fired_at in fires, f"prefix fire at {lf.fired_at} missing in detect"

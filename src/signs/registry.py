@@ -10,6 +10,7 @@ from collections.abc import Callable
 from src.signs.base import Sign
 from src.signs.density_band import DensityBandSign
 from src.signs.density_breakout import DensityBreakoutSign
+from src.signs.density_breakout_vol import DensityBreakoutVolSign
 from src.signs.ema_atr_breakout import EmaAtrBreakoutSign
 from src.signs.ema_cross import EmaCrossSign
 from src.signs.zigzag_bounce import ZigzagBounceSign
@@ -23,6 +24,7 @@ SIGN_REGISTRY: dict[str, Callable[[], Sign]] = {
     ZigzagBounceSign.name: ZigzagBounceSign,
     DensityBandSign.name: DensityBandSign,
     DensityBreakoutSign.name: DensityBreakoutSign,
+    DensityBreakoutVolSign.name: DensityBreakoutVolSign,
 }
 
 
