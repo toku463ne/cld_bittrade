@@ -23,7 +23,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from src.core.types import Bar, ExitConfig, ExitReason, Trade
+from src.core.types import Bar, ExitConfig, ExitReason, Signal, Trade
 from src.exit.rules import OpenPosition, evaluate_exit, tp_sl_levels
 from src.simulator.simulator import DEFAULT_FEE_RATE, SimResult
 from src.strategy.base import Strategy
@@ -69,18 +69,26 @@ class MultiSimulator:
         max_slots = max(1, self.strategy.max_slots)
         atr_vals = self._atr_series(bars)
 
-        precomputed = self.strategy.precompute(bars)
-        if precomputed is None:
-            raise ValueError(
-                f"MultiSimulator requires a precompute() strategy; '{self.strategy.name}' "
-                "returned None."
-            )
+        # Prefer the multi-signal hook (several entries per bar, e.g. a hedged
+        # pair); otherwise wrap the single-signal precompute as one-element lists.
+        signals_by_ts: dict[object, list[Signal]]
+        multi = self.strategy.precompute_multi(bars)
+        if multi is not None:
+            signals_by_ts = {ts: list(sigs) for ts, sigs in multi.items()}
+        else:
+            precomputed = self.strategy.precompute(bars)
+            if precomputed is None:
+                raise ValueError(
+                    f"MultiSimulator requires a precompute()/precompute_multi() strategy; "
+                    f"'{self.strategy.name}' returned None."
+                )
+            signals_by_ts = {ts: [sig] for ts, sig in precomputed.items()}
 
         trades: list[Trade] = []
         equity_curve: list[float] = []
         realised = 0.0
         book: list[_Slot] = []
-        pending = None
+        pending: list[Signal] = []
         pending_atr = 0.0
 
         for i, bar in enumerate(bars):
@@ -100,22 +108,25 @@ class MultiSimulator:
                     realised += trade.pnl
             book = survivors
 
-            # 2. Fill a pending signal at this bar's open if a slot is free.
-            if pending is not None and len(book) < max_slots:
+            # 2. Fill pending signals at this bar's open while slots are free
+            #    (a hedged pair fills both legs; the two-bar rule is preserved).
+            for sig in pending:
+                if len(book) >= max_slots:
+                    break
                 pos = OpenPosition(
-                    side=pending.side, entry_price=bar.open, entry_atr=pending_atr
+                    side=sig.side, entry_price=bar.open, entry_atr=pending_atr
                 )
-                cfg = pending.exit_config or fallback_cfg
+                cfg = sig.exit_config or fallback_cfg
                 pos.tp_price, pos.sl_price = tp_sl_levels(pos, cfg)
-                pos.ref_time, pos.ref_price = pending.ref_time, pending.ref_price
-                pos.ref2_time, pos.ref2_price = pending.ref2_time, pending.ref2_price
+                pos.ref_time, pos.ref_price = sig.ref_time, sig.ref_price
+                pos.ref2_time, pos.ref2_price = sig.ref2_time, sig.ref2_price
                 book.append(_Slot(pos, i, bar.timestamp, cfg))
-            pending = None
+            pending = []
 
-            # 3. Read the precomputed signal for this just-closed bar.
-            signal = precomputed.get(bar.timestamp)
-            if signal is not None:
-                pending = signal
+            # 3. Read the precomputed signal(s) for this just-closed bar.
+            sigs = signals_by_ts.get(bar.timestamp)
+            if sigs:
+                pending = sigs
                 pending_atr = atr_vals[i]
 
             # Mark-to-market: realised + unrealised across the open book.

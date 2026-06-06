@@ -109,6 +109,19 @@ class Strategy(ABC):
         """
         return None
 
+    def precompute_multi(self, bars: list[Bar]) -> dict[datetime, list[Signal]] | None:
+        """Optionally precompute *several* entry signals per bar (MultiSimulator).
+
+        Like :meth:`precompute`, but each timestamp maps to a *list* of signals so
+        a strategy can open more than one position from a single bar (e.g. a hedged
+        long+short pair). The MultiSimulator fills them in order while slots remain
+        free. ``None`` (default) falls back to :meth:`precompute` (one per bar).
+
+        Returns:
+            A ``{bar_timestamp: [Signal, ...]}`` map, or ``None``.
+        """
+        return None
+
     @abstractmethod
     def on_bar(self, bar: Bar) -> Signal | None:
         """Core strategy logic for the just-closed bar.
