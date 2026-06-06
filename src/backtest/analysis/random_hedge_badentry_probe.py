@@ -48,6 +48,7 @@ from src.core.types import Side, Timeframe
 from src.data.cache import load_cache
 from src.indicators import atr
 from src.indicators.bollinger import bollinger_bands
+from src.indicators.density import time_at_price_profile, value_area
 from src.indicators.zigzag import detect_peaks
 from src.logging_setup import configure_logging
 from src.simulator.multi_simulator import MultiSimulator
@@ -56,6 +57,10 @@ from src.strategy.random_hedge import RandomHedgeStrategy
 RANK_WINDOW = 500
 BB_PERIOD = 20
 ZIGZAG_SIZE = 12
+CHOP_WIN = 14  # Choppiness Index lookback
+AC_WIN = 48  # return autocorrelation window
+VA_WIN = 168  # trailing window for the value-area position feature
+VA_BINS = 48
 SIZE = 0.001  # MultiSimulator default per-leg size (for r-normalisation)
 
 
@@ -149,9 +154,11 @@ def run(tf: Timeframe, *, product: str | None) -> None:
     # 2. Causal feature series.
     df = pd.DataFrame(
         {
+            "open": [b.open for b in bars],
             "high": [b.high for b in bars],
             "low": [b.low for b in bars],
             "close": [b.close for b in bars],
+            "volume": [b.volume for b in bars],
         },
         index=pd.DatetimeIndex([b.timestamp for b in bars]),
     )
@@ -162,6 +169,24 @@ def run(tf: Timeframe, *, product: str | None) -> None:
     span = (bb["bb_upper"] - bb["bb_lower"]).replace(0.0, np.nan)
     bb_pos = ((df["close"] - bb["bb_lower"]) / span).to_numpy(dtype=float)
     crange = ((df["high"] - df["low"]) / df["close"]).to_numpy(dtype=float)
+
+    # --- batch 2: chop / trend-persistence / indecision / congestion / conviction ---
+    prev_close = df["close"].shift(1)
+    tr = pd.concat(
+        [df["high"] - df["low"], (df["high"] - prev_close).abs(), (df["low"] - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    rng = df["high"].rolling(CHOP_WIN).max() - df["low"].rolling(CHOP_WIN).min()
+    chop_s = (
+        100.0 * np.log10((tr.rolling(CHOP_WIN).sum() / rng.replace(0.0, np.nan))) / np.log10(CHOP_WIN)
+    ).to_numpy(dtype=float)  # high = sideways/choppy, low = trending
+    ret = df["close"].pct_change()
+    x, y = ret, ret.shift(1)
+    cov = (x * y).rolling(AC_WIN).mean() - x.rolling(AC_WIN).mean() * y.rolling(AC_WIN).mean()
+    den = x.rolling(AC_WIN).std(ddof=0) * y.rolling(AC_WIN).std(ddof=0)
+    ac_s = (cov / den.replace(0.0, np.nan)).to_numpy(dtype=float)  # <0 mean-revert, >0 trend
+    body_s = ((df["close"] - df["open"]).abs() / (df["high"] - df["low"]).replace(0.0, np.nan)).to_numpy(dtype=float)
+    vol_arr = df["volume"].to_numpy(dtype=float)
     ts_to_idx = {ts: i for i, ts in enumerate(df.index)}
 
     highs = [b.high for b in bars]
@@ -179,6 +204,11 @@ def run(tf: Timeframe, *, product: str | None) -> None:
     pos_b: dict[int, str] = {}
     peak_b: dict[int, str] = {}
     candle_b: dict[int, str] = {}
+    chop_b: dict[int, str] = {}
+    ac_b: dict[int, str] = {}
+    body_b: dict[int, str] = {}
+    va_b: dict[int, str] = {}
+    volm_b: dict[int, str] = {}
     key = 0
     skipped = 0
     for entry_time, pr in pairs.items():
@@ -191,7 +221,8 @@ def run(tf: Timeframe, *, product: str | None) -> None:
             skipped += 1
             continue
         npf = _nearest_peak_frac(peak_idx, peak_price, t, closes[t])
-        if npf is None:
+        vap = _va_position(highs, lows, t, closes[t])
+        if npf is None or vap is None or np.isnan(chop_s[t]) or np.isnan(ac_s[t]):
             skipped += 1
             continue
         pair_r[key] = pr
@@ -201,6 +232,11 @@ def run(tf: Timeframe, *, product: str | None) -> None:
         pos_b[key] = _bb_pos_bucket(bb_pos[t])
         peak_b[key] = _peak_bucket(npf)
         candle_b[key] = _quartile(_trailing_rank(crange, t))
+        chop_b[key] = _quartile(_trailing_rank(chop_s, t))
+        ac_b[key] = _ac_bucket(ac_s[t])
+        body_b[key] = _body_bucket(body_s[t]) if not np.isnan(body_s[t]) else "doji(<.25)"
+        va_b[key] = _va_pos_bucket(vap)
+        volm_b[key] = _quartile(_trailing_rank(vol_arr, t))
         key += 1
     logger.info("  tagged {} pairs ({} skipped for warmup/NaN)", key, skipped)
 
@@ -224,6 +260,39 @@ def run(tf: Timeframe, *, product: str | None) -> None:
         peak_b, is_mask, pair_r,
     )
     _report("LONG CANDLE (range pct)", q, candle_b, is_mask, pair_r)
+    # --- batch 2 ---
+    _report("CHOPPINESS (high=sideways) pct", q, chop_b, is_mask, pair_r)
+    _report(
+        "RETURN AUTOCORR (lag-1)",
+        ["mean-revert(<-.05)", "none(-.05..+.05)", "trend(>+.05)"],
+        ac_b, is_mask, pair_r,
+    )
+    _report(
+        "CANDLE BODY (indecision)",
+        ["doji(<.25)", ".25-.5", ".5-.75", "marubozu(>.75)"],
+        body_b, is_mask, pair_r,
+    )
+    _report(
+        "VALUE-AREA POSITION",
+        ["below-VA", "VA-lower", "VA-mid", "VA-upper", "above-VA"],
+        va_b, is_mask, pair_r,
+    )
+    _report("VOLUME pct", q, volm_b, is_mask, pair_r)
+
+    # --- independence: do the survivors still bite AFTER the ATR-Q4 cut? ---
+    kept = {k for k in pair_r if vol_b[k] != "Q4(high)"}
+    logger.info("  ############ CONDITIONAL on ATR not-Q4 (the shipped cut) ############")
+    logger.info("  kept {}/{} entries after dropping ATR-Q4", len(kept), len(pair_r))
+    sub_chop = {k: chop_b[k] for k in kept}
+    sub_ac = {k: ac_b[k] for k in kept}
+    sub_mask = {k: is_mask[k] for k in kept}
+    sub_r = {k: pair_r[k] for k in kept}
+    _report("  CHOPPINESS | ATR not-Q4", q, sub_chop, sub_mask, sub_r)
+    _report(
+        "  AUTOCORR | ATR not-Q4",
+        ["mean-revert(<-.05)", "none(-.05..+.05)", "trend(>+.05)"],
+        sub_ac, sub_mask, sub_r,
+    )
 
 
 def _peak_bucket(frac: float) -> str:
@@ -234,6 +303,47 @@ def _peak_bucket(frac: float) -> str:
     if frac < 0.02:
         return "<2%"
     return "far(>2%)"
+
+
+def _ac_bucket(ac: float) -> str:
+    if ac < -0.05:
+        return "mean-revert(<-.05)"
+    if ac <= 0.05:
+        return "none(-.05..+.05)"
+    return "trend(>+.05)"
+
+
+def _body_bucket(body: float) -> str:
+    if body < 0.25:
+        return "doji(<.25)"
+    if body < 0.50:
+        return ".25-.5"
+    if body < 0.75:
+        return ".5-.75"
+    return "marubozu(>.75)"
+
+
+def _va_pos_bucket(pos: float) -> str:
+    if pos < 0.0:
+        return "below-VA"
+    if pos < 0.33:
+        return "VA-lower"
+    if pos < 0.67:
+        return "VA-mid"
+    if pos <= 1.0:
+        return "VA-upper"
+    return "above-VA"
+
+
+def _va_position(highs: list[float], lows: list[float], t: int, close: float) -> float | None:
+    """Where the entry close sits within the trailing value-area box (0=lo, 1=hi)."""
+    if t - VA_WIN < 0:
+        return None
+    centers, weights = time_at_price_profile(highs[t - VA_WIN : t], lows[t - VA_WIN : t], VA_BINS)
+    _poc, lo, hi = value_area(centers, weights)
+    if hi <= lo:
+        return None
+    return (close - lo) / (hi - lo)
 
 
 def main() -> None:

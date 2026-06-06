@@ -67,6 +67,8 @@ class RandomHedgeStrategy(Strategy):
         target_min_dist_frac: float = 1.0,
         max_atr_rank: float | None = None,
         atr_rank_window: int = 500,
+        max_chop_rank: float | None = None,
+        chop_window: int = 14,
     ) -> None:
         """Initialise the strategy.
 
@@ -93,6 +95,16 @@ class RandomHedgeStrategy(Strategy):
                 robust *bad-entry* signature found for the hedged pair; see
                 ``random_hedge_badentry_probe``). ``None`` = no filter (baseline).
             atr_rank_window: Trailing-bar window for the ATR percentile rank.
+            max_chop_rank: If set, skip entries whose causal Choppiness-Index
+                trailing percentile rank is >= this (drop sideways/whippy bars).
+                Choppiness is an *ATR-independent* per-trade predictor (it still
+                separates pair winners/losers after the ATR-Q4 cut), but the
+                filter does NOT improve the portfolio equity Sharpe — the removed
+                trades are only mildly negative and the lost diversification
+                outweighs them (a per-trade-signal ≠ portfolio-metric case; see
+                ``random_hedge_badentry_probe`` and the strategy doc §6). Kept as
+                a research lever, off by default.
+            chop_window: Lookback for the Choppiness Index (and its rank window).
 
         Raises:
             ValueError: On out-of-range probability / parameters.
@@ -118,6 +130,10 @@ class RandomHedgeStrategy(Strategy):
             raise ValueError("max_atr_rank must be in (0, 1]")
         self.max_atr_rank = max_atr_rank
         self.atr_rank_window = atr_rank_window
+        if max_chop_rank is not None and not 0.0 < max_chop_rank <= 1.0:
+            raise ValueError("max_chop_rank must be in (0, 1]")
+        self.max_chop_rank = max_chop_rank
+        self.chop_window = chop_window
         self._zs = ZsTpSl(
             sl_mult=sl_mult,
             alpha=zs_alpha,
@@ -153,6 +169,24 @@ class RandomHedgeStrategy(Strategy):
         df = pd.DataFrame({"high": highs, "low": lows, "close": closes})
         return [float(v) for v in atr(df, period).to_numpy()]
 
+    @staticmethod
+    def _chop_series(
+        highs: list[float], lows: list[float], closes: list[float], window: int
+    ) -> list[float]:
+        """Causal Choppiness Index: 100·log10(ΣTR / range) / log10(window).
+
+        High = sideways/choppy (a hedged pair gets whipsawed); low = trending.
+        """
+        import numpy as np
+        import pandas as pd
+
+        h, low, c = pd.Series(highs), pd.Series(lows), pd.Series(closes)
+        prev = c.shift(1)
+        tr = pd.concat([h - low, (h - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+        rng = (h.rolling(window).max() - low.rolling(window).min()).replace(0.0, np.nan)
+        chop = 100.0 * np.log10(tr.rolling(window).sum() / rng) / np.log10(window)
+        return [float(v) for v in chop.to_numpy()]
+
     def _legs(self, peak_idx: list[int], peak_price: list[float], t: int) -> tuple[float, ...]:
         """Recent zigzag leg sizes (price units, oldest-first) confirmable by ``t``."""
         prices = [
@@ -176,6 +210,11 @@ class RandomHedgeStrategy(Strategy):
         peak_idx = [p.bar_index for p in peaks]
         peak_price = [p.price for p in peaks]
         atr_s = self._atr_series(highs, lows, closes) if self.max_atr_rank is not None else None
+        chop_s = (
+            self._chop_series(highs, lows, closes, self.chop_window)
+            if self.max_chop_rank is not None
+            else None
+        )
         rng = np.random.default_rng(self.seed)
         out: dict[datetime, list[Signal]] = {}
         for t in range(self.warmup, len(bars)):
@@ -188,6 +227,16 @@ class RandomHedgeStrategy(Strategy):
                 if w and not np.isnan(atr_s[t]):
                     rank = float(np.mean([v <= atr_s[t] for v in w if not np.isnan(v)]))
                     if rank >= self.max_atr_rank:
+                        continue
+            # Bad-entry gate 2: skip sideways/choppy bars (independent of ATR).
+            # Rank uses the long trailing window (atr_rank_window), like the probe;
+            # chop_window is only the Choppiness-Index lookback.
+            if chop_s is not None and self.max_chop_rank is not None:
+                w = chop_s[max(0, t - self.atr_rank_window) : t + 1]
+                vals = [v for v in w if not np.isnan(v)]
+                if vals and not np.isnan(chop_s[t]):
+                    rank = float(np.mean([v <= chop_s[t] for v in vals]))
+                    if rank >= self.max_chop_rank:
                         continue
             entry = closes[t]
             legs = self._legs(peak_idx, peak_price, t)

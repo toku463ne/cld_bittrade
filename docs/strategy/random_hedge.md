@@ -195,6 +195,44 @@ random baseline into a positive, lower-drawdown one. This is a *risk/context* ga
 is the registered variant; still `ship=False` (it is a control lineage), but it is
 now the **stronger null baseline** to measure a real-priced entry against.
 
+### Batch 2 — five more bad-entry candidates (chop / persistence / indecision / congestion / volume)
+
+A second, mechanistically-distinct sweep (all aimed at the pair's failure mode —
+chop/mean-reversion whipsaws both legs — and chosen to *not* be raw ATR proxies):
+
+| feature | bad bucket | IS mean_r | OOS mean_r | robust? |
+|---|---|---|---|---|
+| **Choppiness Index** | Q4 (sideways) | −0.0035 | −0.0034 | ✅ + Q1 (trending) good both |
+| Return autocorr (lag-1) | trend(>+.05) | −0.0048 | −0.0034 | ⚠️ robust but mostly an ATR proxy |
+| Volume pct | Q4 (high) | −0.0046 | −0.0093 | ⚠️ only Q4; rest noise (ATR proxy) |
+| Candle body fraction | — | flips IS→OOS | — | ✗ |
+| Value-area position | — | all neg / noisy | — | ✗ |
+
+**Independence test (the important one).** Re-bucketing *after* dropping ATR-Q4,
+**only Choppiness survives**: IS stays monotone (Q1 +0.0049 → Q4 −0.0025), OOS
+(Q1 +0.0107 → Q4 −0.0035) — Q4 negative in both splits even within the lower-vol
+kept set. The autocorr signal mostly collapses (trend −0.0048 → −0.0014), i.e. it
+was largely re-expressing high vol. So choppiness is a genuinely **ATR-independent**
+per-trade predictor.
+
+**But it does not ship — the per-trade signal ≠ the portfolio metric.** Adding the
+Choppiness filter (`max_chop_rank`) does *not* lift the equity Sharpe and stacking
+it on ATR slightly *hurts* (8-seed mean IS eqSharpe):
+
+| config | IS eqSh | OOS eqSh | IS+ seeds |
+|---|---|---|---|
+| baseline | +0.170 | +0.856 | 5/8 |
+| **ATR-Q4** | **+0.454** | +0.462 | **7/8** |
+| CHOP-Q4 alone | +0.114 | +0.844 | 4/8 |
+| ATR-Q4 + CHOP-Q4 | +0.401 | +0.403 | 5/8 |
+
+The chop cut removes only *mildly* negative trades (conditional −0.0025 vs ATR's
+−0.0099) and the lost diversification across the overlapping book outweighs the
+trimmed losers. This is the same per-trade-vs-portfolio gap the regime-gate work
+hit: a real diagnostic separation need not be a shippable portfolio lever.
+`max_chop_rank` is kept as a research lever (off by default); **ATR-Q4 remains the
+only bad-entry gate that improves the portfolio metric.**
+
 ## 7. Conclusion & use
 
 This **tempers** the "the edge is in the exit" framing: the exit is necessary but
