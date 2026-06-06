@@ -69,6 +69,9 @@ class RandomHedgeStrategy(Strategy):
         atr_rank_window: int = 500,
         max_chop_rank: float | None = None,
         chop_window: int = 14,
+        drop_counter_trend: bool = False,
+        trend_ema: int = 200,
+        trend_slope_lb: int = 20,
     ) -> None:
         """Initialise the strategy.
 
@@ -134,6 +137,9 @@ class RandomHedgeStrategy(Strategy):
             raise ValueError("max_chop_rank must be in (0, 1]")
         self.max_chop_rank = max_chop_rank
         self.chop_window = chop_window
+        self.drop_counter_trend = drop_counter_trend
+        self.trend_ema = trend_ema
+        self.trend_slope_lb = trend_slope_lb
         self._zs = ZsTpSl(
             sl_mult=sl_mult,
             alpha=zs_alpha,
@@ -151,11 +157,43 @@ class RandomHedgeStrategy(Strategy):
         # one (fake same-price exits).
         self._stop: dict[tuple[int, Side], float | None] = {}
         self._last_recalc: dict[tuple[int, Side], int] = {}
+        # Per-bar trend sign (+1 up / −1 down / 0 neutral) for the counter-trend
+        # entry gate; populated by _ensure_trend() in precompute when on.
+        self._trend: list[int] = []
 
     def reset(self) -> None:  # noqa: D102 (override)
         super().reset()
         self._stop.clear()
         self._last_recalc.clear()
+        self._trend = []
+
+    def _ensure_trend(self, bars: list[Bar]) -> None:
+        """Per-bar EMA trend sign for the counter-trend entry gate (causal). No-op if off."""
+        if not self.drop_counter_trend:
+            return
+        import pandas as pd
+
+        from src.indicators import ema
+
+        close = pd.Series([b.close for b in bars])
+        e = ema(close, self.trend_ema)
+        ep = e.shift(self.trend_slope_lb)
+        up = (close > e) & (e > ep)
+        down = (close < e) & (e < ep)
+        self._trend = [1 if u else (-1 if d else 0) for u, d in zip(up, down, strict=True)]
+
+    def _trend_ok(self, side: Side, t: int) -> bool:
+        """False iff ``side`` is counter to the prevailing EMA trend at bar ``t``.
+
+        The bull-market fix for the directional ride strategies: dropping
+        counter-trend entries (keeping trend-aligned *and* neutral) stops the
+        counter-trend leg bleeding in a sustained trend. No-op when off.
+        """
+        if not self.drop_counter_trend or t >= len(self._trend):
+            return True
+        trend = self._trend[t]
+        counter = (side is Side.LONG and trend < 0) or (side is Side.SHORT and trend > 0)
+        return not counter
 
     @staticmethod
     def _atr_series(
@@ -234,6 +272,7 @@ class RandomHedgeStrategy(Strategy):
             if self.max_chop_rank is not None
             else None
         )
+        self._ensure_trend(bars)
         rng = np.random.default_rng(self.seed)
         out: dict[datetime, list[Signal]] = {}
         for t in range(self.warmup, len(bars)):

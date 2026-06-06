@@ -75,6 +75,7 @@ class ZigzagBounceRideStrategy(RandomHedgeStrategy):
         """
         kwargs.setdefault("recalc_bars", 48)  # tuned ride exit (density_pullback WF)
         kwargs.setdefault("sl_mult", 0.75)
+        kwargs.setdefault("drop_counter_trend", True)  # bull-market fix (see §2)
         super().__init__(**kwargs)  # type: ignore[arg-type]
         if limit_window < 1:
             raise ValueError("limit_window must be >= 1")
@@ -111,6 +112,7 @@ class ZigzagBounceRideStrategy(RandomHedgeStrategy):
             else None
         )
         ts_to_idx = {ts: i for i, ts in enumerate(df.index)}
+        self._ensure_trend(bars)
 
         out: dict[datetime, list[Signal]] = {}
         for f in fires:
@@ -118,6 +120,8 @@ class ZigzagBounceRideStrategy(RandomHedgeStrategy):
             if t is None or t < self.warmup:
                 continue
             if not self._gate_ok(t, atr_s, chop_s):
+                continue
+            if not self._trend_ok(f.side, t):
                 continue
             entry = f.price
             ctx = ExitContext(side=f.side, entry_price=entry, zs_history=f.legs)

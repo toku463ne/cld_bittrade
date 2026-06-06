@@ -105,6 +105,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             else None
         )
         band_lo, band_hi = _rolling_bands(highs, lows, self.window, self.density_bins, self.coverage)
+        self._ensure_trend(bars)
 
         out: dict[datetime, list[Signal]] = {}
         for t in range(self.warmup, len(bars)):
@@ -124,6 +125,8 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             else:
                 continue
             if not self._gate_ok(t, atr_s, chop_s):
+                continue
+            if not self._trend_ok(side, t):
                 continue
 
             entry_ref = near if self.pullback else c  # the price the trade is built around
