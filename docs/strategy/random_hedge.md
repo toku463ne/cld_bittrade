@@ -15,7 +15,7 @@ exits made money, the exit alone would be the edge. They do not.
 | **Reuses** | `ZsTpSl` (`src/exit/zs_tp_sl.py`), `_next_dense` (`density_multi_breakout`), `detect_peaks` (`src/indicators/zigzag.py`) |
 | **Default config** | `entry_prob=0.01, seed=0, zigzag_size=12, sl_mult=1.0, recalc_bars=12, time_stop_bars=120, target_window=336, max_slots=50` |
 | **Default timeframe** | **1h** |
-| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. |
+| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. **Update (§6):** subtracting the one robust *bad* entry (high-volatility bars) lifts the baseline to IS eqSharpe **+0.34** — variant `random_hedge_volfilter`. |
 
 ---
 
@@ -129,7 +129,73 @@ create edge from a random entry**. The negative-IS / positive-OOS split (and the
 much smaller OOS sample) is the regime-artifact tell seen elsewhere on this branch
 — a single split disagreeing in sign — not a stable edge.
 
-## 6. Conclusion & use
+## 6. Bad-entry probe — *subtract* the worst contexts (the asymmetry test)
+
+> Premise (the user's): **finding a *bad* entry is easier than finding a good
+> one.** We never found a directional *good* entry on this branch; this asks the
+> mirror question — is there a context where the hedged pair reliably *loses*, so
+> we can just not trade it? Probe:
+> `src/backtest/analysis/random_hedge_badentry_probe.py`. Label = realised **pair**
+> return (long leg + short leg, net) from an actual `random_hedge` run; each entry
+> bar is tagged by five causal context features and bucketed IS vs OOS.
+
+**The hedged-pair P&L mechanism makes the prediction:** in a *trend* one leg rides
+to the dense target while the other takes a small zs stop → net **positive**; in
+*wide chop* BOTH legs whipsaw out at the stop → net **negative + double cost**. So
+the pair should lose where the range is wide — i.e. **high volatility**. (Note this
+is the **opposite** of `density_multi_breakout`, where a *directional* breakout
+*needs* volatility to follow through and loses in dead-calm boxes. A neutral pair
+and a directional breakout want opposite vol regimes — both mechanistic.)
+
+**Per-bucket realised pair return (mean_r), IS vs OOS:**
+
+| feature | bucket | IS mean_r | OOS mean_r | robust? |
+|---|---|---|---|---|
+| **ATR(14) pct** | Q1 (low vol) | **+0.0051** | **+0.0025** | ✅ both + |
+| | Q4 (high vol) | **−0.0099** | **−0.0012** | ✅ both − |
+| BB width pct | Q4 (wide) | −0.0072 | **+0.0074** | ✗ flips |
+| BB %B | upper (>.8) | −0.0066 | −0.0002 | ✗ OOS ~flat |
+| near zigzag peak | — | 336/355 in one bin | — | ✗ degenerate |
+| candle range pct | Q1 / Q3 | +0.003 / −0.004 | flips | ✗ not robust |
+
+Only **ATR realized volatility** separates winners from losers with the *same sign
+in both splits* (eval §6 degradation-over-absolute). The other four — BB width, BB
+position, zigzag-peak proximity, outsized candle — are **not** robust (BB width is
+a vol proxy that flips OOS; near-peak is degenerate because *some* peak is always
+within 0.5%). So the single avoidable bad entry is **high vol**.
+
+**Filter result (`max_atr_rank`, drop the ATR top quartile → `random_hedge_volfilter`):**
+
+| variant | IS eqSharpe | OOS eqSharpe | IS ret | IS DD |
+|---|---|---|---|---|
+| baseline | **−0.346** | +1.155 | −0.51 | 0.70 |
+| **drop ATR Q4** (`rank≥.75`) | **+0.337** | +0.569 | +0.33 | **0.30** |
+| drop top-half (`≥.50`) | +0.936 | +0.157 | +0.75 | 0.18 |
+| keep only low-vol (`≥.25`) | +1.145 | +0.067 | +0.53 | 0.20 |
+
+Subtracting just the worst quartile **flips the null baseline positive and halves
+the drawdown** (0.70→0.30). Tighter cuts raise IS but **overfit** — OOS collapses
+toward 0 as we cut more — so the gentle **Q4-only** cut is the pre-registered
+setting.
+
+**Seed robustness (8 seeds):** the IS lift is real, not a one-seed fluke — filtered
+IS eqSharpe beats baseline in **7/8 seeds** (mean lift **+0.28**) and is positive
+in 7/8. The **OOS** does *not* improve: the recent ~1y OOS window was a clean
+directional regime where even random pairs profit (baseline OOS positive in 8/8),
+so cutting high-vol bars just trades less of a good thing (filtered OOS positive
+7/8 but lower). Consistent with the per-bucket table: ATR-Q4 is *strongly* negative
+over the 4y IS (−0.0099) but only *weakly* negative in the 1y OOS (−0.0012). The
+bad-entry signature is real and large in-sample; the OOS window is too favorable/
+short to add power.
+
+**Verdict:** the user's thesis holds — we found no good *directional* entry, but a
+**robust bad entry (high realized volatility)** whose removal turns a net-negative
+random baseline into a positive, lower-drawdown one. This is a *risk/context* gate
+(when not to trade a neutral pair), not a directional edge. `random_hedge_volfilter`
+is the registered variant; still `ship=False` (it is a control lineage), but it is
+now the **stronger null baseline** to measure a real-priced entry against.
+
+## 7. Conclusion & use
 
 This **tempers** the "the edge is in the exit" framing: the exit is necessary but
 not sufficient — `density_multi_breakout` needs *both* its selective entry and its
