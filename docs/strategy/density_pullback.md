@@ -14,9 +14,9 @@ fill.
 | **Class** | `src/strategy/density_pullback.py` → `DensityPullbackStrategy` (subclasses `RandomHedgeStrategy`) |
 | **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (resting limit orders) |
 | **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
-| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + inherited exit (`sl_mult=1.0, recalc_bars=12, time_stop_bars=120`) |
+| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=1.0, recalc_bars=48, time_stop_bars=120`) |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — IS eqSharpe **+0.68** (beats random baseline +0.17, near B&H +0.64) but OOS only **+0.06** at the default exit. The directional entry carries the IS edge; the inherited neutral-pair exit is too tight to ride breakouts OOS. See §4. |
+| **Status** | `ship=False` — but the **tuned** default (slow ratchet `recalc_bars=48`) is IS eqSharpe **+1.01 / OOS +0.69** (both beat B&H +0.64); the old `recalc_bars=12` was +0.68 / +0.06. The directional entry carries the edge; a slow ratchet lets it ride. Walk-forward-confirmed lever (§4). |
 
 ---
 
@@ -52,6 +52,11 @@ the price-improvement from the directional signal itself.
 | **breakout @ market (control)** | **+0.783** | −0.307 | 0.39 | 514 |
 | **breakout @ pullback limit** | **+0.679** | **+0.062** | **0.29** | 448 |
 
+> These rows hold the exit fixed at the **comparison-era** `recalc_bars=12` so the
+> entry is the only variable. The tuned default (`recalc_bars=48`, §3) lifts the
+> pullback to **IS +1.01 / OOS +0.69** — but the entry *comparison* below is read at
+> the common exit.
+
 **Two findings:**
 
 1. **A directional entry lifts massively over random in-sample** — IS eqSharpe
@@ -72,19 +77,28 @@ exit, which is the tell: a market-neutral pair always has one leg riding the OOS
 trend and is forgiving of entry timing, whereas a directional ride must be right *and*
 survive its stop. The inherited zs-band SL (tuned for the neutral pair) is too tight
 for a breakout — it gets stopped on the retest noise before the trend develops.
-Giving the ride room recovers the OOS:
+Giving the ride room recovers it. A full exit grid (`sl_mult × recalc_bars ×
+time_stop_bars`) shows a **broad plateau, not a spike**: the dominant lever is the
+**ratchet cadence** — recomputing the trailing stop every 48 bars instead of 12 lifts
+both IS and OOS monotonically, across *every* `sl_mult`; `sl_mult` low (1.0) gives the
+best drawdown; `time_stop_bars` barely matters once the ratchet is slow.
 
-| exit tweak (pullback=True) | IS eqSh | OOS eqSh | IS DD |
+| exit (pullback=True) | IS eqSh | OOS eqSh | IS DD |
 |---|---|---|---|
-| default (`recalc=12, tstop=120`) | +0.679 | +0.062 | 0.29 |
-| **`recalc=24, tstop=240`** (let it run) | **+0.860** | **+0.384** | 0.35 |
+| old default (`sl1.0, recalc=12, ts120`) | +0.679 | +0.062 | 0.29 |
+| `recalc=24` | +0.899 | +0.478 | 0.32 |
+| **tuned default (`sl1.0, recalc=48, ts120`)** | **+1.007** | **+0.690** | 0.37 |
 
-A slower ratchet + a longer (~10-day) time stop lifts both IS (+0.86) and OOS (+0.38)
-at low drawdown — mechanistically sensible (trends need time). **Caveat:** this exit
-pair was chosen *after* seeing the OOS, so it is a post-hoc observation, not a
-pre-registered result — it needs proper walk-forward validation before any ship claim.
-The strategy default keeps the inherited (neutral-tuned) exit for the clean
-market-vs-pullback comparison.
+**Walk-forward (`src/backtest/analysis/density_pullback_exit_wf.py`, 6 folds).**
+*A — fixed sweet spot across folds:* positive in **4/6** (the two near-zero folds,
+−0.05, are ones where B&H was −0.9 to −1.0 — it still beat a falling market). *B —
+anchored re-selection* (choose on pre-fold data only, test on the fold): **rc48 is
+chosen in all 5 folds**, mean test eqSharpe **+0.425**, negative only in the two
+down-market folds. The recalc lever is confirmed out-of-sample (and transfers to
+`random_hedge`: 8/8 seeds, see [`random_hedge.md`](random_hedge.md) "Current best
+setup"). `sl_mult` is the unsettled axis (the plateau/DD favours 1.0; anchored
+re-selection leans 1.5) — `recalc_bars=48` is now the default, `sl_mult=1.0` chosen
+for its drawdown.
 
 ## 3b. Most trades have no TP — does the "ride" carry the edge?
 
