@@ -21,6 +21,10 @@ from src.strategy.density_multi_breakout import DensityMultiBreakoutStrategy
 from src.strategy.density_multi_relative import DensityMultiRelativeStrategy
 from src.strategy.density_volwall_breakout import DensityVolwallBreakoutStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
+from src.strategy.regime_gate import (
+    DensityBreakoutVolgateStrategy,
+    DensityMultiVolgateStrategy,
+)
 from src.strategy.zigzag_bounce import ZigzagBounceStrategy
 
 # Factories (zero-arg) so each consumer gets a fresh, default-configured strategy.
@@ -37,6 +41,8 @@ STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     DensityMultiBreakoutStrategy.name: DensityMultiBreakoutStrategy,
     DensityMultiRelativeStrategy.name: DensityMultiRelativeStrategy,
     DensityVolwallBreakoutStrategy.name: DensityVolwallBreakoutStrategy,
+    DensityBreakoutVolgateStrategy.name: DensityBreakoutVolgateStrategy,
+    DensityMultiVolgateStrategy.name: DensityMultiVolgateStrategy,
 }
 
 
