@@ -10,13 +10,16 @@ import pytest
 
 from src.core.types import Side
 from src.indicators.density import (
+    find_walls,
     relative_dense_band,
+    time_acceptance_profile,
     time_at_price_profile,
     value_area,
     volume_acceptance_profile,
 )
 from src.signs.density_band import DensityBandSign
 from src.signs.density_breakout import DensityBreakoutSign
+from src.signs.density_breakout_acc import DensityBreakoutAccSign
 from src.signs.density_breakout_vol import DensityBreakoutVolSign
 
 
@@ -224,6 +227,64 @@ def test_volume_profile_transform_compression_ordering() -> None:
         top = np.sort(w)[-8:].sum()  # weight in the 8 busiest bins
         shares[tr] = top / w.sum()
     assert shares["linear"] > shares["sqrt"] > shares["log"]
+
+
+def test_time_acceptance_half_ratio_matches_uniform_time_profile() -> None:
+    # The clean-A/B property: body_ratio == 0.5 reproduces the plain uniform
+    # time profile EXACTLY, so density_breakout_acc(0.5) == density_breakout.
+    rng = np.random.default_rng(7)
+    n = 120
+    closes = list(100.0 + rng.normal(0, 1.0, n))
+    opens = list(100.0 + rng.normal(0, 1.0, n))
+    highs = [max(o, c) + abs(rng.normal(0, 0.5)) for o, c in zip(opens, closes)]
+    lows = [min(o, c) - abs(rng.normal(0, 0.5)) for o, c in zip(opens, closes)]
+    _, w_uniform = time_at_price_profile(highs, lows, n_bins=64)
+    _, w_acc = time_acceptance_profile(opens, highs, lows, closes, n_bins=64, body_ratio=0.5)
+    np.testing.assert_allclose(w_acc, w_uniform, rtol=1e-9, atol=1e-9)
+
+
+def test_time_acceptance_each_bar_deposits_unit_weight() -> None:
+    # No volume: every bar contributes total weight 1.0 regardless of body_ratio
+    # or candle shape (conservation), so weights sum to the bar count.
+    opens = [100.0, 101.0, 99.5]
+    closes = [100.5, 100.0, 100.5]
+    highs = [103.0, 101.2, 100.6]  # bar 0 has a long upper wick
+    lows = [99.9, 97.0, 99.4]  # bar 1 has a long lower wick
+    for br in (0.3, 0.5, 0.7, 0.9):
+        _, w = time_acceptance_profile(opens, highs, lows, closes, n_bins=50, body_ratio=br)
+        assert w.sum() == pytest.approx(3.0)
+
+
+def test_time_acceptance_downweights_the_wick() -> None:
+    # A single candle with a long upper hige: raising body_ratio moves density
+    # OUT of the wick (rejected high) and INTO the body, vs the uniform profile.
+    opens, closes = [100.0], [100.2]
+    highs, lows = [105.0], [99.9]  # body ~[100,100.2], long upper wick to 105
+    _, w_uniform = time_acceptance_profile(opens, highs, lows, closes, n_bins=50, body_ratio=0.5)
+    _, w_body = time_acceptance_profile(opens, highs, lows, closes, n_bins=50, body_ratio=0.85)
+    # Top 40% of bins (the wick region) must hold less weight under body weighting.
+    hi_region = slice(30, 50)
+    assert w_body[hi_region].sum() < w_uniform[hi_region].sum()
+
+
+def test_find_walls_detects_two_separate_peaks() -> None:
+    # A bimodal profile (two dense zones with a gap) must yield two walls, each
+    # bracketing its own peak — this is what lets volume add walls time misses.
+    centers = np.linspace(100.0, 110.0, 21)
+    weights = np.ones(21) * 0.2
+    weights[3] = 5.0  # peak near 101.5
+    weights[15] = 6.0  # peak near 107.5
+    walls = find_walls(centers, weights, prominence_k=1.0)
+    assert len(walls) == 2
+    assert walls[0][0] <= 101.5 <= walls[0][1]
+    assert walls[1][0] <= 107.5 <= walls[1][1]
+    assert walls[0][2] < walls[1][2]  # ascending by price
+
+
+def test_find_walls_flat_profile_has_no_walls() -> None:
+    centers = np.linspace(100.0, 110.0, 21)
+    weights = np.ones(21)
+    assert find_walls(centers, weights, prominence_k=1.0) == []
 
 
 def _frame(highs: list[float], lows: list[float], closes: list[float]) -> pd.DataFrame:

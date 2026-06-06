@@ -116,6 +116,152 @@ def time_at_price_profile(
     return centers, weights
 
 
+def _body_wick_profile(
+    norm: NDArray[np.float64],
+    o: NDArray[np.float64],
+    h: NDArray[np.float64],
+    low_arr: NDArray[np.float64],
+    c: NDArray[np.float64],
+    n_bins: int,
+    body_ratio: float,
+    lo: float | None,
+    hi: float | None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Distribute each bar's weight ``norm[i]`` across price bins, body/wick tilted.
+
+    Shared core of :func:`volume_acceptance_profile` (``norm`` = mean-normalised
+    volume) and :func:`time_acceptance_profile` (``norm`` = ones). The candle body
+    span (open->close) is weighted ``body_ratio`` and the wick span
+    ``1 - body_ratio``; the per-bar normaliser is that same body/wick-weighted
+    height, so each bar deposits exactly ``norm[i]`` regardless of candle shape —
+    magnitude and shape are never confounded. ``body_ratio == 0.5`` recovers
+    uniform-within-bar weighting (the plain :func:`time_at_price_profile` shape).
+
+    Args:
+        norm: Per-bar total weight to deposit (length = n_bars).
+        o, h, low_arr, c: Per-bar open/high/low/close (numpy, same length).
+        n_bins: Number of equal-width bins.
+        body_ratio: Body-vs-wick weight in ``[0, 1]``.
+        lo: Lower price bound (``None`` -> ``min(low)``).
+        hi: Upper price bound (``None`` -> ``max(high)``).
+
+    Returns:
+        ``(centers, weights)`` — bin centres and the deposited weight per bin.
+    """
+    lo_b = float(low_arr.min()) if lo is None else float(lo)
+    hi_b = float(h.max()) if hi is None else float(hi)
+    if hi_b <= lo_b:
+        # Degenerate (flat) window: a single price holds all the weight.
+        centers = np.full(n_bins, lo_b, dtype=np.float64)
+        weights = np.zeros(n_bins, dtype=np.float64)
+        weights[n_bins // 2] = float(norm.sum())
+        return centers, weights
+
+    edges = np.linspace(lo_b, hi_b, n_bins + 1)
+    left = edges[:-1]
+    right = edges[1:]
+    centers = 0.5 * (left + right)
+
+    # Clip every span to the global bounds so weight is conserved exactly.
+    bar_lo = np.clip(low_arr, lo_b, hi_b)
+    bar_hi = np.clip(h, lo_b, hi_b)
+    body_bot = np.clip(np.minimum(o, c), lo_b, hi_b)
+    body_top = np.clip(np.maximum(o, c), lo_b, hi_b)
+
+    full_overlap = np.clip(
+        np.minimum(bar_hi[:, None], right[None, :])
+        - np.maximum(bar_lo[:, None], left[None, :]),
+        0.0,
+        None,
+    )
+    body_overlap = np.clip(
+        np.minimum(body_top[:, None], right[None, :])
+        - np.maximum(body_bot[:, None], left[None, :]),
+        0.0,
+        None,
+    )
+    wick_overlap = np.clip(full_overlap - body_overlap, 0.0, None)
+
+    # Per-bar normaliser = the same body/wick-weighted height the numerator sums
+    # to, so each bar deposits exactly norm[i] (sum_j numer_j / denom == 1).
+    body_h = body_top - body_bot
+    wick_h = np.clip((bar_hi - bar_lo) - body_h, 0.0, None)
+    denom = body_h * body_ratio + wick_h * (1.0 - body_ratio)
+    numer = body_overlap * body_ratio + wick_overlap * (1.0 - body_ratio)
+
+    weights = np.zeros(n_bins, dtype=np.float64)
+    good = denom > 0.0
+    if good.any():
+        contrib = (norm[good][:, None] * numer[good]) / denom[good][:, None]
+        weights += contrib.sum(axis=0)
+
+    # Degenerate bars (denom == 0: flat high == low, or body_ratio at an extreme
+    # zeroing the only non-empty span) deposit their full weight at the close.
+    if (~good).any():
+        flat_c = np.clip(c[~good], lo_b, hi_b)
+        idx = np.clip(np.searchsorted(edges, flat_c, side="right") - 1, 0, n_bins - 1)
+        np.add.at(weights, idx, norm[~good])
+
+    return centers, weights
+
+
+def time_acceptance_profile(
+    opens: NDArray[np.float64] | list[float],
+    highs: NDArray[np.float64] | list[float],
+    lows: NDArray[np.float64] | list[float],
+    closes: NDArray[np.float64] | list[float],
+    n_bins: int,
+    body_ratio: float = 0.7,
+    lo: float | None = None,
+    hi: float | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Build a *time-at-price* profile with body/wick acceptance weighting.
+
+    Identical to :func:`time_at_price_profile` (each bar deposits total weight
+    ``1.0``, **no** volume) except the unit weight is tilted *within* the bar
+    toward the candle **body** (acceptance) and away from the **wicks**
+    (rejection) by ``body_ratio``. This isolates the body/wick (hige/marubozu)
+    effect as a single knob vs the uniform time profile:
+
+    - ``body_ratio == 0.5`` reproduces :func:`time_at_price_profile` exactly
+      (uniform across ``[low, high]``).
+    - ``body_ratio > 0.5`` down-weights the wicks — a long upper/lower hige
+      deposits less density at the rejected extreme; a marubozu (no wick) keeps
+      all of its weight in the body.
+
+    Args:
+        opens: Per-bar open prices.
+        highs: Per-bar high prices.
+        lows: Per-bar low prices.
+        closes: Per-bar close prices.
+        n_bins: Number of equal-width price bins.
+        body_ratio: Weight on the body span vs the wicks, in ``[0, 1]``.
+        lo: Lower price bound. Defaults to ``min(lows)``.
+        hi: Upper price bound. Defaults to ``max(highs)``.
+
+    Returns:
+        ``(centers, weights)`` — bin centres and the time-acceptance weight per
+        bin. ``weights`` sums to the bar count when the bounds enclose every bar.
+
+    Raises:
+        ValueError: On bad ``n_bins`` / ``body_ratio``, empty or mismatched inputs.
+    """
+    if n_bins < 1:
+        raise ValueError("n_bins must be >= 1")
+    if not 0.0 <= body_ratio <= 1.0:
+        raise ValueError("body_ratio must be in [0, 1]")
+    o = np.asarray(opens, dtype=np.float64)
+    h = np.asarray(highs, dtype=np.float64)
+    low_arr = np.asarray(lows, dtype=np.float64)
+    c = np.asarray(closes, dtype=np.float64)
+    if not (o.shape == h.shape == low_arr.shape == c.shape):
+        raise ValueError("opens/highs/lows/closes must share a length")
+    if h.size == 0:
+        raise ValueError("inputs must be non-empty")
+    norm = np.ones(h.size, dtype=np.float64)
+    return _body_wick_profile(norm, o, h, low_arr, c, n_bins, body_ratio, lo, hi)
+
+
 def volume_acceptance_profile(
     opens: NDArray[np.float64] | list[float],
     highs: NDArray[np.float64] | list[float],
@@ -210,63 +356,7 @@ def volume_acceptance_profile(
     if vol_clip is not None:
         norm = np.minimum(norm, vol_clip)
 
-    lo_b = float(low_arr.min()) if lo is None else float(lo)
-    hi_b = float(h.max()) if hi is None else float(hi)
-    if hi_b <= lo_b:
-        # Degenerate (flat) window: a single price holds all the weight.
-        centers = np.full(n_bins, lo_b, dtype=np.float64)
-        weights = np.zeros(n_bins, dtype=np.float64)
-        weights[n_bins // 2] = float(norm.sum())
-        return centers, weights
-
-    edges = np.linspace(lo_b, hi_b, n_bins + 1)
-    left = edges[:-1]
-    right = edges[1:]
-    centers = 0.5 * (left + right)
-
-    # Clip every span to the global bounds so weight is conserved exactly.
-    bar_lo = np.clip(low_arr, lo_b, hi_b)
-    bar_hi = np.clip(h, lo_b, hi_b)
-    body_bot = np.clip(np.minimum(o, c), lo_b, hi_b)
-    body_top = np.clip(np.maximum(o, c), lo_b, hi_b)
-
-    full_overlap = np.clip(
-        np.minimum(bar_hi[:, None], right[None, :])
-        - np.maximum(bar_lo[:, None], left[None, :]),
-        0.0,
-        None,
-    )
-    body_overlap = np.clip(
-        np.minimum(body_top[:, None], right[None, :])
-        - np.maximum(body_bot[:, None], left[None, :]),
-        0.0,
-        None,
-    )
-    wick_overlap = np.clip(full_overlap - body_overlap, 0.0, None)
-
-    # Per-bar normaliser = the same body/wick-weighted height the numerator sums
-    # to, so each bar deposits exactly norm_vol (sum_j numer_j / denom == 1).
-    body_h = body_top - body_bot
-    wick_h = np.clip((bar_hi - bar_lo) - body_h, 0.0, None)
-    denom = body_h * body_ratio + wick_h * (1.0 - body_ratio)
-    numer = body_overlap * body_ratio + wick_overlap * (1.0 - body_ratio)
-
-    weights = np.zeros(n_bins, dtype=np.float64)
-    good = denom > 0.0
-    if good.any():
-        contrib = (norm[good][:, None] * numer[good]) / denom[good][:, None]
-        weights += contrib.sum(axis=0)
-
-    # Degenerate bars (denom == 0: flat high == low, or body_ratio at an extreme
-    # zeroing the only non-empty span) deposit their full norm_vol at the close.
-    if (~good).any():
-        flat_c = np.clip(c[~good], lo_b, hi_b)
-        idx = np.clip(
-            np.searchsorted(edges, flat_c, side="right") - 1, 0, n_bins - 1
-        )
-        np.add.at(weights, idx, norm[~good])
-
-    return centers, weights
+    return _body_wick_profile(norm, o, h, low_arr, c, n_bins, body_ratio, lo, hi)
 
 
 def relative_dense_band(
@@ -378,3 +468,53 @@ def value_area(
             acc += float(weights[lo_i])
 
     return float(centers[poc_i]), float(centers[lo_i]), float(centers[hi_i])
+
+
+def find_walls(
+    centers: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    *,
+    prominence_k: float = 1.0,
+) -> list[tuple[float, float, float]]:
+    """Find the discrete high-density walls (peaks) in a price profile.
+
+    Unlike :func:`value_area` (one contiguous band around the single POC), this
+    returns *every* dense zone: each maximal run of contiguous bins whose weight
+    exceeds ``mean + prominence_k * std`` of the profile is one wall. This is what
+    lets a *volume* profile contribute walls a *time* profile misses — a level a
+    lot of size traded at, even briefly, shows up as its own peak.
+
+    Args:
+        centers: Bin centre prices (length ``n``), ascending and equally spaced.
+        weights: Weight per bin (length ``n``).
+        prominence_k: Threshold in standard deviations above the mean a bin must
+            clear to belong to a wall. Higher = fewer, stronger walls.
+
+    Returns:
+        One ``(lo, hi, peak_price)`` per wall — the price bounds of the run
+        (extended half a bin past the outer centres) and the price of its
+        heaviest bin — ascending by price. Empty when the profile is flat or
+        nothing clears the threshold.
+    """
+    w = np.asarray(weights, dtype=np.float64)
+    c = np.asarray(centers, dtype=np.float64)
+    if w.size == 0 or w.size != c.size:
+        return []
+    half = 0.5 * float(c[1] - c[0]) if c.size >= 2 else 0.0
+    thr = float(w.mean() + prominence_k * w.std())
+    above = w > thr
+    walls: list[tuple[float, float, float]] = []
+    i = 0
+    n = w.size
+    while i < n:
+        if not above[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and above[j + 1]:
+            j += 1
+        peak_local = int(np.argmax(w[i : j + 1]))
+        peak_price = float(c[i + peak_local])
+        walls.append((float(c[i] - half), float(c[j] + half), peak_price))
+        i = j + 1
+    return walls
