@@ -86,6 +86,32 @@ pre-registered result — it needs proper walk-forward validation before any shi
 The strategy default keeps the inherited (neutral-tuned) exit for the clean
 market-vs-pullback comparison.
 
+## 3b. Most trades have no TP — does the "ride" carry the edge?
+
+`_next_dense` returns `None` for **68% of `density_pullback` entries** (303/448 IS):
+a breakout leaves the box into clear air, so there is usually no pre-existing dense
+node ahead — those trades have no take-profit and ride to the SL / trail / time
+stop. (There are essentially **no trivially-close TPs** — the `min_dist` floor holds
+TP:SL ≥ 1.0 for ~100% of trades, median TP ~2.9% of price; the worry was the wrong
+direction.) Probe: `src/backtest/analysis/density_pullback_notp_probe.py`.
+
+Do the no-TP rides carry the edge, or the with-TP trades? **Neither robustly — the
+split flips across the IS/OOS boundary (and, for random_hedge, across seeds):**
+
+| subset (eqSharpe) | density_pullback IS | OOS | random_hedge IS | OOS |
+|---|---|---|---|---|
+| no-TP / ride | **+0.918** | −0.506 | −1.060 | +0.596 |
+| with-TP | −0.574 | **+0.875** | +0.797* | +0.576* |
+| all (full) | +0.679 | +0.062 | −0.346 | +1.155 |
+
+For `density_pullback` the two subsets are **anti-correlated** across the split (the
+ride pays in the IS trend, the target pays in the OOS); the **full mix is the most
+balanced**. The `random_hedge` "with-TP carries it" reading is a **seed-0 fluke**
+(*): over 8 seeds with-TP is IS −0.02 / OOS +0.19 (4/8, 5/8) — not robust, below both
+the baseline and the ATR-Q4 gate. So **TP-presence does not cleanly separate edge**,
+and "require a dense target ahead" is not a usable lever — the same per-trade-subset-
+that-wins-one-split-doesn't-survive pattern seen elsewhere on the branch.
+
 ## 4. Verdict & next
 
 `ship=False`: the registered default is OOS +0.06 (below B&H), and the strong variant
