@@ -23,6 +23,7 @@ from src.strategy.density_volwall_breakout import DensityVolwallBreakoutStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
 from src.strategy.random_hedge import RandomHedgeStrategy, RandomHedgeVolfilterStrategy
 from src.strategy.density_pullback import DensityPullbackStrategy
+from src.strategy.zigzag_bounce_ride import ZigzagBounceRideStrategy
 from src.strategy.random_hedge_density import RandomHedgeDensityStrategy
 from src.strategy.regime_gate import (
     DensityBreakoutVolgateStrategy,
@@ -50,6 +51,7 @@ STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     RandomHedgeVolfilterStrategy.name: RandomHedgeVolfilterStrategy,
     RandomHedgeDensityStrategy.name: RandomHedgeDensityStrategy,
     DensityPullbackStrategy.name: DensityPullbackStrategy,
+    ZigzagBounceRideStrategy.name: ZigzagBounceRideStrategy,
 }
 
 
