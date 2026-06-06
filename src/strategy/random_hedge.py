@@ -344,12 +344,14 @@ class RandomHedgeVolfilterStrategy(RandomHedgeStrategy):
         """Initialise with the Q4-ATR bad-entry gate + the walk-forward sweet-spot exit.
 
         Defaults: the ATR-Q4 bad-entry gate (``max_atr_rank=0.75``) plus the tuned
-        exit (``recalc_bars=48``, ``sl_mult=1.0``, ``time_stop_bars=120``) — a slow
-        ratchet that lets winners run. This config is 8-seed IS eqSharpe **+0.87** /
-        OOS **+0.76** (vs B&H +0.64), 8/8 IS positive; the recalc lever is confirmed
-        out-of-sample (`density_pullback_exit_wf` picks rc48 in every anchored fold).
-        All overridable.
+        exit (``recalc_bars=48``, ``sl_mult=0.75``, ``time_stop_bars=120``) — a slow
+        ratchet with a tight stop that lets winners run. This config is 8-seed IS
+        eqSharpe **+0.90** / OOS **+1.02** (vs B&H +0.64), 8/8 IS positive; both
+        exit levers are confirmed out-of-sample on `density_pullback`
+        (`density_pullback_exit_wf` — rc48 in every anchored fold, sl0.75 positive in
+        6/6). All overridable.
         """
         kwargs.setdefault("max_atr_rank", 0.75)
         kwargs.setdefault("recalc_bars", 48)
+        kwargs.setdefault("sl_mult", 0.75)
         super().__init__(**kwargs)  # type: ignore[arg-type]

@@ -15,7 +15,7 @@ exits made money, the exit alone would be the edge. They do not.
 | **Reuses** | `ZsTpSl` (`src/exit/zs_tp_sl.py`), `_next_dense` (`density_multi_breakout`), `detect_peaks` (`src/indicators/zigzag.py`) |
 | **Default config** | `entry_prob=0.01, seed=0, zigzag_size=12, sl_mult=1.0, recalc_bars=12, time_stop_bars=120, target_window=336, max_slots=50` |
 | **Default timeframe** | **1h** |
-| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. **Update (§6):** subtracting the one robust *bad* entry (high-volatility bars) lifts the baseline to IS eqSharpe **+0.34** — variant `random_hedge_volfilter`. **Update (§7):** a better-priced density-edge *limit* entry (`random_hedge_density`) does **not** lift it — worse IS, negative OOS (adverse selection + fade-dies-in-trends). **Current best (§6 "Current best setup"):** ATR-Q4 gate + tuned slow-ratchet exit (`recalc_bars=48`) → IS eqSharpe **+0.87** / OOS **+0.76** (8-seed), 4/5 IS years + 2/2 OOS years positive — the registered default of `random_hedge_volfilter`. |
+| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. **Update (§6):** subtracting the one robust *bad* entry (high-volatility bars) lifts the baseline to IS eqSharpe **+0.34** — variant `random_hedge_volfilter`. **Update (§7):** a better-priced density-edge *limit* entry (`random_hedge_density`) does **not** lift it — worse IS, negative OOS (adverse selection + fade-dies-in-trends). **Current best (§6 "Current best setup"):** ATR-Q4 gate + tuned exit (`sl_mult=0.75, recalc_bars=48`) → IS eqSharpe **+0.90** / OOS **+1.02** (8-seed), 5/5 IS years + 2/2 OOS years positive — the registered default of `random_hedge_volfilter`. |
 
 ---
 
@@ -236,67 +236,70 @@ only bad-entry gate that improves the portfolio metric.**
 ### Current best setup — ATR-Q4 gate + tuned (slow-ratchet) exit
 
 The exit was tuned (grid + anchored walk-forward on `density_pullback`, see
-[`density_pullback.md`](density_pullback.md) §4) and the dominant lever — a **slow
-ratchet** — transfers straight to `random_hedge`: recomputing the trailing stop
-every **48** bars instead of 12 stops choking the runners. Holding the ATR-Q4 gate
-and `sl_mult=1.0 / time_stop_bars=120`, the 8-seed mean equity Sharpe climbs monotone
-in `recalc_bars` — **12: IS +0.45 / OOS +0.46 → 24: +0.70 / +0.45 → 48: +0.87 /
-+0.76** (8/8 IS, 7/8 OOS positive), both above B&H +0.64. This is the registered
-default of `random_hedge_volfilter`:
+[`density_pullback.md`](density_pullback.md) §3–§4) and **both** levers transfer
+straight to `random_hedge` — they are properties of the shared exit framework. The
+**slow ratchet** (recompute the trail every **48** bars, not 12) stops choking the
+runners; the 8-seed mean equity Sharpe climbs monotone in `recalc_bars` (at `sl1.0`:
+12: IS +0.45 / OOS +0.46 → 24: +0.70 / +0.45 → 48: +0.87 / +0.76). The **tight stop**
+(`sl_mult=0.75`, the walk-forward optimum — 6/6 folds on `density_pullback`) then adds
+OOS on top (`sl1.0` +0.87 / +0.76 → `sl0.75` **+0.90 / +1.02**). This is the
+registered default of `random_hedge_volfilter`:
 
-> **Current setup:** `max_atr_rank=0.75, sl_mult=1.0, recalc_bars=48, time_stop_bars=120`
-> — **IS equity Sharpe +0.87 / OOS +0.76** (8-seed mean) vs B&H +0.64.
+> **Current setup:** `max_atr_rank=0.75, sl_mult=0.75, recalc_bars=48, time_stop_bars=120`
+> — **IS equity Sharpe +0.90 / OOS +1.02** (8-seed mean; 8/8 IS, 7/8 OOS positive) vs
+> B&H +0.64.
 
 **Per-period breakdown (8-seed mean; `ret`/`max_DD` are net per-trade-return-cumulative,
 `Sharpe`/`Sortino` are per-trade — the headline portfolio metric is the equity Sharpe
 above; per-trade understates overlapping slots).**
 
-*In-sample, by year:*
+*In-sample, by year:* **5/5 years non-negative** (the tight stop turns the old 2022
+−0.02 positive); per-trade DR ~0.32–0.36 (sub-coin-flip is normal for this trend-ride
+payoff — few big winners carried by the ratchet).
 
 | period | n | DR | ret | max_DD | Sharpe | Sortino |
 |---|---|---|---|---|---|---|
-| 2021 | 100 | 0.372 | +0.087 | 0.340 | +0.015 | +0.071 |
-| 2022 | 128 | 0.393 | −0.018 | 0.278 | −0.004 | −0.012 |
-| 2023 | 122 | 0.375 | +0.259 | 0.230 | +0.070 | +0.283 |
-| 2024 | 140 | 0.396 | +0.551 | 0.213 | +0.110 | +0.436 |
-| 2025 | 50 | 0.401 | +0.123 | 0.129 | +0.062 | +0.273 |
+| 2021 | 100 | 0.324 | +0.126 | 0.341 | +0.025 | +0.133 |
+| 2022 | 128 | 0.364 | +0.151 | 0.216 | +0.039 | +0.162 |
+| 2023 | 122 | 0.328 | +0.195 | 0.209 | +0.054 | +0.272 |
+| 2024 | 140 | 0.351 | +0.479 | 0.201 | +0.104 | +0.489 |
+| 2025 | 50 | 0.361 | +0.140 | 0.129 | +0.075 | +0.410 |
 
-→ **4/5 years non-negative** (2022 is −0.018, essentially flat in the bear); per-trade
-DR ~0.37–0.40 (sub-coin-flip is normal for this trend-ride payoff — few big winners).
-
-*In-sample, by quarter* (17 quarters): **12/17 non-negative**; the worst is 2023Q3
-(ret −0.110, Sharpe −0.26), the best 2023Q4 (+0.263, Sortino +1.09).
-
-| period | n | DR | ret | max_DD | Sharpe | Sortino |
-|---|---|---|---|---|---|---|
-| 2021Q2 | 24 | 0.413 | +0.108 | 0.175 | +0.071 | +0.237 |
-| 2021Q3 | 35 | 0.373 | −0.014 | 0.209 | −0.042 | −0.042 |
-| 2021Q4 | 41 | 0.347 | −0.008 | 0.229 | −0.042 | −0.050 |
-| 2022Q1 | 28 | 0.374 | −0.036 | 0.166 | −0.093 | −0.237 |
-| 2022Q2 | 32 | 0.386 | −0.027 | 0.149 | −0.027 | −0.061 |
-| 2022Q3 | 36 | 0.426 | +0.062 | 0.126 | +0.051 | +0.186 |
-| 2022Q4 | 31 | 0.372 | −0.016 | 0.095 | −0.030 | −0.018 |
-| 2023Q1 | 25 | 0.380 | +0.009 | 0.130 | −0.008 | +0.053 |
-| 2023Q2 | 31 | 0.408 | +0.097 | 0.081 | +0.061 | +0.477 |
-| 2023Q3 | 31 | 0.264 | −0.110 | 0.138 | −0.263 | −0.708 |
-| 2023Q4 | 34 | 0.444 | +0.263 | 0.081 | +0.216 | +1.089 |
-| 2024Q1 | 28 | 0.408 | +0.075 | 0.111 | +0.084 | +0.450 |
-| 2024Q2 | 41 | 0.392 | +0.103 | 0.121 | +0.065 | +0.302 |
-| 2024Q3 | 38 | 0.398 | +0.155 | 0.140 | +0.098 | +0.424 |
-| 2024Q4 | 34 | 0.402 | +0.219 | 0.099 | +0.120 | +0.997 |
-| 2025Q1 | 31 | 0.393 | +0.118 | 0.117 | +0.087 | +0.383 |
-| 2025Q2 | 19 | 0.419 | +0.005 | 0.075 | −0.050 | +0.102 |
-
-*OOS, by year:* **2/2 positive.**
+*In-sample, by quarter* (17 quarters): **11/17 non-negative**; worst 2023Q3 (ret
+−0.107, Sharpe −0.30), best 2023Q4 (+0.186, Sortino +1.05). (One fewer than `sl1.0`'s
+12/17 — the tighter stop trades a marginal quarter for stronger years and far better
+OOS.)
 
 | period | n | DR | ret | max_DD | Sharpe | Sortino |
 |---|---|---|---|---|---|---|
-| 2025 | 79 | 0.400 | +0.136 | 0.142 | +0.069 | +0.214 |
-| 2026 | 52 | 0.385 | +0.037 | 0.149 | +0.021 | +0.102 |
+| 2021Q2 | 24 | 0.393 | +0.189 | 0.142 | +0.134 | +0.584 |
+| 2021Q3 | 35 | 0.299 | −0.012 | 0.195 | −0.056 | −0.047 |
+| 2021Q4 | 41 | 0.295 | −0.051 | 0.211 | −0.095 | −0.216 |
+| 2022Q1 | 28 | 0.376 | +0.017 | 0.114 | −0.039 | −0.167 |
+| 2022Q2 | 32 | 0.350 | +0.024 | 0.123 | +0.034 | +0.402 |
+| 2022Q3 | 36 | 0.402 | +0.124 | 0.123 | +0.107 | +0.499 |
+| 2022Q4 | 31 | 0.332 | −0.015 | 0.089 | −0.047 | −0.030 |
+| 2023Q1 | 25 | 0.359 | −0.007 | 0.122 | −0.045 | +0.029 |
+| 2023Q2 | 31 | 0.343 | +0.122 | 0.075 | +0.110 | +0.737 |
+| 2023Q3 | 31 | 0.214 | −0.107 | 0.129 | −0.300 | −0.815 |
+| 2023Q4 | 34 | 0.397 | +0.186 | 0.086 | +0.164 | +1.051 |
+| 2024Q1 | 28 | 0.354 | +0.040 | 0.103 | +0.051 | +0.278 |
+| 2024Q2 | 41 | 0.330 | +0.087 | 0.096 | +0.063 | +0.379 |
+| 2024Q3 | 38 | 0.390 | +0.192 | 0.107 | +0.134 | +0.800 |
+| 2024Q4 | 34 | 0.342 | +0.160 | 0.119 | +0.075 | +1.094 |
+| 2025Q1 | 31 | 0.354 | +0.157 | 0.099 | +0.122 | +0.708 |
+| 2025Q2 | 19 | 0.377 | −0.017 | 0.089 | −0.087 | +0.036 |
 
-Still `ship=False` for the consistency gate (12/17 quarters = 71% < 80%), but this is
-the strongest random_hedge-family config: a bad-entry *risk* gate plus a slow-ratchet
-exit, IS +0.87 / OOS +0.76, positive in 4/5 IS years and 2/2 OOS years.
+*OOS, by year:* **2/2 positive** (both stronger than at `sl1.0`).
+
+| period | n | DR | ret | max_DD | Sharpe | Sortino |
+|---|---|---|---|---|---|---|
+| 2025 | 79 | 0.359 | +0.125 | 0.106 | +0.070 | +0.269 |
+| 2026 | 52 | 0.354 | +0.101 | 0.113 | +0.060 | +0.303 |
+
+Still `ship=False` for the consistency gate (11/17 quarters = 65% < 80%), but this is
+the strongest random_hedge-family config: a bad-entry *risk* gate plus a tight-stop /
+slow-ratchet exit, IS +0.90 / OOS +1.02, positive in **5/5 IS years and 2/2 OOS years**.
 
 ## 7. Better-priced entry — density-edge limit pair (`random_hedge_density`, REJECT)
 
