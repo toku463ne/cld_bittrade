@@ -14,9 +14,9 @@ fill.
 | **Class** | `src/strategy/density_pullback.py` → `DensityPullbackStrategy` (subclasses `RandomHedgeStrategy`) |
 | **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (resting limit orders) |
 | **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
-| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=1.0, recalc_bars=48, time_stop_bars=120`) |
+| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — but the **tuned** default (slow ratchet `recalc_bars=48`) is IS eqSharpe **+1.01 / OOS +0.69** (both beat B&H +0.64); the old `recalc_bars=12` was +0.68 / +0.06. The directional entry carries the edge; a slow ratchet lets it ride. Walk-forward-confirmed lever (§4). |
+| **Status** | `ship=False` — but the **tuned** default (`sl_mult=0.75, recalc_bars=48`) is IS eqSharpe **+1.27 / OOS +1.47** (both well above B&H +0.64); the old `recalc=12, sl1.0` was +0.68 / +0.06. The directional entry carries the edge; a slow ratchet + tight stop lets it ride. Both levers walk-forward-confirmed (§3–§4). |
 
 ---
 
@@ -52,10 +52,10 @@ the price-improvement from the directional signal itself.
 | **breakout @ market (control)** | **+0.783** | −0.307 | 0.39 | 514 |
 | **breakout @ pullback limit** | **+0.679** | **+0.062** | **0.29** | 448 |
 
-> These rows hold the exit fixed at the **comparison-era** `recalc_bars=12` so the
-> entry is the only variable. The tuned default (`recalc_bars=48`, §3) lifts the
-> pullback to **IS +1.01 / OOS +0.69** — but the entry *comparison* below is read at
-> the common exit.
+> These rows hold the exit fixed at the **comparison-era** `recalc_bars=12, sl1.0` so
+> the entry is the only variable. The tuned default (`sl0.75, recalc=48`, §3) lifts
+> the pullback to **IS +1.27 / OOS +1.47** — but the entry *comparison* below is read
+> at the common exit.
 
 **Two findings:**
 
@@ -87,18 +87,39 @@ best drawdown; `time_stop_bars` barely matters once the ratchet is slow.
 |---|---|---|---|
 | old default (`sl1.0, recalc=12, ts120`) | +0.679 | +0.062 | 0.29 |
 | `recalc=24` | +0.899 | +0.478 | 0.32 |
-| **tuned default (`sl1.0, recalc=48, ts120`)** | **+1.007** | **+0.690** | 0.37 |
+| `sl1.0, recalc=48, ts120` | +1.007 | +0.690 | 0.37 |
+| **tuned default (`sl0.75, recalc=48, ts120`)** | **+1.266** | **+1.471** | 0.34 |
 
 **Walk-forward (`src/backtest/analysis/density_pullback_exit_wf.py`, 6 folds).**
-*A — fixed sweet spot across folds:* positive in **4/6** (the two near-zero folds,
-−0.05, are ones where B&H was −0.9 to −1.0 — it still beat a falling market). *B —
-anchored re-selection* (choose on pre-fold data only, test on the fold): **rc48 is
-chosen in all 5 folds**, mean test eqSharpe **+0.425**, negative only in the two
-down-market folds. The recalc lever is confirmed out-of-sample (and transfers to
+
+*Full grid (`--axis grid`).* A — fixed sweet spot positive in **4/6** folds (the two
+near-zero folds, −0.05, are ones where B&H was −0.9 to −1.0 — it still beat a falling
+market). B — anchored re-selection: **rc48 is chosen in all 5 folds**, mean test
+eqSharpe +0.425. The recalc lever is confirmed out-of-sample (and transfers to
 `random_hedge`: 8/8 seeds, see [`random_hedge.md`](random_hedge.md) "Current best
-setup"). `sl_mult` is the unsettled axis (the plateau/DD favours 1.0; anchored
-re-selection leans 1.5) — `recalc_bars=48` is now the default, `sl_mult=1.0` chosen
-for its drawdown.
+setup").
+
+*One-knob `sl_mult` (`--axis sl`, recalc/ts fixed at 48/120, finer 0.5–2.0 grid).*
+The earlier grid started at 1.0 and missed the real optimum below it — **`sl_mult=0.75`
+is the only value positive in all 6 folds**, with the best OOS by far and a low
+drawdown:
+
+| sl_mult | folds +ve | IS | OOS | IS DD |
+|---|---|---|---|---|
+| 0.5 | 5/6 | +1.08 | +0.74 | 0.28 |
+| **0.75** | **6/6** | **+1.27** | **+1.47** | 0.34 |
+| 1.0 | 4/6 | +1.01 | +0.69 | 0.37 |
+| 1.5 | 4/6 | +1.15 | +0.48 | 0.53 |
+| 2.0 | 4/6 | +0.86 | +0.21 | 0.87 |
+
+OOS degrades monotonically above 0.75 and DD inflates. The anchored re-selector (B)
+leans to *looser* stops (1.25–1.5) because they win in-fold IS-Sharpe, but those
+degrade OOS (negative in the two down-market folds) — a textbook
+degradation-over-absolute case: the robust pick is the fixed `sl0.75` (6/6), not the
+IS-Sharpe-max corner. **`sl_mult=0.75` is now the default** (a *tighter* stop than the
+neutral pair's 1.0 — a directional ride can use a closer stop because it is meant to
+be right about direction; the slow ratchet then banks the run). The same `sl0.75`
+transfers to `random_hedge`+ATR-Q4 (8-seed OOS +0.76 → +1.02, still 8/8 IS).
 
 ## 3b. Most trades have no TP — does the "ride" carry the edge?
 

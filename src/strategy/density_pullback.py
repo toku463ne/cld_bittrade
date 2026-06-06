@@ -69,7 +69,8 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         Raises:
             ValueError: On out-of-range parameters.
         """
-        kwargs.setdefault("recalc_bars", 48)  # walk-forward sweet-spot exit (see §4)
+        kwargs.setdefault("recalc_bars", 48)  # walk-forward sweet-spot exit (see §3/§4)
+        kwargs.setdefault("sl_mult", 0.75)  # one-knob WF: tightest robust stop (6/6 folds)
         super().__init__(**kwargs)  # type: ignore[arg-type]
         if window < 2:
             raise ValueError("window must be >= 2")

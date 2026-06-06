@@ -29,7 +29,8 @@ import argparse
 
 from loguru import logger
 
-from src.backtest.metrics import annualized_sharpe_from_levels
+from src.backtest.metrics import annualized_sharpe_from_levels, portfolio_metrics
+from src.backtest.sign_benchmark import split_in_out_sample
 from src.core.types import Bar, Timeframe
 from src.data.cache import load_cache
 from src.logging_setup import configure_logging
@@ -41,6 +42,10 @@ SL_MULTS = (1.0, 1.5, 2.0)
 RECALCS = (12, 24, 48)
 TSTOPS = (120, 240)
 SWEET = {"sl_mult": 1.0, "recalc_bars": 48, "time_stop_bars": 120}  # plateau pick
+
+# One-knob sl_mult tune: recalc/ts fixed at the confirmed sweet spot, finer sl grid.
+SL_MULTS_FINE = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+SL_FIXED = {"recalc_bars": 48, "time_stop_bars": 120}
 
 
 def _eq_sharpe(bars: list[Bar], ppy: float, **kw: float) -> float:
@@ -107,15 +112,65 @@ def run(tf: Timeframe, *, product: str | None, folds: int) -> None:
     )
 
 
+def run_slmult(tf: Timeframe, *, product: str | None, folds: int) -> None:
+    """One-knob sl_mult tune: recalc/ts fixed at the sweet spot, walk-forward sl_mult."""
+    cache = load_cache(tf, product=product)
+    bars = cache.bars
+    ppy = (365 * 24 * 3600) / tf.seconds
+    n = len(bars)
+    size = n // folds
+    edges = [i * size for i in range(folds)] + [n]
+    logger.info("ONE-KNOB sl_mult (fixed {}) — {} bars, {} folds", SL_FIXED, n, folds)
+
+    # A. Each sl_mult candidate across folds (fixed config): row = sl, cols = folds.
+    logger.info("== A. each sl_mult across folds (eqSharpe; +ve folds; full-split IS/OOS, DD) ==")
+    in_bars, oos_bars = split_in_out_sample(bars)
+    for sl in SL_MULTS_FINE:
+        per = [_eq_sharpe(bars[edges[k] : edges[k + 1]], ppy, sl_mult=sl, **SL_FIXED) for k in range(folds)]
+        npos = sum(v > 0 for v in per)
+        is_es = _eq_sharpe(in_bars, ppy, sl_mult=sl, **SL_FIXED)
+        oos_es = _eq_sharpe(oos_bars, ppy, sl_mult=sl, **SL_FIXED)
+        dd = portfolio_metrics(
+            MultiSimulator(DensityPullbackStrategy(sl_mult=sl, **SL_FIXED)).run(in_bars).trades  # type: ignore[arg-type]
+        ).max_dd
+        folds_str = " ".join(f"{v:+.2f}" for v in per)
+        logger.info(
+            "  sl{:<4} | folds [{}] {}/{}+ | IS {:+.3f} OOS {:+.3f} ISdd {:.2f}",
+            sl, folds_str, npos, folds, is_es, oos_es, dd,
+        )
+
+    # B. Anchored re-selection over sl_mult only.
+    logger.info("== B. anchored walk-forward over sl_mult (choose on past, test on fold) ==")
+    logger.info("  fold | chosen sl | train | TEST  | B&H")
+    test_pos = 0
+    test_vals = []
+    for k in range(1, folds):
+        train = bars[: edges[k]]
+        test = bars[edges[k] : edges[k + 1]]
+        best = max(((_eq_sharpe(train, ppy, sl_mult=sl, **SL_FIXED), sl) for sl in SL_MULTS_FINE))
+        sl = best[1]
+        te = _eq_sharpe(test, ppy, sl_mult=sl, **SL_FIXED)
+        test_pos += te > 0
+        test_vals.append(te)
+        logger.info("   {:>2}  | sl{:<5}  | {:+.3f}| {:+.3f}| {:+.3f}", k, sl, best[0], te, _bh_sharpe(test, ppy))
+    mean_te = sum(test_vals) / len(test_vals) if test_vals else 0.0
+    logger.info("  -> anchored sl_mult positive in {}/{} folds, mean test {:+.3f}", test_pos, folds - 1, mean_te)
+
+
 def main() -> None:
     """CLI entrypoint."""
     parser = argparse.ArgumentParser(description="density_pullback exit-tuning walk-forward.")
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="1h")
     parser.add_argument("--product", default=None)
     parser.add_argument("--folds", type=int, default=6)
+    parser.add_argument("--axis", choices=["grid", "sl"], default="grid",
+                        help="'grid' = full sl/rc/ts WF; 'sl' = one-knob sl_mult tune.")
     args = parser.parse_args()
     configure_logging()
-    run(Timeframe(args.timeframe), product=args.product, folds=args.folds)
+    if args.axis == "sl":
+        run_slmult(Timeframe(args.timeframe), product=args.product, folds=args.folds)
+    else:
+        run(Timeframe(args.timeframe), product=args.product, folds=args.folds)
 
 
 if __name__ == "__main__":
