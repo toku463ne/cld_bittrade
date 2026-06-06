@@ -23,7 +23,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from src.core.types import Bar, ExitConfig, ExitReason, Signal, Trade
+from src.core.types import Bar, ExitConfig, ExitReason, Side, Signal, Trade
 from src.exit.rules import OpenPosition, evaluate_exit, tp_sl_levels
 from src.simulator.simulator import DEFAULT_FEE_RATE, SimResult
 from src.strategy.base import Strategy
@@ -37,6 +37,16 @@ class _Slot:
     entry_idx: int
     entry_time: datetime
     cfg: ExitConfig
+
+
+@dataclass(slots=True)
+class _Working:
+    """A resting limit order awaiting a touch (or expiry)."""
+
+    sig: Signal
+    limit_price: float
+    atr: float
+    expiry_idx: int
 
 
 class MultiSimulator:
@@ -90,6 +100,7 @@ class MultiSimulator:
         book: list[_Slot] = []
         pending: list[Signal] = []
         pending_atr = 0.0
+        working: list[_Working] = []
 
         for i, bar in enumerate(bars):
             # 1. Exits on the current bar (static config, then the dynamic hook).
@@ -108,26 +119,46 @@ class MultiSimulator:
                     realised += trade.pnl
             book = survivors
 
-            # 2. Fill pending signals at this bar's open while slots are free
-            #    (a hedged pair fills both legs; the two-bar rule is preserved).
+            # 2. Fill market pending signals at this bar's open while slots are
+            #    free (a hedged pair fills both legs; the two-bar rule is preserved).
             for sig in pending:
                 if len(book) >= max_slots:
                     break
-                pos = OpenPosition(
-                    side=sig.side, entry_price=bar.open, entry_atr=pending_atr
-                )
-                cfg = sig.exit_config or fallback_cfg
-                pos.tp_price, pos.sl_price = tp_sl_levels(pos, cfg)
-                pos.ref_time, pos.ref_price = sig.ref_time, sig.ref_price
-                pos.ref2_time, pos.ref2_price = sig.ref2_time, sig.ref2_price
-                book.append(_Slot(pos, i, bar.timestamp, cfg))
+                book.append(self._open(sig, bar.open, pending_atr, i, bar.timestamp, fallback_cfg))
             pending = []
 
-            # 3. Read the precomputed signal(s) for this just-closed bar.
+            # 3. Resting limit orders: fill at the limit on a touch (better price),
+            #    drop on expiry. An order placed reading bar t is eligible from t+1
+            #    (added in step 4, below), so this is causal.
+            kept: list[_Working] = []
+            for wo in working:
+                if i > wo.expiry_idx:
+                    continue  # cancelled, never touched
+                hit = (
+                    (wo.sig.side is Side.LONG and bar.low <= wo.limit_price)
+                    or (wo.sig.side is Side.SHORT and bar.high >= wo.limit_price)
+                )
+                if hit and len(book) < max_slots:
+                    book.append(
+                        self._open(wo.sig, wo.limit_price, wo.atr, i, bar.timestamp, fallback_cfg)
+                    )
+                else:
+                    kept.append(wo)  # not touched, or no free slot — keep until expiry
+            working = kept
+
+            # 4. Read the precomputed signal(s) for this just-closed bar: market
+            #    orders -> pending (next-open fill); limit orders -> working.
             sigs = signals_by_ts.get(bar.timestamp)
             if sigs:
-                pending = sigs
-                pending_atr = atr_vals[i]
+                market = [s for s in sigs if s.limit_price is None]
+                if market:
+                    pending = market
+                    pending_atr = atr_vals[i]
+                for s in sigs:
+                    if s.limit_price is not None:
+                        working.append(
+                            _Working(s, s.limit_price, atr_vals[i], i + max(1, s.limit_expiry_bars))
+                        )
 
             # Mark-to-market: realised + unrealised across the open book.
             unreal = sum(
@@ -173,6 +204,23 @@ class MultiSimulator:
             {"high": [b.high for b in bars], "low": [b.low for b in bars], "close": [b.close for b in bars]}
         )
         return [float(v) for v in atr(df, self.atr_period).to_numpy()]
+
+    def _open(
+        self,
+        sig: Signal,
+        fill_price: float,
+        atr: float,
+        i: int,
+        ts: datetime,
+        fallback_cfg: ExitConfig,
+    ) -> _Slot:
+        """Open a position from ``sig`` filled at ``fill_price`` (market or limit)."""
+        pos = OpenPosition(side=sig.side, entry_price=fill_price, entry_atr=atr)
+        cfg = sig.exit_config or fallback_cfg
+        pos.tp_price, pos.sl_price = tp_sl_levels(pos, cfg)
+        pos.ref_time, pos.ref_price = sig.ref_time, sig.ref_price
+        pos.ref2_time, pos.ref2_price = sig.ref2_time, sig.ref2_price
+        return _Slot(pos, i, ts, cfg)
 
     def _close(
         self, slot: _Slot, bar: Bar, exit_price: float, reason: ExitReason, bars_held: int

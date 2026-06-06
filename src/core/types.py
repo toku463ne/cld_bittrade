@@ -97,6 +97,16 @@ class Signal:
     exit_config: ExitConfig | None = None
     """Optional per-trade exit config (e.g. from an :class:`ExitRule`). When set,
     the simulator uses it instead of the strategy's static ``get_exit_rules()``."""
+    limit_price: float | None = None
+    """Optional resting-limit fill price. When ``None`` the order is a market
+    order (fills at the next bar's open, two-bar rule). When set, the order rests
+    and fills only when a later bar's range reaches ``limit_price`` (long: low <=
+    limit; short: high >= limit) within ``limit_expiry_bars`` bars, else it is
+    cancelled. Only the :class:`~src.simulator.multi_simulator.MultiSimulator`
+    honours limit orders."""
+    limit_expiry_bars: int = 0
+    """Bars a resting limit order stays working before cancellation (0 = the next
+    bar only). Ignored for market orders."""
 
 
 @dataclass(frozen=True, slots=True)

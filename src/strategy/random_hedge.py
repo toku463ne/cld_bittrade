@@ -187,6 +187,25 @@ class RandomHedgeStrategy(Strategy):
         chop = 100.0 * np.log10(tr.rolling(window).sum() / rng) / np.log10(window)
         return [float(v) for v in chop.to_numpy()]
 
+    def _gate_ok(
+        self, t: int, atr_s: list[float] | None, chop_s: list[float] | None
+    ) -> bool:
+        """Bad-entry gates: reject high-volatility and/or sideways bars (causal)."""
+        if atr_s is not None and self.max_atr_rank is not None:
+            w = atr_s[max(0, t - self.atr_rank_window) : t + 1]
+            if w and not np.isnan(atr_s[t]):
+                rank = float(np.mean([v <= atr_s[t] for v in w if not np.isnan(v)]))
+                if rank >= self.max_atr_rank:
+                    return False
+        if chop_s is not None and self.max_chop_rank is not None:
+            w = chop_s[max(0, t - self.atr_rank_window) : t + 1]
+            vals = [v for v in w if not np.isnan(v)]
+            if vals and not np.isnan(chop_s[t]):
+                rank = float(np.mean([v <= chop_s[t] for v in vals]))
+                if rank >= self.max_chop_rank:
+                    return False
+        return True
+
     def _legs(self, peak_idx: list[int], peak_price: list[float], t: int) -> tuple[float, ...]:
         """Recent zigzag leg sizes (price units, oldest-first) confirmable by ``t``."""
         prices = [
@@ -220,24 +239,8 @@ class RandomHedgeStrategy(Strategy):
         for t in range(self.warmup, len(bars)):
             if rng.random() >= self.entry_prob:
                 continue
-            # Bad-entry gate: skip high-volatility bars (a hedged pair gets BOTH
-            # legs whipsawed when the range is wide). Causal trailing-rank.
-            if atr_s is not None and self.max_atr_rank is not None:
-                w = atr_s[max(0, t - self.atr_rank_window) : t + 1]
-                if w and not np.isnan(atr_s[t]):
-                    rank = float(np.mean([v <= atr_s[t] for v in w if not np.isnan(v)]))
-                    if rank >= self.max_atr_rank:
-                        continue
-            # Bad-entry gate 2: skip sideways/choppy bars (independent of ATR).
-            # Rank uses the long trailing window (atr_rank_window), like the probe;
-            # chop_window is only the Choppiness-Index lookback.
-            if chop_s is not None and self.max_chop_rank is not None:
-                w = chop_s[max(0, t - self.atr_rank_window) : t + 1]
-                vals = [v for v in w if not np.isnan(v)]
-                if vals and not np.isnan(chop_s[t]):
-                    rank = float(np.mean([v <= chop_s[t] for v in vals]))
-                    if rank >= self.max_chop_rank:
-                        continue
+            if not self._gate_ok(t, atr_s, chop_s):
+                continue
             entry = closes[t]
             legs = self._legs(peak_idx, peak_price, t)
             ctx = ExitContext(side=Side.LONG, entry_price=entry, zs_history=legs)

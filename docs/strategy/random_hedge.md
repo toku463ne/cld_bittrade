@@ -15,7 +15,7 @@ exits made money, the exit alone would be the edge. They do not.
 | **Reuses** | `ZsTpSl` (`src/exit/zs_tp_sl.py`), `_next_dense` (`density_multi_breakout`), `detect_peaks` (`src/indicators/zigzag.py`) |
 | **Default config** | `entry_prob=0.01, seed=0, zigzag_size=12, sl_mult=1.0, recalc_bars=12, time_stop_bars=120, target_window=336, max_slots=50` |
 | **Default timeframe** | **1h** |
-| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. **Update (§6):** subtracting the one robust *bad* entry (high-volatility bars) lifts the baseline to IS eqSharpe **+0.34** — variant `random_hedge_volfilter`. |
+| **Status** | **REJECT / control** — `ship=False`. Random entry + these exits is net-negative in-sample (IS equity Sharpe **−0.35**). The exit does not manufacture edge from noise. Kept as the **null baseline** to measure real entries against. See §5. **Update (§6):** subtracting the one robust *bad* entry (high-volatility bars) lifts the baseline to IS eqSharpe **+0.34** — variant `random_hedge_volfilter`. **Update (§7):** a better-priced density-edge *limit* entry (`random_hedge_density`) does **not** lift it — worse IS, negative OOS (adverse selection + fade-dies-in-trends). |
 
 ---
 
@@ -233,11 +233,62 @@ hit: a real diagnostic separation need not be a shippable portfolio lever.
 `max_chop_rank` is kept as a research lever (off by default); **ATR-Q4 remains the
 only bad-entry gate that improves the portfolio metric.**
 
-## 7. Conclusion & use
+## 7. Better-priced entry — density-edge limit pair (`random_hedge_density`, REJECT)
+
+The payoff step: plug a **better-priced** entry into this exact exit framework and
+measure the lift over the random market baseline. Chosen scheme (`src/strategy/
+random_hedge_density.py`): on a random bar, rest a **buy-limit at the value-area
+low** (dense support) and a **sell-limit at the value-area high** (dense
+resistance) — each a genuine concession (long limit below the close, short above,
+never marketable), resting `limit_window` bars then cancelled. The exit (zs SL +
+next-dense TP + ratchet) is unchanged; the next-dense TP naturally targets the
+*other* side of the range, so this is a **fade-the-box mean-reversion** entry.
+
+**Harness change (backward-compatible).** `Signal` gained `limit_price` /
+`limit_expiry_bars`; `MultiSimulator` now rests limit orders (fills at the limit on
+a touch within the window, else cancels) alongside market orders. `limit_price=None`
+is the existing market path, so all other strategies are unchanged —
+`density_multi_breakout` is byte-identical (460 IS / 148 OOS, eqSharpe 0.903 / 0.842).
+
+**Result (8-seed mean equity Sharpe, GMO 1h):**
+
+| entry | IS eqSh | OOS eqSh | IS+ seeds | IS trades |
+|---|---|---|---|---|
+| random market (baseline) | +0.170 | +0.856 | 5/8 | 715 |
+| random market + ATR-Q4 | +0.454 | +0.462 | 7/8 | 540 |
+| **density-limit (no gate)** | **+0.151** | **−1.209** | 6/8 | 152 |
+| density-limit + ATR-Q4 | −0.167 | −1.021 | 3/8 | 128 |
+
+The better-priced entry is **worse, not better** — no lift in-sample and strongly
+**negative OOS**. Robust to parameters: a `va_window × limit_window` sweep
+(84/168/336 × 12/24/48) is ≤ +0.11 IS and **negative OOS in all 9 cells** — it is
+structural, not a mistune.
+
+**Why (mechanism, not a bug).** Per-side/exit breakdown: fills happen on both legs
+but are **adversely selected** — TAKE_PROFIT is the minority while STOP/TRAIL
+dominate, i.e. a limit at the box edge fills disproportionately when price is
+*continuing through* the level, not bouncing off it (the winner's-curse of resting
+limits). And fading the box is a **mean-reversion** bet that gets run over in trends:
+in the directional OOS the long leg is destroyed (win 0.23, mean_r −0.008). The
+"better price" is illusory once you condition on getting filled.
+
+**Verdict:** `ship=False`. A density-edge (mean-reversion) limit entry does **not**
+rescue the framework — combined with §1–§6 (no directional edge; the exit can't
+make edge from noise; only a *risk* gate helps), no entry-pricing trick tested lifts
+`random_hedge` to a shippable edge. The untested inverse is a **momentum/pullback**
+entry (buy *with* the trend on a retrace) — the opposite of fading — which the
+adverse-selection + fade-dies-in-trends findings here both point toward; not yet built.
+
+## 8. Conclusion & use
 
 This **tempers** the "the edge is in the exit" framing: the exit is necessary but
 not sufficient — `density_multi_breakout` needs *both* its selective entry and its
 dense-aware exit. `random_hedge`'s real value is as a **null baseline**: plug a
 candidate entry into this exact exit framework and judge it by **lift over random**
-(a stronger test than absolute Sharpe). Research lineage / sibling negatives:
-[`findings.md`](../findings.md), [`density_multi_breakout.md`](density_multi_breakout.md).
+(a stronger test than absolute Sharpe) — done in §7 for a density-edge limit entry
+(rejected) and in [`density_pullback.md`](density_pullback.md) for a *directional*
+pullback entry (the positive bookend: the first entry to clearly beat this null
+baseline in-sample, +0.68 vs +0.17 — entry quality does lift over random, and a
+pullback fill improves robustness/DD over a market fill). Research lineage / sibling
+negatives: [`findings.md`](../findings.md),
+[`density_multi_breakout.md`](density_multi_breakout.md).

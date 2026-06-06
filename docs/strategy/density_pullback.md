@@ -1,0 +1,104 @@
+# Strategy: `density_pullback` (directional pullback entry)
+
+The **momentum** counterpart to the rejected fade (`random_hedge_density`), and the
+positive result of the "lift over random" arc: it plugs a *directional, better-priced*
+entry into the `random_hedge` exit framework and is the **first entry that clearly
+beats the random null baseline in-sample**. Not a ship (OOS is weak at the default,
+neutral-tuned exit), but it cleanly establishes two things: entry *quality* lifts far
+over a random entry, and a *pullback* fill improves robustness/drawdown over a market
+fill.
+
+| | |
+|---|---|
+| **Name** | `density_pullback` |
+| **Class** | `src/strategy/density_pullback.py` → `DensityPullbackStrategy` (subclasses `RandomHedgeStrategy`) |
+| **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (resting limit orders) |
+| **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
+| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + inherited exit (`sl_mult=1.0, recalc_bars=12, time_stop_bars=120`) |
+| **Default timeframe** | **1h** |
+| **Status** | `ship=False` — IS eqSharpe **+0.68** (beats random baseline +0.17, near B&H +0.64) but OOS only **+0.06** at the default exit. The directional entry carries the IS edge; the inherited neutral-pair exit is too tight to ride breakouts OOS. See §4. |
+
+---
+
+## 1. Idea
+
+Both prior entry results pointed here. The entry-horizon work found no *directional*
+edge in the breakout *instant*; `random_hedge` found the exit can't make edge from a
+random entry; the fade (`random_hedge_density`) lost because limit fills at the box
+edge are adversely selected and mean-reversion dies in trends. The inverse of the
+fade is to ride **with** a real directional signal and merely wait for a better fill:
+
+- **Signal** — the `density_multi_breakout` entry: price consolidates inside the
+  tight ~1-week value-area box, then closes through an edge (LONG on a top break,
+  SHORT on a bottom break).
+- **Entry** — instead of buying the breakout close, rest a **limit at the broken
+  edge** and fill only on the **retest** (buy broken resistance / sell broken
+  support), cancel if not reached within `limit_window` bars. The limit is always a
+  genuine concession (below the close for a long, above for a short), so it is a
+  momentum-with-pullback, not a fade.
+- **Exit** — the `random_hedge` framework unchanged: zs-band SL + next-dense TP +
+  periodic ratchet. Keeping the exit fixed makes the entry the only variable, so the
+  result is a clean **lift over random**.
+
+`pullback=False` enters at the breakout close (market) — the control that isolates
+the price-improvement from the directional signal itself.
+
+## 2. Results (GMO 1h ~5y, equity Sharpe)
+
+| entry | IS eqSh | OOS eqSh | IS DD | IS trades |
+|---|---|---|---|---|
+| random market (null baseline) | +0.170 | +0.856 | — | 715 |
+| random market + ATR-Q4 (best null) | +0.454 | +0.462 | — | 540 |
+| **breakout @ market (control)** | **+0.783** | −0.307 | 0.39 | 514 |
+| **breakout @ pullback limit** | **+0.679** | **+0.062** | **0.29** | 448 |
+
+**Two findings:**
+
+1. **A directional entry lifts massively over random in-sample** — IS eqSharpe
+   +0.68–0.78 vs the random null's +0.17 (and near B&H +0.64). This is the first
+   entry on the arc to clearly beat the null: entry *quality* matters, the exit is
+   not the whole story.
+2. **The pullback (better price) buys robustness, not IS Sharpe** — vs the market
+   control, the pullback gives up a little IS (+0.78 → +0.68: it misses breakouts
+   that never retest) but turns OOS from **−0.31 to +0.06** and cuts drawdown
+   **0.39 → 0.29**. So a better-priced fill *is* worth something here — as
+   robustness and risk reduction, not as a raw in-sample maximiser. (The opposite
+   of the fade, whose "better price" was illusory adverse selection.)
+
+## 3. Why the OOS is weak — the exit, not the entry
+
+The directional breakout's OOS lags even the random *neutral* baseline at the default
+exit, which is the tell: a market-neutral pair always has one leg riding the OOS
+trend and is forgiving of entry timing, whereas a directional ride must be right *and*
+survive its stop. The inherited zs-band SL (tuned for the neutral pair) is too tight
+for a breakout — it gets stopped on the retest noise before the trend develops.
+Giving the ride room recovers the OOS:
+
+| exit tweak (pullback=True) | IS eqSh | OOS eqSh | IS DD |
+|---|---|---|---|
+| default (`recalc=12, tstop=120`) | +0.679 | +0.062 | 0.29 |
+| **`recalc=24, tstop=240`** (let it run) | **+0.860** | **+0.384** | 0.35 |
+
+A slower ratchet + a longer (~10-day) time stop lifts both IS (+0.86) and OOS (+0.38)
+at low drawdown — mechanistically sensible (trends need time). **Caveat:** this exit
+pair was chosen *after* seeing the OOS, so it is a post-hoc observation, not a
+pre-registered result — it needs proper walk-forward validation before any ship claim.
+The strategy default keeps the inherited (neutral-tuned) exit for the clean
+market-vs-pullback comparison.
+
+## 4. Verdict & next
+
+`ship=False`: the registered default is OOS +0.06 (below B&H), and the strong variant
+relies on post-hoc exit tuning. But this is the **positive bookend** of the
+entry-pricing arc:
+
+- entry quality **does** lift over random (huge in-sample) — the random_hedge null is
+  doing its job as a yardstick;
+- a **pullback fill** improves robustness/DD over a market fill;
+- the remaining gap is an **exit-for-a-directional-ride** problem, not an entry one —
+  the obvious next step is a walk-forward of the hold/ratchet (`recalc_bars`,
+  `time_stop_bars`, `sl_mult`) on `density_pullback`, or pairing this entry with
+  `density_multi_breakout`'s own structural-stop exit (which already gets OOS +0.84).
+
+Lineage: [`random_hedge.md`](random_hedge.md) (null baseline + fade reject) →
+this. Sibling: [`density_multi_breakout.md`](density_multi_breakout.md).

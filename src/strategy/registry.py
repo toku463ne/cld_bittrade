@@ -22,6 +22,8 @@ from src.strategy.density_multi_relative import DensityMultiRelativeStrategy
 from src.strategy.density_volwall_breakout import DensityVolwallBreakoutStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
 from src.strategy.random_hedge import RandomHedgeStrategy, RandomHedgeVolfilterStrategy
+from src.strategy.density_pullback import DensityPullbackStrategy
+from src.strategy.random_hedge_density import RandomHedgeDensityStrategy
 from src.strategy.regime_gate import (
     DensityBreakoutVolgateStrategy,
     DensityMultiVolgateStrategy,
@@ -46,6 +48,8 @@ STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     DensityMultiVolgateStrategy.name: DensityMultiVolgateStrategy,
     RandomHedgeStrategy.name: RandomHedgeStrategy,
     RandomHedgeVolfilterStrategy.name: RandomHedgeVolfilterStrategy,
+    RandomHedgeDensityStrategy.name: RandomHedgeDensityStrategy,
+    DensityPullbackStrategy.name: DensityPullbackStrategy,
 }
 
 
