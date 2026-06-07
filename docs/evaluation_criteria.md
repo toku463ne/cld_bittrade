@@ -311,6 +311,24 @@ density_breakout fires ≈ 24 trades/year on GMO 1h. Consequences:
 - Fixed named-regime splits are preferable when the question is "does it survive
   the 2022 bear?" rather than average behavior.
 
+#### 6.5.1 Idea-stage lockbox (added 2026-06-07)
+
+For triaging **new** ideas fast, use a **fixed pre-registered historical lockbox** as
+the OOS instead of waiting weeks for live paper-forward: tune only on bars **before
+2025-04-01**, evaluate once on **2025-04-01 → 2026-04-01** (`split_lockbox` in
+`sign_benchmark.py`; ~2 months after it are a live buffer). Rationale: a never-tuned-on
+historical year is an honest OOS available *instantly*, which matters in the
+idea/exploration stage where most candidates die. Discipline / limits:
+
+- **Per idea, evaluate the lockbox once** — don't tune against it (that turns it into
+  in-sample). Re-cutting it idea after idea slowly erodes it (multiple comparisons), so
+  it is a *triage* holdout, not a final certificate.
+- The eventual **finalist** (the idea that survives to get real capital) still earns a
+  **fresh live-forward** check (`paper_forward`) — by then the lockbox has been "used."
+- The already-shipped strategies keep the canonical most-recent-20% split
+  (`split_in_out_sample`); the lockbox is for **new** idea evaluation, not a re-scoring
+  of past results (that would be goalpost-moving, §6.5).
+
 ### 6.6 One knob at a time
 
 Change exactly one variable vs the baseline per A/B (mirrors § 5 item 6,
