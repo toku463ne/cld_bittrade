@@ -153,7 +153,15 @@ gates):
   Δlog-BTC)| < 0.30** (the spread is genuinely BTC-neutral); (iv) the edge holds across a
   **majority** of `k∈{1.5,2.0,2.5} × window∈{120,168,336}` cells, not one mined corner.
   Diagnostics also reported: DR, n, the outright-BCH (1-leg) variant as a fallback. Miss any
-  of (i)–(iv) → KILL A2 (fall back to A1 or A3).
+  of (i)–(iv) → KILL A2 (fall back to A2′ / A1 / A3).
+- **A2′ ratio-MOMENTUM (pre-registered 2026-06-07, before results)** — the data-driven pivot
+  if A2 dies (the smoke test showed `log(BCH/BTC)` *drifts*, half-life ~5mo, not reverts). Trade
+  the ratio in its **trend** direction: enter the hedged spread at `|mom-z| ≥ k` where
+  `mom = log-ratio.diff(L)` z-scored, **side = +sign(mom)** (ride), exit on momentum
+  sign-flip or `max_hold`. PASS iff: (ii′) mean net return **> 0 in BOTH halves** net of the
+  same 2-leg cost; (iii′) **|corr(spread return, ΔBTC)| < 0.30**; (iv′) holds across a
+  **majority** of `L∈{24,48,96} × k∈{1.5,2.0,2.5}` cells. Miss any → KILL the BCH/BTC idea
+  (Strategy A), proceed with B only (or pick a fresh A family).
 - B family chosen: **Dynamic Range-Detected Grid Trading** (range fade inside the density
   tight box; capped grid of resting limits; flatten on breakout).
 - B-kill-1 (cost/turnover) threshold: _TBD before probe_

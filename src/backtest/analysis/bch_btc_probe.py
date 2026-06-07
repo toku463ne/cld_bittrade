@@ -45,32 +45,37 @@ def _half_life(x: np.ndarray) -> float:
 
 
 def _sim(lr: np.ndarray, btc: np.ndarray, bch: np.ndarray, z: np.ndarray, k: float,
-         split: int) -> dict[str, float]:
-    """Non-overlapping reversion trades: enter at |z|>=k, exit on z-cross-0 or max_hold."""
+         split: int, direction: int = -1) -> dict[str, float]:
+    """Non-overlapping trades: enter at |z|>=k, exit on z-sign-flip or max_hold.
+
+    ``direction=-1`` = reversion (fade the deviation, side=-sign z); ``+1`` = momentum
+    (ride the signal, side=+sign z). Exit on a sign flip of the entry signal means
+    "deviation reverted" (reversion) or "trend reversed" (momentum).
+    """
     n = len(z)
-    rows: list[tuple[int, float, float, float, int]] = []  # entry_idx, dlr, dbtc, dbch, side
+    rows: list[tuple[int, float, float, float, int, int]] = []  # entry, dlr, dbtc, dbch, side, hold
     t = 0
     while t < n:
         if np.isnan(z[t]) or abs(z[t]) < k:
             t += 1
             continue
-        side = -1.0 if z[t] > 0 else 1.0  # fade: short the spread when BCH rich (z>0)
+        side = float(direction) * (1.0 if z[t] > 0 else -1.0)
         e = t
         j = t + 1
         while j < n and (j - e) < MAX_HOLD and not (np.sign(z[j]) != np.sign(z[e]) and not np.isnan(z[j])):
             j += 1
         j = min(j, n - 1)
-        rows.append((e, lr[j] - lr[e], np.log(btc[j] / btc[e]), np.log(bch[j] / bch[e]), int(side)))
+        rows.append((e, lr[j] - lr[e], np.log(btc[j] / btc[e]), np.log(bch[j] / bch[e]), int(side), j - e))
         t = j + 1
     if not rows:
         return {"n": 0}
     out: dict[str, float] = {"n": float(len(rows))}
     for half, lo, hi in (("e", 0, split), ("l", split, n)):
         sp, bo = [], []
-        for e, dlr, dbtc, dbch, side in rows:
+        for e, dlr, dbtc, dbch, side, hold in rows:
             if not (lo <= e < hi):
                 continue
-            hold_d = MAX_HOLD / 24  # upper bound; exact hold not stored, conservative on funding
+            hold_d = hold / 24.0  # actual hold for funding (not the max-hold upper bound)
             sp.append(side * dlr - (2 * SPREAD_PER_LEG + 2 * FUNDING_PER_DAY * hold_d))
             bo.append(side * dbch - (SPREAD_PER_LEG + FUNDING_PER_DAY * hold_d))
         if sp:
@@ -80,8 +85,12 @@ def _sim(lr: np.ndarray, btc: np.ndarray, bch: np.ndarray, z: np.ndarray, k: flo
     return out
 
 
-def run(tf: Timeframe) -> None:
-    """Probe BCH/BTC ratio reversion (A2) + lead-lag (A1) over the imported overlap."""
+MOM_LOOKBACKS = (24, 48, 96)  # A2' ratio-momentum lookbacks (bars)
+MOM_STD_WINDOW = 336  # window to z-score the momentum signal
+
+
+def run(tf: Timeframe, *, mode: str = "reversion") -> None:
+    """Probe BCH/BTC ratio reversion (A2) / momentum (A2') + lead-lag (A1)."""
     btc = load_cache(tf, product="GMO_BTC_JPY").bars
     bch = load_cache(tf, product="GMO_BCH_JPY").bars
     if not bch:
@@ -110,26 +119,34 @@ def run(tf: Timeframe) -> None:
     )
     logger.info("A1 lead-lag corr(ΔBTC_t, ΔBCH_t+lag): {}", ll)
 
-    # A2 grid: hedged-spread reversion net of cost, early/late.
+    # Grid: hedged-spread trade net of cost, early/late. Reversion fades the z-score
+    # deviation (direction=-1); momentum rides the L-bar ratio trend (direction=+1).
     lrs = pd.Series(lr)
-    logger.info("(ii)+(iv) hedged-spread reversion net-of-cost (mean per trade):")
-    logger.info("  win  k   |   n  | early mean (DR) | late mean | [outright BCH e/l]")
+    direction = -1 if mode == "reversion" else 1
+    label = "reversion (A2)" if mode == "reversion" else "MOMENTUM (A2')"
+    logger.info("(ii)+(iv) hedged-spread {} net-of-cost (mean per trade):", label)
+    logger.info("  par  k   |   n  | early mean (DR) | late mean | [outright BCH e/l]")
     npass = 0
-    for w in WINDOWS:
-        mu = lrs.rolling(w).mean()
-        sd = lrs.rolling(w).std(ddof=0)
-        z = ((lrs - mu) / sd.replace(0.0, np.nan)).to_numpy()
+    params = WINDOWS if mode == "reversion" else MOM_LOOKBACKS
+    for p in params:
+        if mode == "reversion":
+            mu = lrs.rolling(p).mean()
+            sd = lrs.rolling(p).std(ddof=0)
+            z = ((lrs - mu) / sd.replace(0.0, np.nan)).to_numpy()
+        else:
+            mom = lrs.diff(p)
+            z = (mom / mom.rolling(MOM_STD_WINDOW).std(ddof=0).replace(0.0, np.nan)).to_numpy()
         for k in KS:
-            r = _sim(lr, a_btc, a_bch, z, k, split)
+            r = _sim(lr, a_btc, a_bch, z, k, split, direction)
             if r.get("n", 0) == 0:
-                logger.info("  {:>3} {:>3}  |    0 | --", w, k)
+                logger.info("  {:>3} {:>3}  |    0 | --", p, k)
                 continue
             em, el = r.get("sp_e_mean", float("nan")), r.get("sp_l_mean", float("nan"))
             ok = (em > 0) and (el > 0)
             npass += ok
             logger.info(
                 "  {:>3} {:>3}  | {:>4} | {:+.5f} ({:.2f}) | {:+.5f} | [{:+.5f}/{:+.5f}]{}",
-                w, k, int(r["n"]), em, r.get("sp_e_dr", float("nan")), el,
+                p, k, int(r["n"]), em, r.get("sp_e_dr", float("nan")), el,
                 r.get("bo_e_mean", float("nan")), r.get("bo_l_mean", float("nan")),
                 "  <= both+" if ok else "",
             )
@@ -138,11 +155,12 @@ def run(tf: Timeframe) -> None:
 
 def main() -> None:
     """CLI entrypoint."""
-    parser = argparse.ArgumentParser(description="BCH/BTC ratio-reversion (A2) edge probe.")
+    parser = argparse.ArgumentParser(description="BCH/BTC ratio reversion (A2) / momentum (A2') probe.")
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="1h")
+    parser.add_argument("--mode", choices=["reversion", "momentum"], default="reversion")
     args = parser.parse_args()
     configure_logging()
-    run(Timeframe(args.timeframe))
+    run(Timeframe(args.timeframe), mode=args.mode)
 
 
 if __name__ == "__main__":
