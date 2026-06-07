@@ -1,0 +1,75 @@
+# Candidate benchmark table
+
+At-a-glance comparison of the multi-position strategy candidates, all on **one consistent
+basis** (snapshot **2026-06-07**, GMO_BTC_JPY 1h):
+
+- **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
+  2025-04-01 → 2026-04-01.
+- **IS / OOS Sharpe** = annualised mark-to-market **equity** Sharpe at the default **4 bp**
+  round-trip cost. **OOS@10bp** = OOS equity Sharpe at a realistic **10 bp** round-trip —
+  the cost-robustness check (the recurring edge-killer on this branch).
+- **DR** = win rate, **mean_r** = mean net return per trade (both signal-level diagnostics,
+  *not* ship criteria). **IS_DD / OOS_DD** = max drawdown of the per-trade-return curve.
+- **WF** = fixed-config 6-fold walk-forward (full series, 4 bp); folds with positive eqSharpe.
+- **cBTC / cDP** = bar-return correlation to BTC / to density_pullback — *diagnostics for the
+  later combination stage, not idea-stage gates*.
+- **Benchmark:** B&H lockbox Sharpe **IS +0.55 / OOS −0.16** (so OOS@10bp clears B&H if > −0.16).
+
+| candidate | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp | WF | cBTC | cDP | status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **density_pullback** | 428 | **+1.39** | 0.36 | **0.34** | +0.0048 | +1.11 | 0.15 | +0.90 | **6/6** | +0.04 | +1.00 | ship✓ |
+| **vol_expansion_ride** | 526 | **+1.56** | 0.21 | 0.41 | +0.0034 | +1.27 | 0.12 | +0.99 | 4/6 | −0.04 | +0.16 | **ship✓** |
+| rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.18 | +0.16 | **demoted** (≈ null OOS) |
+| random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
+| **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | **6/6** | −0.08 | +0.17 | candidate |
+| **density_multi_breakout** | 439 | +1.03 | 0.40 | 0.56 | +0.0063 | +0.32 | 0.42 | +0.20 | 5/6 | +0.03 | +0.68 | weak (cost) |
+| random_hedge (null) | 684 | −0.15 | 0.37 | 0.70 | −0.0006 | +0.55 | 0.12 | +0.08 | 4/6 | +0.03 | +0.14 | null baseline |
+
+## ⚠ Null-floor correction — the lockbox OOS is directional, so B&H is the wrong floor
+
+`random_hedge_volfilter` is a **random-entry** control, yet it posts a huge lockbox OOS
+(seed-0 +1.69). Diagnosis (20-seed × 3-window sweep): **(a)** seed-0 is a lucky draw — the
+20-seed mean is **+0.91**, not +1.69; and **(b)** even that +0.91 is *not* skill — a hedged
+pair + ride exit lets the trend-aligned leg run, so it beats B&H **85–100% of the time in
+*bear* windows but only 30% when B&H rises**. The recent OOS windows are directional/down.
+
+**Consequence: the honest null floor is the random hedge (lockbox 20-seed mean IS +0.77 /
+OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
+
+| candidate | IS lift / null | OOS lift / null |
+|---|---|---|
+| vol_expansion_ride | **+0.79** | **+0.35** |
+| density_pullback | **+0.63** | **+0.19** |
+| rsi_extreme_ride | +0.51 | **+0.06** (≈ null) |
+| zigzag_bounce_ride | **−0.45** (< null) | +0.13 |
+| density_multi_breakout | +0.26 | **−0.60** (< null) |
+
+So on this window only **vol_expansion_ride** and **density_pullback** carry real OOS entry
+edge; **rsi_extreme_ride is ≈ the null**, and **zigzag_bounce_ride / density_multi_breakout
+are at or below it**. The plain `OOS_sh` column above is inflated by the window's
+directionality — read the **lift-over-null** before trusting any OOS Sharpe here.
+
+\* `random_hedge_volfilter` (and the `random_hedge` null) are **seeded** (seed=0); their
+single-seed lockbox numbers are rosier than the 8-seed mean — treat as indicative, not final.
+All others are deterministic.
+
+## Read at a glance
+
+- **Read OOS as lift-over-null, not vs B&H** (the ⚠ section): the directional window gives a
+  random hedge OOS +0.91, so several "candidates" barely clear it.
+- **vol_expansion_ride** is the strongest on entry edge (lift over null **IS +0.79 / OOS +0.35**),
+  highest IS (+1.56), cost-robust — but only 4/6 folds (weak in raging bulls).
+- **density_pullback** is the most balanced and only *shipped* one (lift **+0.63 / +0.19**, lowest
+  DD 0.34, strong folds).
+- **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
+  OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
+- **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below
+  the null on OOS** (−0.60) and not cost-robust — both effectively no entry edge here.
+- **DR is sub-0.5 for all** (trend-ride payoff). Per CLAUDE.md, DR/mean_r are diagnostics only.
+
+## Caveats & regeneration
+
+A lockbox snapshot, not a final verdict — the lockbox has been reused across ideas (erodes it),
+so the **finalist still needs a fresh live-forward** (`paper_forward`) before real capital. Single
+IS/OOS split + 6 coarse folds; ride-exit candidates share the same exit (correlations in `cDP`).
+Regenerate by re-running the metric script against `split_lockbox` for each registered strategy.

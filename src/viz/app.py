@@ -11,42 +11,179 @@ registered strategies appear automatically.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import pickle
+from pathlib import Path
 from typing import Any
 
 import dash
 import pandas as pd
-from dash import Input, Output, State, dcc, html
+from dash import ClientsideFunction, Input, Output, State, dcc, html
 from dash.exceptions import PreventUpdate
+from sqlalchemy import select
 
-from src.backtest.cycle import run_cycle
+from src.backtest.cycle import CycleResult, run_cycle
 from src.config import get_settings
 from src.core.types import Timeframe
 from src.data.cache import load_cache
+from src.db import get_session
 from src.logging_setup import configure_logging
+from src.models import OHLCV
 from src.strategy.registry import all_strategies
 from src.viz import tasks
 from src.viz.charts import build_chart, window_yranges
 
 _TIMEFRAMES = [tf.value for tf in Timeframe]
 
+# --- Caching layer -----------------------------------------------------------
+# The Backtest tab was re-reading all ~44k bars from the DB and re-running two
+# ~5y simulations (~2.5 min) on every tab-open, toggle, restart and (server-side)
+# drag. Two caches fix that:
+#   1. _DATA_CACHE  — the loaded DataCache per (product, tf), in-memory. Removes
+#      the repeated DB reads behind renders and zoom/pan autoscale.
+#   2. on-disk pickle of the CycleResult per (strategy, tf, product, fingerprint)
+#      + an in-memory memo. A restart reads the pickle instead of re-simulating;
+#      the fingerprint (#bars + last timestamp) invalidates it when data changes,
+#      and the "Run backtest" button forces a recompute.
+#
+# The fingerprint tracks *data*, not *code*: when CycleResult's schema changes
+# (new fields), old pickles deserialize without them and crash on attribute
+# access. _CACHE_VERSION is folded into the key so any schema change invalidates
+# stale pickles — bump it whenever CycleResult's fields change.
+_CACHE_VERSION = "v2-multi"
+_DATA_CACHE: dict[tuple[str | None, str], Any] = {}
+_CYCLE_MEMO: dict[tuple[str, str, str | None, str], Any] = {}
+_CYCLE_DIR = Path(os.environ.get("VIZ_CACHE_DIR", ".viz_cache"))
 
-def _timeframe_dropdown(id_: str) -> dcc.Dropdown:
+
+def _load_cache_cached(tf: Timeframe, product: str | None) -> Any:
+    """Return a memoized :class:`DataCache` for ``(product, tf)``.
+
+    ``to_frame()`` returns a fresh DataFrame each call, so sharing the instance
+    is safe for callers that build their own frame.
+    """
+    key = (product, tf.value)
+    if key not in _DATA_CACHE:
+        _DATA_CACHE[key] = load_cache(tf, product=product)
+    return _DATA_CACHE[key]
+
+
+def _data_fingerprint(df: pd.DataFrame) -> str:
+    """Cheap content fingerprint (#rows + last timestamp) for cache validity."""
+    if df.empty:
+        return "empty"
+    return f"{len(df)}_{df.index[-1].isoformat()}"
+
+
+def _run_cycle_cached(
+    strategy: str, tf: Timeframe, product: str | None, fingerprint: str, *, force: bool
+) -> Any:
+    """Return the cycle result from memo / disk, recomputing on miss or ``force``."""
+    key = (strategy, tf.value, product, fingerprint)
+    if not force and key in _CYCLE_MEMO:
+        return _CYCLE_MEMO[key]
+
+    digest = hashlib.sha1(
+        "__".join((*map(str, key), _CACHE_VERSION)).encode()
+    ).hexdigest()[:16]
+    path = _CYCLE_DIR / f"{strategy}_{tf.value}_{product}_{digest}.pkl"
+    result = None
+    if not force and path.exists():
+        try:
+            with path.open("rb") as fh:
+                loaded = pickle.load(fh)
+            # Guard against schema drift even within a version: a result missing
+            # current fields is recomputed rather than crashing a render.
+            if isinstance(loaded, CycleResult) and hasattr(loaded, "multi"):
+                result = loaded
+        except Exception:  # noqa: BLE001 — any unpickling failure → recompute
+            result = None
+    if result is None:
+        result = run_cycle(strategy, tf, product=product)
+        _CYCLE_DIR.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as fh:
+            pickle.dump(result, fh)
+    _CYCLE_MEMO[key] = result
+    return result
+
+# Hard cap on candles rendered in any chart. ~44k bars choke the browser; 2160
+# bars (= 90 days on 1h) keeps the figure light and interactions snappy. The
+# Chart tab shows the most recent window (or the tail of a chosen date range); the
+# Backtest tab pages through fixed 2160-bar windows via the Period navigator.
+_MAX_VIEW_BARS = 2160
+
+
+def _window_slice(df: pd.DataFrame, period: int) -> tuple[pd.DataFrame, int, int]:
+    """Slice ``df`` to one ``_MAX_VIEW_BARS`` window for Backtest Period paging.
+
+    Args:
+        df: Full time-indexed OHLCV frame.
+        period: Offset back from the most recent window (0 = latest).
+
+    Returns:
+        ``(window_df, clamped_offset, n_windows)`` — newest window is offset 0.
+    """
+    n = len(df)
+    if n == 0:
+        return df, 0, 1
+    n_windows = max(1, -(-n // _MAX_VIEW_BARS))  # ceil
+    offset = max(0, min(period, n_windows - 1))
+    end_i = n - offset * _MAX_VIEW_BARS
+    start_i = max(0, end_i - _MAX_VIEW_BARS)
+    return df.iloc[start_i:end_i], offset, n_windows
+
+
+def _trades_in_window(trades: list[Any], lo: pd.Timestamp, hi: pd.Timestamp) -> list[Any]:
+    """Keep trades whose entry falls within ``[lo, hi]`` (tz-robust)."""
+    out = []
+    for t in trades:
+        et = pd.Timestamp(t.entry_time)
+        if et.tzinfo is None and lo.tzinfo is not None:
+            et = et.tz_localize(lo.tz)
+        elif et.tzinfo is not None and lo.tzinfo is None:
+            et = et.tz_localize(None)
+        if lo <= et <= hi:
+            out.append(t)
+    return out
+
+
+def _products() -> list[str]:
+    """Distinct product codes in the OHLCV table (for the chart product picker)."""
+    with get_session() as s:
+        found = s.execute(select(OHLCV.product).distinct().order_by(OHLCV.product)).scalars().all()
+    return sorted({get_settings().product_code, *found})
+
+
+def _timeframe_dropdown(id_: str, value: str = "5m") -> dcc.Dropdown:
     return dcc.Dropdown(
         id=id_,
         options=[{"label": tf, "value": tf} for tf in _TIMEFRAMES],
-        value="5m",
+        value=value if value in _TIMEFRAMES else "5m",
         clearable=False,
         style={"width": "120px"},
     )
 
 
-def _strategy_dropdown(id_: str) -> dcc.Dropdown:
+def _product_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
+    prods = _products()
+    default = value or get_settings().product_code
+    return dcc.Dropdown(
+        id=id_,
+        options=[{"label": p, "value": p} for p in prods],
+        value=default if default in prods else prods[0],
+        clearable=False,
+        style={"width": "170px"},
+    )
+
+
+def _strategy_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
     names = all_strategies()
+    default = value if value in names else (names[0] if names else None)
     return dcc.Dropdown(
         id=id_,
         options=[{"label": n, "value": n} for n in names],
-        value=names[0] if names else None,
+        value=default,
         clearable=False,
         style={"width": "260px"},
     )
@@ -59,6 +196,8 @@ def _chart_tab() -> html.Div:
                 [
                     html.Label("Timeframe"),
                     _timeframe_dropdown("chart-timeframe"),
+                    html.Label("Product"),
+                    _product_dropdown("chart-product"),
                     dcc.Checklist(
                         id="chart-toggles",
                         options=[
@@ -80,7 +219,8 @@ def _chart_tab() -> html.Div:
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
             ),
             html.Div(
-                "No date range = most recent 600 bars.",
+                f"Up to {_MAX_VIEW_BARS:,} bars shown (most recent, or the tail of a "
+                "chosen Period). Scroll/zoom to pan, double-click to reset.",
                 style={"fontSize": "12px", "color": "#888", "margin": "4px 0"},
             ),
             # Explicit pixel height so the bare graph matches the Backtest tab's
@@ -97,9 +237,11 @@ def _backtest_tab() -> html.Div:
             html.Div(
                 [
                     html.Label("Timeframe"),
-                    _timeframe_dropdown("bt-timeframe"),
+                    _timeframe_dropdown("bt-timeframe", value="1h"),
+                    html.Label("Product"),
+                    _product_dropdown("bt-product", value="GMO_BTC_JPY"),
                     html.Label("Strategy"),
-                    _strategy_dropdown("bt-strategy"),
+                    _strategy_dropdown("bt-strategy", value="density_breakout"),
                     dcc.Checklist(
                         id="bt-toggles",
                         options=[
@@ -114,10 +256,41 @@ def _backtest_tab() -> html.Div:
                 ],
                 style={"display": "flex", "gap": "12px", "alignItems": "center"},
             ),
-            dcc.Store(id="bt-ohlc-store"),
+            # Period navigator: page through fixed _MAX_VIEW_BARS windows of the
+            # full series. The cycle/metrics are full-history; this only moves the
+            # plotted window (and the trades shown).
             html.Div(
                 [
-                    dcc.Graph(id="bt-graph", style={"flex": "3", "height": "820px"}),
+                    html.Label("Period"),
+                    html.Button("◀ Prev", id="bt-prev", n_clicks=0),
+                    html.Span(
+                        id="bt-period-label",
+                        children="latest",
+                        style={"minWidth": "320px", "textAlign": "center",
+                               "fontSize": "13px", "color": "#444"},
+                    ),
+                    html.Button("Next ▶", id="bt-next", n_clicks=0),
+                    dcc.Store(id="bt-period", data=0),
+                ],
+                style={"display": "flex", "gap": "12px", "alignItems": "center",
+                       "margin": "6px 0"},
+            ),
+            html.Div(
+                [
+                    # The backtest runs two full simulations (~45s on 5y 1h data),
+                    # so wrap the graph in a spinner — otherwise the chart looks
+                    # dead-empty mid-run rather than loading.
+                    dcc.Loading(
+                        dcc.Graph(
+                            id="bt-graph",
+                            style={"height": "820px", "width": "100%"},
+                        ),
+                        type="default",
+                        # NB: `style` styles the spinner; `parent_style` styles the
+                        # wrapper that is the actual flex child — so the graph keeps
+                        # its 3:1 width against the metrics panel.
+                        parent_style={"flex": "3", "minWidth": "0"},
+                    ),
                     html.Div(
                         [
                             html.Pre(
@@ -219,153 +392,12 @@ def _slice_window(
     return df[mask]
 
 
-def _naive_iso(x: Any) -> str:
-    """Parse a timestamp to a tz-naive wall-clock ISO string.
-
-    Plotly's hover-event ``x`` is the *displayed* (tz-naive) value, while the
-    figure's data ``x`` is tz-aware. Normalising both sides to naive wall-clock
-    makes the OHLC lookup robust to that difference (and to formatting/seconds).
-    """
-    ts: pd.Timestamp = pd.Timestamp(x)
-    if ts.tzinfo is not None:
-        ts = ts.tz_localize(None)
-    return str(ts.isoformat())
-
-
-def _ohlc_store(df: pd.DataFrame) -> dict[str, list[float]]:
-    """Build a {naive-ISO timestamp: [O,H,L,C]} lookup for the OHLC hover pane.
-
-    Keyed by tz-naive wall-clock ISO so it matches Plotly's hover ``x`` (which is
-    tz-naive), parsed the same way via :func:`_naive_iso` in the callback.
-    """
-    out: dict[str, list[float]] = {}
-    for ts, o, h, low, c in zip(
-        df.index, df["open"], df["high"], df["low"], df["close"], strict=False
-    ):
-        out[_naive_iso(ts)] = [float(o), float(h), float(low), float(c)]
-    return out
-
-
-def _draw_tpsl_lines(figure: dict[str, Any] | None, hoverdata: dict[str, Any] | None) -> dict[str, Any]:
-    """Draw horizontal TP/SL lines for a hovered entry marker.
-
-    Entry markers carry ``customdata = [tp_price, sl_price]`` (exactly length 2).
-    Replaces any prior TP/SL shapes with dashed lines at those levels on the
-    price panel; other shapes (e.g. the candle's OHLC customdata is length 4, and
-    RSI 30/70 reference lines) are left alone.
-
-    Raises:
-        PreventUpdate: If not hovering an entry marker, or the lines are already
-            drawn at these levels (avoids redundant redraws while hovering).
-    """
-    if not figure or not hoverdata:
-        raise PreventUpdate
-    points = hoverdata.get("points") or []
-    cd = points[0].get("customdata") if points else None
-    # Entry markers carry [tp, sl, entry_iso, exit_iso, exit_price]; nothing else
-    # carries customdata, so anything shorter is not an entry.
-    if not cd or len(cd) < 4:
-        raise PreventUpdate
-    tp, sl, entry_x, exit_x = cd[0], cd[1], cd[2], cd[3]
-    exit_price = cd[4] if len(cd) > 4 else None
-    ref_x = cd[5] if len(cd) > 5 else None
-    ref_price = cd[6] if len(cd) > 6 else None
-
-    layout = figure["layout"]
-    # Skip redundant redraws while hovering the same entry (keyed on exit point).
-    prior = [a for a in layout.get("annotations", []) if a.get("name") == "tpsl_exit"]
-    if prior and prior[0].get("x") == exit_x:
-        raise PreventUpdate
-
-    # TP/SL as dashed segments over the trade's lifetime (entry -> exit), so it's
-    # clear the trade ended before price may later have crossed a level.
-    shapes = [
-        s for s in layout.get("shapes", []) if not str(s.get("name", "")).startswith("tpsl_")
-    ]
-    for level, color, tag, lbl in (
-        (tp, "#2ca02c", "tpsl_tp", "TP"),
-        (sl, "#d62728", "tpsl_sl", "SL"),
-    ):
-        if level is None:
-            continue
-        shapes.append(
-            {
-                "type": "line",
-                "xref": "x", "x0": entry_x, "x1": exit_x,
-                "yref": "y", "y0": level, "y1": level,
-                "line": {"color": color, "width": 1.4, "dash": "dash"},
-                "name": tag,
-                "label": {"text": f"{lbl} {level:,.0f}", "textposition": "start",
-                          "font": {"color": color, "size": 11}},
-            }
-        )
-    if not shapes:
-        raise PreventUpdate
-
-    # Dotted connector from the entry to the "outstanding" peak it bounced off.
-    if ref_x is not None and ref_price is not None:
-        shapes.append(
-            {
-                "type": "line",
-                "xref": "x", "x0": ref_x, "x1": entry_x,
-                "yref": "y", "y0": ref_price, "y1": ref_price,
-                "line": {"color": "#8c564b", "width": 1, "dash": "dot"},
-                "name": "tpsl_ref",
-            }
-        )
-    layout["shapes"] = shapes
-
-    # Mark the exit and the outstanding peak so they're findable.
-    anns = [a for a in layout.get("annotations", []) if not str(a.get("name", "")).startswith("tpsl_")]
-    if exit_price is not None:
-        anns.append(
-            {
-                "name": "tpsl_exit", "xref": "x", "yref": "y",
-                "x": exit_x, "y": exit_price, "text": "exit", "showarrow": True,
-                "arrowhead": 2, "ax": 0, "ay": -28,
-                "font": {"size": 11, "color": "#333"}, "bgcolor": "#ffffffcc",
-            }
-        )
-    if ref_x is not None and ref_price is not None:
-        anns.append(
-            {
-                "name": "tpsl_ref", "xref": "x", "yref": "y",
-                "x": ref_x, "y": ref_price, "text": "outstanding peak",
-                "showarrow": True, "arrowhead": 2, "ax": 0, "ay": -24,
-                "font": {"size": 10, "color": "#8c564b"}, "bgcolor": "#ffffffcc",
-            }
-        )
-    layout["annotations"] = anns
-    return figure
-
-
-def _is_zoom_relayout(relayout: dict[str, Any] | None) -> bool:
-    """Whether ``relayout`` represents a genuine x-zoom with a real datetime range.
-
-    Distinguishes a real user zoom/pan from a graph-mount event (``autosize`` or
-    the empty figure's numeric ``-1..6`` range), so the latter triggers a render
-    rather than a no-op autoscale.
-    """
-    if not isinstance(relayout, dict):
-        return False
-    for key, val in relayout.items():
-        if "xaxis" in key and key.endswith(".range[0]"):
-            try:
-                import pandas as pd
-
-                ts = pd.to_datetime(val)
-            except (ValueError, TypeError):
-                return False
-            # Numeric placeholders (e.g. -1) parse to ~1970; require a real date.
-            return bool(getattr(ts, "year", 0) > 2000)
-    return False
-
-
 def _autoscale_figure(
     relayout: dict[str, Any] | None,
     figure: dict[str, Any] | None,
     timeframe: str,
     *,
+    product: str | None = None,
     show_bb: bool,
     show_rsi: bool,
 ) -> dict[str, Any]:
@@ -408,7 +440,7 @@ def _autoscale_figure(
     if x0 is None or x1 is None:
         raise PreventUpdate  # not an x-zoom/pan event
 
-    df = load_cache(Timeframe(timeframe)).to_frame()
+    df = _load_cache_cached(Timeframe(timeframe), product).to_frame()
     try:
         ranges = window_yranges(df, str(x0), str(x1), show_bb=show_bb, show_rsi=show_rsi)
     except (ValueError, TypeError):
@@ -451,115 +483,136 @@ def _register_callbacks(app: dash.Dash) -> None:
         Input("chart-daterange", "start_date"),
         Input("chart-daterange", "end_date"),
         State("chart-timeframe", "value"),
+        State("chart-product", "value"),
         State("chart-toggles", "value"),
     )
-    def _update_chart(_clicks, start_date, end_date, timeframe, toggles):  # type: ignore[no-untyped-def]
+    def _update_chart(_clicks, start_date, end_date, timeframe, product, toggles):  # type: ignore[no-untyped-def]
         tf = Timeframe(timeframe)
         toggles = toggles or []
-        df = load_cache(tf).to_frame()
-        df = _slice_window(df, start_date, end_date, default_bars=600)
-        return build_chart(
-            df,
-            show_bb="bb" in toggles,
-            show_rsi="rsi" in toggles,
-            show_zigzag="zigzag" in toggles,
-            height=820,
-        )
+        show_bb, show_rsi, show_zz = "bb" in toggles, "rsi" in toggles, "zigzag" in toggles
+        df = _load_cache_cached(tf, product).to_frame()
+        # Cap to the most recent _MAX_VIEW_BARS (or the tail of a chosen range) so
+        # the browser never renders the full multi-year series.
+        df = _slice_window(df, start_date, end_date, default_bars=_MAX_VIEW_BARS)
+        if len(df) > _MAX_VIEW_BARS:
+            df = df.tail(_MAX_VIEW_BARS)
+        return build_chart(df, show_bb=show_bb, show_rsi=show_rsi, show_zigzag=show_zz, height=820)
 
     @app.callback(
         Output("chart-graph", "figure", allow_duplicate=True),
         Input("chart-graph", "relayoutData"),
         State("chart-graph", "figure"),
         State("chart-timeframe", "value"),
+        State("chart-product", "value"),
         State("chart-toggles", "value"),
         prevent_initial_call=True,
     )
-    def _autoscale_chart_y(relayout, figure, timeframe, toggles):  # type: ignore[no-untyped-def]
+    def _autoscale_chart_y(relayout, figure, timeframe, product, toggles):  # type: ignore[no-untyped-def]
         return _autoscale_figure(
             relayout,
             figure,
             timeframe,
+            product=product,
             show_bb="bb" in (toggles or []),
             show_rsi="rsi" in (toggles or []),
         )
 
     @app.callback(
+        Output("bt-period", "data"),
+        Input("bt-prev", "n_clicks"),
+        Input("bt-next", "n_clicks"),
+        Input("bt-timeframe", "value"),
+        Input("bt-product", "value"),
+        State("bt-period", "data"),
+        prevent_initial_call=True,
+    )
+    def _bt_period_nav(_prev, _next, timeframe, product, period):  # type: ignore[no-untyped-def]
+        # Prev = older window, Next = newer; changing timeframe/product resets to
+        # the most recent window (the window count depends on the data length).
+        trig = dash.ctx.triggered_id
+        if trig in ("bt-timeframe", "bt-product"):
+            return 0
+        df = _load_cache_cached(Timeframe(timeframe), product).to_frame()
+        n_windows = max(1, -(-len(df) // _MAX_VIEW_BARS))
+        cur = period or 0
+        if trig == "bt-prev":
+            cur += 1
+        elif trig == "bt-next":
+            cur -= 1
+        return max(0, min(cur, n_windows - 1))
+
+    @app.callback(
         Output("bt-graph", "figure"),
         Output("bt-metrics", "children"),
-        Output("bt-ohlc-store", "data"),
+        Output("bt-period-label", "children"),
         Input("tabs", "value"),
         Input("bt-run", "n_clicks"),
         Input("bt-timeframe", "value"),
+        Input("bt-product", "value"),
         Input("bt-strategy", "value"),
         Input("bt-toggles", "value"),
-        Input("bt-graph", "relayoutData"),
-        Input("bt-graph", "hoverData"),
-        State("bt-graph", "figure"),
+        Input("bt-period", "data"),
     )
-    def _backtest_tab_cb(active_tab, _clicks, timeframe, strategy, toggles, relayout, hoverdata, figure):  # type: ignore[no-untyped-def]
-        # Single owner of bt-graph so a graph-mount relayout can't race the render
-        # through a duplicate output. RENDER unless this is unambiguously a
-        # zoom or an entry-marker hover; that keeps rendering deterministic
-        # regardless of which trigger Dash attributes when the tab mounts.
+    def _backtest_tab_cb(active_tab, _clicks, timeframe, product, strategy, toggles, period):  # type: ignore[no-untyped-def]
+        # RENDER-ONLY: the single owner that *builds* the figure. Zoom/pan,
+        # TP/SL-hover and the OHLC readout are handled clientside (see
+        # assets/bt_interactions.js) so they never round-trip the figure.
         if active_tab != "backtest":
             raise PreventUpdate
         toggles = toggles or []
         show_bb, show_rsi, show_zigzag = "bb" in toggles, "rsi" in toggles, "zigzag" in toggles
-
         trig = {t["prop_id"] for t in (dash.ctx.triggered or [])}
-        if trig == {"bt-graph.hoverData"}:
-            # Hovering an entry marker -> draw its TP/SL lines (keep metrics/store).
-            return _draw_tpsl_lines(figure, hoverdata), dash.no_update, dash.no_update
-        if trig == {"bt-graph.relayoutData"} and _is_zoom_relayout(relayout):
-            return (
-                _autoscale_figure(relayout, figure, timeframe, show_bb=show_bb, show_rsi=show_rsi),
-                dash.no_update,
-                dash.no_update,
-            )
 
-        # Tab opened / timeframe / strategy / toggles / Run button / mount -> render.
         tf = Timeframe(timeframe)
-        cache = load_cache(tf)
-        df = cache.to_frame()
+        df = _load_cache_cached(tf, product).to_frame()
         if df.empty or not strategy:
-            return build_chart(df), "No data for this timeframe. Collect/backtest first.", {}
-        # run_cycle already simulates in-sample + OOS; reuse its trades for the
-        # chart instead of a third full simulation.
-        result = run_cycle(strategy, tf)
+            return build_chart(df), "No data for this timeframe/product. Collect/backtest first.", "—"
+        # run_cycle already simulates in-sample + OOS over the FULL series; reuse
+        # its trades for the chart instead of a third full simulation. Served from
+        # disk/memo cache (keyed by a data fingerprint so it survives restarts but
+        # invalidates on new data); the "Run backtest" button forces a recompute.
+        force = "bt-run.n_clicks" in trig
+        result = _run_cycle_cached(strategy, tf, product, _data_fingerprint(df), force=force)
+        # Only the current Period window (and its trades) is plotted — keeps the
+        # figure light; the metrics panel stays full-history.
+        win, offset, n_windows = _window_slice(df, period or 0)
+        lo, hi = win.index[0], win.index[-1]
+        wtrades = _trades_in_window(result.trades, lo, hi)
         fig = build_chart(
-            df,
+            win,
             show_bb=show_bb,
             show_rsi=show_rsi,
             show_zigzag=show_zigzag,
-            trades=result.trades,
+            trades=wtrades,
         )
-        return fig, _format_metrics(result), _ohlc_store(df)
+        label = (
+            f"window {n_windows - offset}/{n_windows}  ·  "
+            f"{lo:%Y-%m-%d} → {hi:%Y-%m-%d}  ·  {len(wtrades)} trades"
+        )
+        return fig, _format_metrics(result), label
 
-    @app.callback(
-        Output("bt-ohlc", "children"),
-        Input("bt-graph", "hoverData"),
-        State("bt-ohlc-store", "data"),
+    # --- Clientside interactions (no figure round-trip) ----------------------
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="autoscale"),
+        Output("bt-graph", "figure", allow_duplicate=True),
+        Input("bt-graph", "relayoutData"),
+        State("bt-graph", "figure"),
         prevent_initial_call=True,
     )
-    def _ohlc_readout(hoverdata, store):  # type: ignore[no-untyped-def]
-        # Look up the bar's OHLC by the hovered timestamp, regardless of which
-        # trace is closest (EMA, candle, ...) — they share the same x.
-        points = (hoverdata or {}).get("points") or []
-        if not points or not store:
-            raise PreventUpdate
-        try:
-            key = _naive_iso(points[0].get("x"))
-        except (ValueError, TypeError):
-            raise PreventUpdate
-        ohlc = store.get(key)
-        if not ohlc:
-            raise PreventUpdate
-        o, h, low, c = ohlc
-        return (
-            f"{key.replace('T', '  ')}\n"
-            f"O {o:,.0f}   H {h:,.0f}\n"
-            f"L {low:,.0f}   C {c:,.0f}"
-        )
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="tpsl"),
+        Output("bt-graph", "figure", allow_duplicate=True),
+        Input("bt-graph", "hoverData"),
+        State("bt-graph", "figure"),
+        prevent_initial_call=True,
+    )
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="ohlc"),
+        Output("bt-ohlc", "children"),
+        Input("bt-graph", "hoverData"),
+        State("bt-graph", "figure"),
+        prevent_initial_call=True,
+    )
 
     @app.callback(
         Output("maint-status", "children"),
@@ -598,14 +651,22 @@ def _register_callbacks(app: dash.Dash) -> None:
 
 
 def _format_metrics(result: object) -> str:
-    from src.backtest.cycle import CycleResult
-
     assert isinstance(result, CycleResult)
     m_in, m_oos = result.in_sample, result.oos
     lines = [
         f"Strategy: {result.strategy}",
         f"SHIP: {result.ship}",
         f"Buy & Hold BTC/JPY: {result.benchmark_return:+.4f}",
+    ]
+    if result.multi:
+        lines += [
+            "",
+            "MULTI-POSITION — judged by annualised EQUITY Sharpe (per-trade below"
+            " is diagnostic):",
+            f"  Equity Sharpe  IS {result.equity_sharpe_in:>+7.3f}   "
+            f"OOS {result.equity_sharpe_oos:>+7.3f}   (B&H IS {result.bench_sharpe:+.3f})",
+        ]
+    lines += [
         "",
         "                 in-sample      OOS",
         f"Sharpe         {m_in.sharpe:>10.3f} {m_oos.sharpe:>10.3f}",
@@ -632,8 +693,9 @@ def main() -> None:
     """
     configure_logging(get_settings().log_level)
     debug = os.getenv("VIZ_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+    port = int(os.getenv("VIZ_PORT", "8050"))
     app = create_app()
-    app.run(host="0.0.0.0", port=8050, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=debug)
 
 
 if __name__ == "__main__":

@@ -240,6 +240,37 @@ def portfolio_metrics(trades: list[Trade]) -> PortfolioMetrics:
     )
 
 
+def annualized_sharpe_from_levels(
+    levels: list[float], periods_per_year: float, *, pct: bool = False
+) -> float:
+    """Annualised Sharpe of a level series' bar-to-bar changes.
+
+    The correct portfolio metric for an overlapping multi-position strategy: it
+    measures the mark-to-market equity *path* over time, unlike per-trade Sharpe
+    (which ignores how many positions overlap). Also used for the buy-and-hold
+    benchmark by passing the close series with ``pct=True``.
+
+    Args:
+        levels: Equity levels (JPY) or a price series.
+        periods_per_year: Bars per year for the timeframe (annualisation factor).
+        pct: If ``True``, use fractional bar returns (for a price/B&H series);
+            if ``False``, use absolute level changes (Sharpe is scale-invariant,
+            so equity in JPY is fine).
+
+    Returns:
+        The annualised Sharpe, or ``0.0`` for a degenerate series.
+    """
+    arr = np.asarray(levels, dtype=float)
+    if arr.size < 3:
+        return 0.0
+    d = np.diff(arr)
+    if pct:
+        prev = arr[:-1]
+        d = np.divide(d, prev, out=np.zeros_like(d), where=prev != 0.0)
+    sd = float(d.std(ddof=1))
+    return float(d.mean() / sd * np.sqrt(periods_per_year)) if sd > 0.0 else 0.0
+
+
 def buy_and_hold_return(first_close: float, last_close: float) -> float:
     """Benchmark return for buy-and-hold BTC/JPY (NOT cash; per CLAUDE.md).
 

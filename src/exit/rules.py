@@ -41,6 +41,8 @@ class OpenPosition:
     sl_price: float | None = None
     ref_time: datetime | None = None
     ref_price: float | None = None
+    ref2_time: datetime | None = None
+    ref2_price: float | None = None
 
     def __post_init__(self) -> None:
         if self.favorable_extreme == 0.0:

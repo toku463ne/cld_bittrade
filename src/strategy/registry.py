@@ -12,7 +12,25 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.strategy.base import Strategy
+from src.strategy.density_band import DensityBandStrategy
+from src.strategy.density_breakout import DensityBreakoutStrategy
+from src.strategy.density_breakout_acc import DensityBreakoutAccStrategy
+from src.strategy.density_breakout_clearair import DensityBreakoutClearairStrategy
+from src.strategy.density_breakout_vol import DensityBreakoutVolStrategy
+from src.strategy.density_multi_breakout import DensityMultiBreakoutStrategy
+from src.strategy.density_multi_relative import DensityMultiRelativeStrategy
+from src.strategy.density_volwall_breakout import DensityVolwallBreakoutStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
+from src.strategy.random_hedge import RandomHedgeStrategy, RandomHedgeVolfilterStrategy
+from src.strategy.density_pullback import DensityPullbackStrategy
+from src.strategy.rsi_extreme_ride import RsiExtremeRideStrategy
+from src.strategy.vol_expansion_ride import VolExpansionRideStrategy
+from src.strategy.zigzag_bounce_ride import ZigzagBounceRideStrategy
+from src.strategy.random_hedge_density import RandomHedgeDensityStrategy
+from src.strategy.regime_gate import (
+    DensityBreakoutVolgateStrategy,
+    DensityMultiVolgateStrategy,
+)
 from src.strategy.zigzag_bounce import ZigzagBounceStrategy
 
 # Factories (zero-arg) so each consumer gets a fresh, default-configured strategy.
@@ -21,6 +39,23 @@ from src.strategy.zigzag_bounce import ZigzagBounceStrategy
 STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     EmaAtrBreakoutStrategy.name: EmaAtrBreakoutStrategy,
     ZigzagBounceStrategy.name: ZigzagBounceStrategy,
+    DensityBandStrategy.name: DensityBandStrategy,
+    DensityBreakoutStrategy.name: DensityBreakoutStrategy,
+    DensityBreakoutAccStrategy.name: DensityBreakoutAccStrategy,
+    DensityBreakoutClearairStrategy.name: DensityBreakoutClearairStrategy,
+    DensityBreakoutVolStrategy.name: DensityBreakoutVolStrategy,
+    DensityMultiBreakoutStrategy.name: DensityMultiBreakoutStrategy,
+    DensityMultiRelativeStrategy.name: DensityMultiRelativeStrategy,
+    DensityVolwallBreakoutStrategy.name: DensityVolwallBreakoutStrategy,
+    DensityBreakoutVolgateStrategy.name: DensityBreakoutVolgateStrategy,
+    DensityMultiVolgateStrategy.name: DensityMultiVolgateStrategy,
+    RandomHedgeStrategy.name: RandomHedgeStrategy,
+    RandomHedgeVolfilterStrategy.name: RandomHedgeVolfilterStrategy,
+    RandomHedgeDensityStrategy.name: RandomHedgeDensityStrategy,
+    DensityPullbackStrategy.name: DensityPullbackStrategy,
+    ZigzagBounceRideStrategy.name: ZigzagBounceRideStrategy,
+    VolExpansionRideStrategy.name: VolExpansionRideStrategy,
+    RsiExtremeRideStrategy.name: RsiExtremeRideStrategy,
 }
 
 

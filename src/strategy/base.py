@@ -16,10 +16,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from src.core.types import Bar, ExitConfig, Signal
+from src.core.types import Bar, ExitConfig, ExitReason, Signal
+
+if TYPE_CHECKING:
+    from src.exit.rules import OpenPosition
 
 
 class Strategy(ABC):
@@ -42,6 +46,11 @@ class Strategy(ABC):
     required_indicators: list[str] = []
     warmup: int = 30
     max_buffer: int = 400
+    # Concurrent positions allowed. ``1`` (default) = the single-position
+    # Simulator; ``>1`` routes the backtest to the MultiSimulator (overlapping
+    # slots, mark-to-market equity Sharpe). Such strategies must implement
+    # :meth:`precompute`.
+    max_slots: int = 1
 
     def __init__(self) -> None:
         self._bars: list[Bar] = []
@@ -100,6 +109,19 @@ class Strategy(ABC):
         """
         return None
 
+    def precompute_multi(self, bars: list[Bar]) -> dict[datetime, list[Signal]] | None:
+        """Optionally precompute *several* entry signals per bar (MultiSimulator).
+
+        Like :meth:`precompute`, but each timestamp maps to a *list* of signals so
+        a strategy can open more than one position from a single bar (e.g. a hedged
+        long+short pair). The MultiSimulator fills them in order while slots remain
+        free. ``None`` (default) falls back to :meth:`precompute` (one per bar).
+
+        Returns:
+            A ``{bar_timestamp: [Signal, ...]}`` map, or ``None``.
+        """
+        return None
+
     @abstractmethod
     def on_bar(self, bar: Bar) -> Signal | None:
         """Core strategy logic for the just-closed bar.
@@ -117,3 +139,24 @@ class Strategy(ABC):
     def get_exit_rules(self) -> ExitConfig:
         """Return the strategy's TP/SL/time-stop configuration."""
         raise NotImplementedError
+
+    def dynamic_exit(
+        self, pos: OpenPosition, bar: Bar, i: int, entry_idx: int
+    ) -> tuple[ExitReason, float] | None:
+        """Optional per-bar exit beyond the static :class:`ExitConfig`.
+
+        Called by the MultiSimulator for each open position on each bar *after*
+        the static exits (stop / target / time) have been checked. Multi-position
+        strategies override this for state-dependent exits (e.g. the dense
+        "stall" exit). Single-position strategies never reach it.
+
+        Args:
+            pos: The open position (carries entry price, side, ``ref``/``ref2``).
+            bar: The current bar.
+            i: Index of ``bar`` in the run's bar list.
+            entry_idx: Index at which the position was filled.
+
+        Returns:
+            ``(reason, exit_price)`` to close the position, or ``None`` to hold.
+        """
+        return None

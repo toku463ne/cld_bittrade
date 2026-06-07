@@ -13,7 +13,7 @@ TP/SL exit.
 | **Indicator** | `src/indicators/zigzag.py` → `detect_peaks`, `Peak`, `confirmed_leg_sizes` |
 | **Exit** | `src/exit/zs_tp_sl.py` → `ZsTpSl` (via `src/exit/base.py`) |
 | **Default timeframe** | **1h** |
-| **Status** | Implemented; benchmarked 1h = **REJECT (interim, ~1mo)**. Default = ambiguous-wall matching (`wall_match`). See `src/backtest/benchmark.md`. |
+| **Status** | Implemented; benchmarked 1h = **REJECT** under its own fixed ZS exit. Default = ambiguous-wall matching (`wall_match`). See `src/backtest/benchmark.md`. **Note:** the bounce *direction* is salvageable — fed into the tuned ride exit it goes IS +0.89 / OOS +0.31, 4/6 folds; see [`zigzag_bounce_ride.md`](zigzag_bounce_ride.md). |
 
 > Ported from `cld_trade_advisor` (`src/indicators/zigzag.py`, `src/exit/base.py`,
 > `src/exit/zs_tp_sl.py`) and adapted: the reference was stock/long-only; this

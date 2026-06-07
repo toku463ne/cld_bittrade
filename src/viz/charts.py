@@ -96,6 +96,7 @@ def build_chart(
 
     if trades:
         _add_trade_markers(fig, trades)
+        _add_trendlines(fig, trades)
 
     # --- ATR panel ---
     atr_s = atr(df).replace(0.0, pd.NA)
@@ -351,3 +352,64 @@ def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
     _entry_group(Side.SHORT, "Short entry ▼", "#d62728", "triangle-down")
     _exit_group("Exit — TP", "circle", True)
     _exit_group("Exit — SL/stop", "circle-open", False)
+
+
+def _add_trendlines(fig: go.Figure, trades: list[Trade]) -> None:
+    """Overlay a sloped line behind each trade that carries two anchors.
+
+    Generic two-anchor overlay: when a trade sets ``ref2`` and ``ref``, those are
+    the older/newer anchors and the line is extended from them to the entry bar
+    (open-circle markers sit on the two anchors). Long and short lines get their
+    own colour and legend entry (click to toggle). Trades without a second anchor
+    (e.g. ``zigzag_bounce``, which keys off a single level) are skipped, so this is
+    a no-op for single-level strategies.
+    """
+    from src.core.types import Side
+
+    def _segment(t: Trade) -> tuple[list[object], list[float]] | None:
+        if (
+            t.ref2_time is None or t.ref2_price is None
+            or t.ref_time is None or t.ref_price is None
+        ):
+            return None
+        a_t, a_p = t.ref2_time, t.ref2_price  # older anchor (far end)
+        b_t, b_p = t.ref_time, t.ref_price    # recent anchor (near end)
+        span = (b_t - a_t).total_seconds()
+        if span == 0.0:
+            proj = b_p
+        else:
+            slope = (b_p - a_p) / span  # price per second; linear in bar time
+            proj = b_p + slope * (t.entry_time - b_t).total_seconds()
+        return [a_t, b_t, t.entry_time], [a_p, b_p, proj]
+
+    for side, color, name in (
+        (Side.SHORT, "#d62728", "Trendline ↘ (short)"),
+        (Side.LONG, "#2ca02c", "Trendline ↗ (long)"),
+    ):
+        xs: list[object] = []
+        ys: list[float] = []
+        for t in trades:
+            if t.side is not side:
+                continue
+            seg = _segment(t)
+            if seg is None:
+                continue
+            # ``None`` breaks the polyline between trades (connectgaps=False).
+            xs.extend([*seg[0], None])
+            ys.extend([*seg[1], None])  # type: ignore[list-item]
+        if not xs:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="lines+markers",
+                line=dict(color=color, width=1.3, dash="dot"),
+                marker=dict(size=6, color=color, symbol="circle-open"),
+                name=name,
+                connectgaps=False,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )

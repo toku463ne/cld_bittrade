@@ -233,6 +233,14 @@ See `docs/evaluation_criteria.md` for the ship/reject rubric.
 
 Per-period columns: `period`, `n_fires`, `DR`, `total_return`, `max_DD`, `win_rate`
 
+> **Caveat (consistency gate):** the period units above are display defaults. For
+> the **ship consistency gate**, the period must hold *several* trades or the
+> non-neg% just collapses into the win rate. For a low-frequency strategy (e.g. a
+> ~24-trade/yr 1h trend-ride) "1 week" is too short and manufactures false
+> "fails consistency" verdicts — gate on the coarsest period giving ≥~5
+> trades/period AND ≥~12–15 periods (a **quarter** for such a strategy). See
+> `docs/evaluation_criteria.md` §6.4.
+
 **OOS (Out-of-Sample) metrics**
 - Training: all months except the most recent 20% of available bars
 - OOS: most recent 20% of available bars
@@ -244,11 +252,36 @@ Per-period columns: `period`, `n_fires`, `DR`, `total_return`, `max_DD`, `win_ra
 
 ```
 SHIP strategy if:
-  (a) avg Sharpe ≥ baseline (Buy-and-hold BTC/JPY)
-  (b) ≥ 4/5 months non-negative
+  (a) annualised EQUITY Sharpe ≥ buy-and-hold's own, in BOTH the IS and OOS splits
+      (same equity-path metric for single- and multi-position; each split vs its
+       OWN B&H Sharpe — IS-vs-IS, OOS-vs-OOS)
+  (b) per-period non-negative fraction ≥ buy-and-hold's own
+      (RELATIVE consistency gate, bucketed by calendar quarter)
 ```
 
 Pre-register this gate in code BEFORE seeing results. Do not change after.
+
+> **Why (a) is both-splits, equity-Sharpe, and split-matched** (tightened 2026-06-07).
+> Gate (a) was IS-only and, on the single-position path, compared a *per-trade* Sharpe
+> to **0** (not to B&H) — two holes. It now uses the annualised **equity-path** Sharpe
+> (scale-invariant, so identical for single- and multi-position) and requires it to
+> clear B&H in **both** splits, **each split vs its own B&H** (IS-vs-IS, OOS-vs-OOS).
+> The split-matching matters: in the current OOS window BTC *fell* (B&H OOS Sharpe
+> ≈ −0.60), so a strategy clears the OOS leg by beating a *falling* market — the
+> displaced-capital principle, not an absolute OOS floor. (Beware comparing OOS
+> strategy Sharpe to *IS* B&H — that is the apples-to-oranges trap.)
+
+> **Why (b) is relative, not an absolute 80%** (revised 2026-06-07; see
+> `docs/evaluation_criteria.md` §6.4). Both ship criteria should obey the project's
+> displaced-capital philosophy ("benchmark = B&H, not cash/absolutes"). An absolute
+> "≥ 80% (4/5) periods non-negative" demands the strategy be *more consistent than
+> buy-and-hold itself* — B&H is non-negative in only ~62% of in-sample quarters, so
+> 80% is unreachable for a lumpy trend-ride/diversifier (per-trade DR ~0.35) even
+> when its edge is real. The gate now requires non-negativity in **≥ as many quarters
+> as B&H** over the same window — still catches a one-regime fragile strategy (it
+> would trail B&H's consistency) without the absolute bias against diversifier
+> payoffs. Quarter = the frequency-adaptive period for these ~24–175 trade/yr
+> strategies (§6.4). Implemented in `src/backtest/cycle.py::_quarter_consistency`.
 
 ---
 

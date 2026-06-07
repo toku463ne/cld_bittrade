@@ -52,6 +52,11 @@ class MeasuredFire:
 def split_in_out_sample(bars: list[Bar]) -> tuple[list[Bar], list[Bar]]:
     """Split bars into in-sample / OOS by the most-recent-20% rule.
 
+    The canonical split for the *already-shipped* strategies (do not change it for
+    them — that would be goalpost-moving). For evaluating **new** ideas in the
+    idea/exploration stage, prefer :func:`split_lockbox` (a fixed pre-registered
+    holdout) so the OOS is honest without waiting weeks for live paper-forward.
+
     Args:
         bars: Time-ordered bars.
 
@@ -62,6 +67,38 @@ def split_in_out_sample(bars: list[Bar]) -> tuple[list[Bar], list[Bar]]:
         return [], []
     cut = int(len(bars) * (1.0 - OOS_FRACTION))
     return bars[:cut], bars[cut:]
+
+
+# Fixed idea-stage lockbox OOS (pre-registered 2026-06-07). Tune NEW ideas only on
+# bars before LOCKBOX_OOS_START; evaluate once on [start, end). A historical holdout
+# gives an honest OOS instantly — far faster than waiting for live paper-forward — at
+# the cost that reusing it across many ideas erodes it (so the eventual *finalist*
+# still earns a fresh live-forward check before real capital). See eval_criteria §6.5.
+LOCKBOX_OOS_START = pd.Timestamp("2025-04-01", tz="Asia/Tokyo")
+LOCKBOX_OOS_END = pd.Timestamp("2026-04-01", tz="Asia/Tokyo")
+
+
+def split_lockbox(
+    bars: list[Bar],
+    start: pd.Timestamp = LOCKBOX_OOS_START,
+    end: pd.Timestamp = LOCKBOX_OOS_END,
+) -> tuple[list[Bar], list[Bar]]:
+    """Date-windowed split: IS = bars before ``start``; OOS = ``[start, end)``.
+
+    The idea-stage holdout (default 2025-04-01 → 2026-04-01). Bars at/after ``end``
+    are excluded from both (a thin live-forward buffer).
+
+    Args:
+        bars: Time-ordered bars.
+        start: OOS window start (inclusive).
+        end: OOS window end (exclusive).
+
+    Returns:
+        ``(in_sample, oos)``.
+    """
+    in_s = [b for b in bars if pd.Timestamp(b.timestamp) < start]
+    oos = [b for b in bars if start <= pd.Timestamp(b.timestamp) < end]
+    return in_s, oos
 
 
 def _regime_labels(df: pd.DataFrame, atr_period: int = 14, avg_period: int = 50) -> pd.Series:

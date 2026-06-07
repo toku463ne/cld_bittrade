@@ -22,9 +22,18 @@ from src.exit.rules import OpenPosition, evaluate_exit, tp_sl_levels
 from src.indicators import atr
 from src.strategy.base import Strategy
 
-# bitFlyer Lightning FX_BTC_JPY taker fee (worst case, < 1B JPY / 30-day volume).
-# Lower this if 30-day volume crosses a tier: ~0.0007 (mid), ~0.0003 (highest).
-DEFAULT_FEE_RATE = 0.001
+# Per-side TAKER cost as a fraction of price. bitFlyer FX_BTC_JPY (now Crypto CFD,
+# formerly Lightning FX) has **0% trading commission** — verified from the official
+# API docs (gettradingcommission returns commission: 0). The real taker cost is
+# therefore SLIPPAGE: crossing the half-spread on each side. ~1-2 bps in calm
+# markets, wider (10-20 bps) in volatile bursts; situational SWAP (~0.04%/day, only
+# if held across the daily clearing) and SFD (only if CFD deviates ≥5% from spot)
+# are NOT modelled here. A MAKER would instead EARN this spread (negative cost).
+# NOTE: the prior value 0.001 (0.1%/side) was the bitFlyer SPOT fee, wrongly applied
+# to this commission-free venue — it over-penalised every backtest by ~10x. 0.0002
+# (2 bps/side) is a conservative calm-market central estimate; sweep it to check
+# sensitivity (see src/backtest/analysis/cost_sensitivity_rerun.py).
+DEFAULT_FEE_RATE = 0.0002
 
 
 @dataclass(slots=True)
@@ -121,6 +130,7 @@ class Simulator:
                 pos_cfg = pending.exit_config or exit_cfg
                 pos.tp_price, pos.sl_price = tp_sl_levels(pos, pos_cfg)
                 pos.ref_time, pos.ref_price = pending.ref_time, pending.ref_price
+                pos.ref2_time, pos.ref2_price = pending.ref2_time, pending.ref2_price
                 entry_time = bar.timestamp
                 entry_idx = i
                 pending = None
@@ -207,4 +217,6 @@ class Simulator:
             sl_price=pos.sl_price,
             ref_time=pos.ref_time,
             ref_price=pos.ref_price,
+            ref2_time=pos.ref2_time,
+            ref2_price=pos.ref2_price,
         )

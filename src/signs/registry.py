@@ -8,6 +8,12 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.signs.base import Sign
+from src.signs.density_band import DensityBandSign
+from src.signs.density_breakout import DensityBreakoutSign
+from src.signs.density_breakout_acc import DensityBreakoutAccSign
+from src.signs.density_breakout_clearair import DensityBreakoutClearairSign
+from src.signs.density_breakout_vol import DensityBreakoutVolSign
+from src.signs.density_volwall_breakout import DensityVolwallBreakoutSign
 from src.signs.ema_atr_breakout import EmaAtrBreakoutSign
 from src.signs.ema_cross import EmaCrossSign
 from src.signs.zigzag_bounce import ZigzagBounceSign
@@ -19,6 +25,12 @@ SIGN_REGISTRY: dict[str, Callable[[], Sign]] = {
     EmaCrossSign.name: EmaCrossSign,
     EmaAtrBreakoutSign.name: EmaAtrBreakoutSign,
     ZigzagBounceSign.name: ZigzagBounceSign,
+    DensityBandSign.name: DensityBandSign,
+    DensityBreakoutSign.name: DensityBreakoutSign,
+    DensityBreakoutAccSign.name: DensityBreakoutAccSign,
+    DensityBreakoutClearairSign.name: DensityBreakoutClearairSign,
+    DensityBreakoutVolSign.name: DensityBreakoutVolSign,
+    DensityVolwallBreakoutSign.name: DensityVolwallBreakoutSign,
 }
 
 
