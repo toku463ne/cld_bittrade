@@ -164,6 +164,15 @@ gates):
   (Strategy A), proceed with B only (or pick a fresh A family).
 - B family chosen: **Dynamic Range-Detected Grid Trading** (range fade inside the density
   tight box; capped grid of resting limits; flatten on breakout).
-- B-kill-1 (cost/turnover) threshold: _TBD before probe_
-- B-kill-2 (breakout-tail / max-DD) threshold: _TBD before probe_
+- **B-kill-1 cost/turnover (pre-registered 2026-06-07, before results)** — the grid's net
+  P&L per range episode (per-level oscillation captures + the flatten-on-breakout P&L) must be
+  **> 0 in BOTH the early and late half**, net of cost = **0.04%/day funding/position + 10 bp
+  round-trip/fill** spread, AND **≥ 50% of episodes net-profitable**. Probe params: range =
+  density tight box (`window=168, max_band_pct=0.03`), `n=6` symmetric levels, breakout buffer
+  `0.10×band`, episode cap `240` bars; report across `n∈{4,6,8}` for sanity. Fail either half
+  or <50% episodes → KILL B.
+- **B-kill-2 breakout-tail / max-DD (pre-registered)** — report the breakout-loss distribution;
+  require the **worst single-episode loss ≤ ~3× the median winning episode** (bounded tail) and
+  the grid **net-positive across the 2022 crash and 2024 bull** sub-periods. Full check at
+  Stage 3 on the built strategy; the Stage-1 probe surfaces the tail.
 - Per-strategy ship/consistency/correlation thresholds: as in the gates table above.
