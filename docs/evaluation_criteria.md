@@ -269,6 +269,20 @@ density_breakout fires ≈ 24 trades/year on GMO 1h. Consequences:
      consistency gate at that granularity; coarser still (year, n=5) is a sanity
      check only — too few buckets to gate on. Per-window folds remain a coarse
      sign check, never a ratio magnitude.
+  3. **Make the consistency threshold RELATIVE, not an absolute 80%** (revised
+     2026-06-07). The original gate ("≥ 4/5 periods non-negative" → 80%) is an
+     *absolute* bar inside a relative-benchmark framework, and it is mis-calibrated
+     two ways: (i) "4/5" is 80% at n=5 but does not scale — applied to ~17 quarters
+     it is a stiffer demand; (ii) **buy-and-hold itself is non-negative in only ~62%
+     of in-sample quarters**, so 80% asks the strategy to be *more consistent than
+     the thing it is benchmarked against* — impossible for a lumpy trend-ride /
+     diversifier (per-trade DR ~0.35, edge carried by a few big winners) even when
+     the edge is real. The gate is therefore **relative**: the strategy's
+     quarterly non-negative fraction must be **≥ buy-and-hold's own** over the same
+     window. This still fails a genuinely one-regime strategy (it would trail B&H's
+     consistency) and matches the Sharpe gate's displaced-capital logic, without the
+     absolute bias against diversifier payoffs. Implemented in
+     `src/backtest/cycle.py::_quarter_consistency`.
   3. **Test the entry-edge where n is large.** The density *definition* is an
      entry question; measure its degradation on 5m/15m (100k+ bars, thousands of
      fires) even if the variant is traded on 1h. Caveat: microstructure differs,

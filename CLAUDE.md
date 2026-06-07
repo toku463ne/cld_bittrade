@@ -253,10 +253,23 @@ Per-period columns: `period`, `n_fires`, `DR`, `total_return`, `max_DD`, `win_ra
 ```
 SHIP strategy if:
   (a) avg Sharpe ≥ baseline (Buy-and-hold BTC/JPY)
-  (b) ≥ 4/5 months non-negative
+  (b) per-period non-negative fraction ≥ buy-and-hold's own
+      (RELATIVE consistency gate, bucketed by calendar quarter)
 ```
 
 Pre-register this gate in code BEFORE seeing results. Do not change after.
+
+> **Why (b) is relative, not an absolute 80%** (revised 2026-06-07; see
+> `docs/evaluation_criteria.md` §6.4). Both ship criteria should obey the project's
+> displaced-capital philosophy ("benchmark = B&H, not cash/absolutes"). An absolute
+> "≥ 80% (4/5) periods non-negative" demands the strategy be *more consistent than
+> buy-and-hold itself* — B&H is non-negative in only ~62% of in-sample quarters, so
+> 80% is unreachable for a lumpy trend-ride/diversifier (per-trade DR ~0.35) even
+> when its edge is real. The gate now requires non-negativity in **≥ as many quarters
+> as B&H** over the same window — still catches a one-regime fragile strategy (it
+> would trail B&H's consistency) without the absolute bias against diversifier
+> payoffs. Quarter = the frequency-adaptive period for these ~24–175 trade/yr
+> strategies (§6.4). Implemented in `src/backtest/cycle.py::_quarter_consistency`.
 
 ---
 

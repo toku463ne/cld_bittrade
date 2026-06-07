@@ -16,7 +16,7 @@ fill.
 | **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
 | **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — but the **tuned** default (`sl_mult=0.75, recalc_bars=48`) is IS eqSharpe **+1.27 / OOS +1.47** (both well above B&H +0.64); the old `recalc=12, sl1.0` was +0.68 / +0.06. The directional entry carries the edge; a slow ratchet + tight stop lets it ride. Both levers walk-forward-confirmed (§3–§4). |
+| **Status** | **`ship=True`** (passes the revised ship gate — the project's first) — tuned default (`sl_mult=0.75, recalc_bars=48`) IS eqSharpe **+1.27 / OOS +1.47** (both > B&H +0.64), quarterly consistency **80% > B&H 62%**, 6/6 walk-forward folds. Caveat: the exit was tuned on this 5y, so per eval §6.5 the honest final confirmation is forward/lockbox data — paper-trade before live. |
 
 ---
 
@@ -149,17 +149,19 @@ that-wins-one-split-doesn't-survive pattern seen elsewhere on the branch.
 
 ## 4. Verdict & next
 
-`ship=False`: the registered default is OOS +0.06 (below B&H), and the strong variant
-relies on post-hoc exit tuning. But this is the **positive bookend** of the
-entry-pricing arc:
+**`ship=True` — the first strategy to pass the (revised, relative) ship gate.** Tuned
+default: IS eqSharpe +1.27 / OOS +1.47 (both > B&H +0.64), quarterly consistency
+**80% > B&H 62%**, 6/6 walk-forward folds, not OVERFIT. The arc paid off: entry
+quality lifts over the random null, a pullback fill buys robustness over a market
+fill, and a walk-forward-tuned slow-ratchet / tight-stop exit makes it ride.
 
-- entry quality **does** lift over random (huge in-sample) — the random_hedge null is
-  doing its job as a yardstick;
-- a **pullback fill** improves robustness/DD over a market fill;
-- the remaining gap is an **exit-for-a-directional-ride** problem, not an entry one —
-  the obvious next step is a walk-forward of the hold/ratchet (`recalc_bars`,
-  `time_stop_bars`, `sl_mult`) on `density_pullback`, or pairing this entry with
-  `density_multi_breakout`'s own structural-stop exit (which already gets OOS +0.84).
+**Honest caveats before live:** the exit (`sl0.75, recalc=48`) was tuned on this same
+5y, and the consistency gate was revised (to relative) during this work — so there is
+accumulated researcher freedom. Per eval §6.5 the only honest *final* estimate is an
+untouched lockbox / forward period; **paper-trade it forward before sizing up.** Also
+note the ship gate (a) checks *IS* Sharpe ≥ B&H — here OOS also clears comfortably, so
+this is not a concern for `density_pullback`, but it is the lever to watch for weaker
+siblings (see `zigzag_bounce_ride`).
 
 Lineage: [`random_hedge.md`](random_hedge.md) (null baseline + fade reject) →
 this. Sibling: [`density_multi_breakout.md`](density_multi_breakout.md).

@@ -15,7 +15,7 @@ trails it in strong bulls).
 | **Indicator** | `src/indicators/density.py` (`time_at_price_profile`, `value_area`) |
 | **Default config** | `window=168, max_band_pct=0.03, max_slots=5, target_min_dist_frac=1.5` (walk-forward-robust + cost-robust) |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — clears Sharpe-vs-B&H but fails the ≥80%-periods consistency gate. IS eqSharpe **+0.90** / OOS **+0.84** vs B&H **+0.64**. See §5. |
+| **Status** | `ship=False` — clears Sharpe-vs-B&H (IS eqSharpe **+0.90** / OOS **+0.84** vs B&H **+0.64**) but **just misses** the revised *relative* consistency gate: non-negative in **60% of IS quarters vs B&H's 62%** (one quarter short). See §5. |
 
 ---
 

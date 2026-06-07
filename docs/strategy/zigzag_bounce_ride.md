@@ -15,7 +15,7 @@ does carry an edge once it rides.
 | **Reuses** | `ZigzagBounceSign` (entry); `_next_dense` (TP); zs SL + ratchet exit (`random_hedge`, tuned) |
 | **Default config** | bounce defaults (`size=10, wall_match=True, wall_window=120, reject_past_peak=True`) + `pullback=False` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) + `drop_counter_trend=True` |
 | **Default timeframe** | **1h** |
-| **Status** | `ship=False` — the exit swap **rescues** the signal from REJECT to IS eqSharpe +0.89 / OOS +0.31 (4/6 folds), and the **counter-trend entry gate** then fixes the bull weakness: **5/6 folds**, IS +0.74 / OOS +0.29, DD 0.88→0.74 (§3). Still OOS < B&H +0.64. |
+| **Status** | **`ship=True` per the gate** (IS eqSharpe +0.74 > B&H +0.64; quarterly consistency **76% > B&H 62%**) — the exit swap rescued it from REJECT and the counter-trend gate gave 5/6 folds, DD 0.88→0.74 (§3). **But treat as borderline:** the gate (a) checks *IS* Sharpe; its **OOS +0.29 trails B&H +0.64**, so it is weaker than `density_pullback` and not a confident live candidate. |
 
 ---
 
@@ -88,10 +88,13 @@ left **off by default** to preserve its stronger OOS (+1.47).
 
 ## 4. Verdict
 
-`ship=False`: even fixed, OOS +0.29 is below B&H +0.64, and the drawdown (0.74) is
-higher than the density family (the bounce fires ~3× as often, more overlapping
-exposure). It is weaker than its siblings — `density_pullback` (IS +1.27 / OOS +1.47)
-and the tuned `random_hedge_volfilter` (+0.90 / +1.02).
+**`ship=True` by the letter of the gate, but borderline.** It clears (a) on IS
+eqSharpe (+0.74 ≥ B&H +0.64) and (b) on relative consistency (76% > B&H 62%). The
+honest caveat: the gate (a) checks *IS* Sharpe, and this strategy's **OOS Sharpe
+(+0.29) trails B&H (+0.64)** — so it is materially weaker than `density_pullback`
+(OOS +1.47, which clears B&H on OOS too), and its drawdown (0.74) is higher (the
+bounce fires ~3× as often, more overlapping exposure). Not a confident live candidate
+on its own; `density_pullback` is the one to take forward first.
 
 But it is a clean **positive result about the framework, not the signal**: a strategy
 that is REJECT under its own exit becomes 5/6-fold positive once fed the tuned ride

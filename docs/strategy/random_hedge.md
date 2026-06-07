@@ -297,9 +297,13 @@ OOS.)
 | 2025 | 79 | 0.359 | +0.125 | 0.106 | +0.070 | +0.269 |
 | 2026 | 52 | 0.354 | +0.101 | 0.113 | +0.060 | +0.303 |
 
-Still `ship=False` for the consistency gate (11/17 quarters = 65% < 80%), but this is
-the strongest random_hedge-family config: a bad-entry *risk* gate plus a tight-stop /
-slow-ratchet exit, IS +0.90 / OOS +1.02, positive in **5/5 IS years and 2/2 OOS years**.
+**Ship verdict (revised relative gate — non-neg quarters ≥ B&H's ~62%, see eval §6.4):**
+a **borderline near-miss**. Clears (a) on Sharpe (IS +0.90 / OOS +1.02 > B&H +0.64),
+but the consistency is seed-sensitive: at the cycle's `seed=0` it is 59% (just under
+B&H 62% → `ship=False`); the 8-seed mean is ~65% (would pass). So it sits right on the
+B&H consistency line — call it the strongest *non*-shipping config, behind
+`density_pullback` (which clears both gates cleanly). It is positive in **5/5 IS years
+and 2/2 OOS years**.
 
 ## 7. Better-priced entry — density-edge limit pair (`random_hedge_density`, REJECT)
 
