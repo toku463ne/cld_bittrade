@@ -130,16 +130,24 @@ gates):
 
 ---
 
-## Sequencing & current status
+## Sequencing & current status  (updated 2026-06-07, session save)
 
-- **Now:** density_pullback at 0.001 lot accruing its forward record; reserve in BTC.
-  BCH 1h import (Strategy A Stage 0) running.
-- **A:** Stage 0 (import BCH) → Stage 1 probe (A2 ratio reversion primary) → go/no-go.
-  *In progress.*
-- **B (Dynamic Range-Detected Grid):** chosen. Follows A; reuses the density box detector
-  + the limit-order harness. Expected low/negative correlation to density_pullback (its
-  mechanical complement) — that correlation is itself a Stage-5 confirmation, not an
-  assumption.
+- **density_pullback:** shipped (revised gate); at 0.001 lot accruing its forward record
+  via the weekly cron; reserve in BTC.
+- **Strategy A (BCH/BTC):** Stage 0 import was **in progress** (background; BCH 1h, ~through
+  2023 when last checked). **Smoke tests (partial data) point to KILL:** `log(BCH/BTC)`
+  half-life ~5000+ bars (drifts, doesn't revert), A2 reversion 0/9 cells, A2′ momentum 0/9,
+  A1 lead-lag ≈ 0. **PENDING on import completion** (probes built, thresholds pre-registered):
+  run (1) coverage verification BCH∩BTC, (2) `bch_btc_probe --mode reversion` (A2 verdict),
+  (3) `bch_btc_probe --mode momentum` (A2′ verdict). If all fail → KILL Strategy A.
+- **Strategy B (grid):** Stage-1 economics probe (`grid_range_probe.py`) **FAILED B-kill-1**
+  on density boxes (net −0.010/episode, 24% profitable, both halves negative, tail 4.8×,
+  2022/2024 negative). Root cause: the density box is *breakout-selected* → grid-fading it is
+  adversely selected. **OPEN DECISION (awaiting user):** (a) probe **B′** = same grid on a
+  *hold-prone* detector (high Choppiness / low ADX) — one-knob principled fix; (b) kill grid,
+  pick a new orthogonal family (seasonality / vol-regime); (c) pause new strategies and let
+  density_pullback's forward record accrue. User was clarifying the question when the session
+  was saved.
 - Capital only flows to a strategy after Stages 1–6 pass; each scaled in steps as its
   forward Sharpe accrues (certainty-asymmetry discipline — backtest ≠ realized).
 
