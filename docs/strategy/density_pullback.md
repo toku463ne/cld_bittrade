@@ -162,8 +162,15 @@ absolute Sharpe.
 **Honest caveats before live:** the exit (`sl0.75, recalc=48`) was tuned on this same
 5y, and both ship gates were revised (consistency → relative; gate (a) → both-splits)
 during this work — so there is accumulated researcher freedom. Per eval §6.5 the only
-honest *final* estimate is an untouched lockbox / forward period; **paper-trade it
-forward before sizing up.**
+honest *final* estimate is an untouched lockbox / forward period.
+
+**Forward confirmation (in progress).** `src/backtest/paper_forward.py` freezes a
+**lockbox boundary at the tuning cutoff `2026-06-02 05:00 JST`** (frozen 2026-06-07)
+and scores the strategy only on bars *after* it — the genuine forward record, which
+grows as fresh GMO data is imported. As of 2026-06-07 the verdict is **ACCRUING**
+(~5 days / 0 post-boundary trades — far below the 20-trade / 60-day minimum). Re-run
+after importing more data; **do not size up past the 0.001 lot until it reads
+CONFIRMED** (forward equity Sharpe ≥ B&H over the post-boundary window).
 
 Lineage: [`random_hedge.md`](random_hedge.md) (null baseline + fade reject) →
 this. Sibling: [`density_multi_breakout.md`](density_multi_breakout.md).

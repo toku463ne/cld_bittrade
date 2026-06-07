@@ -1,0 +1,118 @@
+"""Forward (lockbox) paper-trade evaluator for a shipped strategy.
+
+`density_pullback` passed the ship gate, but its exit was tuned on the full 5y and
+both ship gates were revised during that work — so per ``evaluation_criteria.md`` §6.5
+the only *honest* final estimate is performance on data the strategy never touched.
+This runner freezes a **lockbox boundary** at the tuning-data cutoff and scores the
+strategy on **bars strictly after it** — the genuine forward record, which accrues as
+fresh GMO data is imported (``python -m src.data.import_gmo``). It is *paper*: it runs
+the normal simulator, places no orders, and reads only the public backtest data.
+
+Honesty rules baked in:
+
+- The boundary is a frozen constant (the cache's last bar at lockbox creation), so the
+  forward set can only grow and is never silently re-tuned.
+- The strategy still sees full history for warm-up; only trades **entered after the
+  boundary** and the **post-boundary equity path** are scored.
+- Below a minimum sample (trades and calendar span) the verdict is withheld
+  ("ACCRUING") — a forward test confirms nothing until it has enough data.
+
+Re-run as data accrues::
+
+    uv run --env-file .env.bt python -m src.data.import_gmo --from <recent> --to <today> --timeframe 1h
+    uv run --env-file .env.bt python -m src.backtest.paper_forward --strategy density_pullback --product GMO_BTC_JPY
+"""
+
+from __future__ import annotations
+
+import argparse
+
+import pandas as pd
+from loguru import logger
+
+from src.backtest.metrics import annualized_sharpe_from_levels, portfolio_metrics
+from src.core.types import Timeframe
+from src.data.cache import load_cache
+from src.logging_setup import configure_logging
+from src.simulator.multi_simulator import MultiSimulator
+from src.strategy.registry import get_strategy
+
+# Frozen lockbox: the last bar present in the cache when density_pullback was
+# declared ship=True (tuning cutoff). Bars at or before this are "seen"; only bars
+# strictly after it count as forward. DO NOT move this — moving it re-tunes the test.
+LOCKBOX_BOUNDARY = pd.Timestamp("2026-06-02 05:00:00+09:00")
+LOCKBOX_FROZEN_ON = "2026-06-07"
+
+MIN_FWD_TRADES = 20  # below this, a forward Sharpe is too noisy to read
+MIN_FWD_DAYS = 60  # and the span must cover a couple of months
+
+
+def run(strategy_name: str, tf: Timeframe, *, product: str | None) -> None:
+    """Score ``strategy_name`` on the post-lockbox forward bars; withhold if scant."""
+    cache = load_cache(tf, product=product)
+    bars = cache.bars
+    if not bars:
+        raise RuntimeError("no bars in cache")
+    ppy = (365 * 24 * 3600) / tf.seconds
+
+    # Index of the first forward bar (strictly after the frozen boundary).
+    fwd_start = next(
+        (i for i, b in enumerate(bars) if pd.Timestamp(b.timestamp) > LOCKBOX_BOUNDARY),
+        len(bars),
+    )
+    n_fwd_bars = len(bars) - fwd_start
+    fwd_days = n_fwd_bars * tf.seconds / 86400.0
+    logger.info(
+        "{} forward/lockbox: boundary {} (frozen {}); cache ends {}",
+        strategy_name, LOCKBOX_BOUNDARY, LOCKBOX_FROZEN_ON, bars[-1].timestamp,
+    )
+    logger.info("  forward bars: {} (~{:.1f} days)", n_fwd_bars, fwd_days)
+
+    # Run the strategy over the FULL series (full warm-up/history); score only the
+    # forward slice of the equity path and trades entered after the boundary.
+    res = MultiSimulator(get_strategy(strategy_name)).run(bars)
+    fwd_curve = res.equity_curve[fwd_start:]
+    fwd_trades = [t for t in res.trades if pd.Timestamp(t.entry_time) > LOCKBOX_BOUNDARY]
+
+    es = annualized_sharpe_from_levels(fwd_curve, ppy) if len(fwd_curve) >= 3 else 0.0
+    bh = annualized_sharpe_from_levels(
+        [b.close for b in bars[fwd_start:]], ppy, pct=True
+    ) if n_fwd_bars >= 3 else 0.0
+    m = portfolio_metrics(fwd_trades) if fwd_trades else None
+
+    logger.info("  forward trades (entered post-boundary): {}", len(fwd_trades))
+    if m is not None:
+        logger.info(
+            "  forward eqSharpe {:+.3f} vs B&H {:+.3f} | ret {:+.4f} | DD {:.4f} | DR {:.3f}",
+            es, bh, m.total_return, m.max_dd, m.win_rate,
+        )
+
+    enough = len(fwd_trades) >= MIN_FWD_TRADES and fwd_days >= MIN_FWD_DAYS
+    if not enough:
+        logger.warning(
+            "  VERDICT: ACCRUING — need >= {} trades AND >= {} days (have {} / {:.0f}). "
+            "Re-import fresh data and re-run; no confirmation until then.",
+            MIN_FWD_TRADES, MIN_FWD_DAYS, len(fwd_trades), fwd_days,
+        )
+        return
+    confirmed = es >= bh
+    logger.info(
+        "  VERDICT: {} — forward eqSharpe {:+.3f} {} B&H {:+.3f}",
+        "CONFIRMED" if confirmed else "NOT CONFIRMED",
+        es, ">=" if confirmed else "<", bh,
+    )
+
+
+def main() -> None:
+    """CLI entrypoint."""
+    parser = argparse.ArgumentParser(description="Forward/lockbox paper-trade evaluator.")
+    parser.add_argument("--strategy", default="density_pullback")
+    parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="1h")
+    parser.add_argument("--product", default=None)
+    args = parser.parse_args()
+    configure_logging()
+    run(args.strategy, Timeframe(args.timeframe), product=args.product)
+
+
+if __name__ == "__main__":
+    main()
