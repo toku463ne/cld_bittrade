@@ -12,7 +12,7 @@ the edge: on 1h BTC an **RSI extreme is a continuation signal**, not a reversion
 | **Entry** | RSI(14) crosses **into oversold → SHORT**, **into overbought → LONG** (continuation; one per excursion). `reversal=True` = the rejected fade variant. |
 | **Exit** | ride exit (zs-band SL `sl_mult=0.75`, next-dense TP, slow ratchet `recalc=48`, time stop 120) + **`max_slots=3`** (DD development, §3) |
 | **Default timeframe** | **1h** |
-| **Status** | **idea-stage candidate** (own-merit pass). Cost-robust, beats B&H both lockbox splits, **5/6 walk-forward folds**. Not yet ship-gated / forward-checked. |
+| **Status** | **DEMOTED** (2026-06-07). Looked like an own-merit hit (OOS +0.97, 5/6 folds) but the lockbox OOS is a directional window: against the **random-hedge null floor (~+0.91)** its OOS lift is only **+0.06 ≈ null** — its IS edge (+0.51 over null) does not survive OOS. Not a candidate; kept registered for reference. |
 
 ---
 
@@ -56,9 +56,14 @@ and a touch of IS Sharpe. Honest verdict on the DD: **rsi's drawdown is structur
 reducible than vol_expansion's** — the main lever (stop) overfits, so 0.61 is about as low as
 it goes without sacrificing OOS edge.
 
-## 4. Verdict & next
+## 4. Verdict — DEMOTED
 
-A genuine **own-merit edge** — cost-robust, beats B&H in both lockbox splits, 5/6 folds, DD
-now 0.61. Next: formal ship-gate (`run_cycle`) and a fresh live-forward before capital.
-Lineage: reuses the `random_hedge` ride exit; sibling of
-[`density_pullback.md`](density_pullback.md), [`vol_expansion_ride.md`](vol_expansion_ride.md).
+Looked like an own-merit edge (cost-robust, beats B&H both splits, 5/6 folds) — but that read
+used B&H as the floor. The lockbox OOS is a **directional** window where a random hedge + ride
+exit scores ~+0.91 for free (see `benchmark_table.md` null-floor section), and rsi's OOS is only
+**+0.06 over that null** — i.e. **no real OOS edge**. Its IS edge (+0.51 over null) is genuine but
+**does not generalise** (the classic IS-overfit signature also seen in its `sl_mult` sweep). So it
+is **demoted** — not queued for forward/capital, kept registered for reference. The honest take:
+*on directional windows, judge OOS by lift over the random-hedge null, not vs B&H.* Lineage:
+reuses the `random_hedge` ride exit; sibling of [`density_pullback.md`](density_pullback.md),
+[`vol_expansion_ride.md`](vol_expansion_ride.md).
