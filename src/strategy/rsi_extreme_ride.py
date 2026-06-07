@@ -36,6 +36,10 @@ class RsiExtremeRideStrategy(RandomHedgeStrategy):
         "(one per excursion); zs SL + next-dense TP + slow ratchet. reversal=True = "
         "the rejected mean-reversion variant."
     )
+    # DD development: a concurrency cap is the only lever that cuts DD *and* generalises
+    # (a tighter stop overfits IS / kills OOS here; drop_counter_trend doesn't help).
+    # Capping clustered exposure during RSI-extreme bursts: IS DD 0.73→0.63, OOS +0.62→+0.71.
+    max_slots = 3
 
     def __init__(
         self,

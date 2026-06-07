@@ -19,7 +19,7 @@ basis** (snapshot **2026-06-07**, GMO_BTC_JPY 1h):
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **density_pullback** | 428 | **+1.39** | 0.36 | **0.34** | +0.0048 | +1.11 | 0.15 | +0.90 | **6/6** | +0.04 | +1.00 | ship✓ |
 | **vol_expansion_ride** | 526 | **+1.56** | 0.21 | 0.41 | +0.0034 | +1.27 | 0.12 | +0.99 | 4/6 | −0.04 | +0.16 | candidate |
-| **rsi_extreme_ride** | 1001 | +1.33 | 0.34 | 0.69 | +0.0044 | +0.88 | 0.44 | +0.62 | **6/6** | −0.19 | +0.15 | candidate |
+| **rsi_extreme_ride** | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.18 | +0.16 | candidate |
 | **random_hedge_volfilter** | 518 | +0.98 | 0.36 | **0.27** | +0.0028 | **+1.69** | 0.09 | **+1.34** | **6/6** | −0.09 | +0.15 | near-miss* |
 | **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | **6/6** | −0.08 | +0.17 | candidate |
 | **density_multi_breakout** | 439 | +1.03 | 0.40 | 0.56 | +0.0063 | +0.32 | 0.42 | +0.20 | 5/6 | +0.03 | +0.68 | weak (cost) |
@@ -37,8 +37,9 @@ All others are deterministic.
   DD among the strong (0.34), 6/6 folds**.
 - **vol_expansion_ride** has the **highest IS (+1.56)** and a strong cost-robust OOS (+0.99), but
   only 4/6 folds (weak in raging bulls).
-- **rsi_extreme_ride** and **zigzag_bounce_ride** are **6/6 folds** but carry higher DD (0.69 /
-  0.71); rsi's OOS is more cost-sensitive (+0.62).
+- **rsi_extreme_ride** (DD developed: a concurrency cap `max_slots=3` cut DD 0.69→0.61 and
+  lifted OOS +0.88→+0.97, but cost one WF fold, 6/6→5/6 — the tighter-stop lever *overfit* here,
+  unlike vol_expansion) and **zigzag_bounce_ride** (6/6, DD 0.71) are the higher-DD candidates.
 - **random_hedge_volfilter** *looks* best on this split (OOS +1.69, DD 0.27, +1.34 @10bp) but it
   is seed-0 and OOS-lucky — the 8-seed mean is far more modest; do not over-read it.
 - **density_multi_breakout** is the weakest: OOS only +0.32 and **not cost-robust** (+0.20 @10bp),
