@@ -13,7 +13,7 @@ all died on it), this targets a deliberately **low-frequency, cost-light** trigg
 | **Entry** | volatility **squeeze→expansion**: prior ATR in its low tail (rank ≤ 0.25) and a true-range burst (TR ≥ 2× prior ATR) → ride the burst bar's direction (market, next open) |
 | **Exit** | ride exit with a **tighter stop** (zs-band SL `sl_mult=0.4`, next-dense TP, slow ratchet `recalc=48`, time stop 120) — the DD fix, §3 |
 | **Default timeframe** | **1h** |
-| **Status** | **idea-stage candidate** (not yet ship-gated/forward-checked). Clears lockbox triage but has a high drawdown and 2 weak folds. See §2. |
+| **Status** | **`ship=True`** (formal `run_cycle`, 2026-06-07): IS eqSharpe **+1.49** ≥ B&H +0.64, OOS **+0.90** ≥ B&H −0.90, consistency 65% > 62%. Genuine **lift over the random-hedge null** (canonical OOS +0.90 vs null +0.65; lockbox +0.35) — one of only two candidates that clears the null. Caveat: 4/6 WF (accepted); fresh live-forward still owed before capital. |
 
 ---
 
