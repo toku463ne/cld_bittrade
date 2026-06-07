@@ -1,23 +1,30 @@
-# Study plan — 2 new diversifying strategies
+# Study plan — hunting strategies with genuine edge
 
-Goal: add **two** new strategies for the research-reserve sleeve (the 50% of capital
-held as BTC until validated). Each must independently clear **three** gates before it
-gets reserve capital — pre-registered here *before* results (eval §6):
+**Priority (set 2026-06-07): find ANY strategy with genuine edge first; diversification is
+a *later* concern, once we have several candidates worth combining.** Do **not** pre-gate
+or pre-frame ideas on correlation with density_pullback — that prematurely narrows the
+search before we have enough candidates. Judge each idea **purely on its own merit.**
 
-1. **Ship gate** — annualised **equity Sharpe ≥ buy-and-hold's own in BOTH IS and OOS**
-   (`src/backtest/cycle.py`), AND the **relative quarterly-consistency** gate
-   (non-neg fraction ≥ B&H's). [CLAUDE.md § Ship criteria]
-2. **Forward confirmation** — registered in `src/backtest/paper_forward.py`, run weekly,
-   must read **CONFIRMED** (forward equity Sharpe ≥ B&H over post-lockbox bars) before
-   sizing past the 0.001 lot.
-3. **Diversification gate** — **|correlation| to density_pullback AND to BTC ≲ 0.30**
-   (bar-return correlation). This is the whole point of the sleeve: a high-Sharpe
-   strategy correlated 0.7 with what we already hold adds risk, not diversification.
-   (Measured matrix: `density_multi_breakout` is **0.68** with density_pullback →
-   already excluded as a "new" strategy; it is the same density edge.)
+### Idea-stage triage (own-merit, evaluate fast on the lockbox)
 
-> **Rule:** change one variable at a time (eval §6.6); never iterate against the
-> walk-forward; record every gate threshold in this doc before running.
+An idea is worth promoting if, on the fixed lockbox (`split_lockbox`, IS pre-2025-04 /
+OOS 2025-04→2026-04), evaluated on **untuned/sensible defaults**:
+
+1. **Lockbox OOS Sharpe ≥ buy-and-hold's own** (and IS too) — a real edge on held-out data.
+2. **Cost-robust** — still clears B&H at a realistic ~10 bp round-trip (the recurring killer
+   on this branch); ideally survives 20 bp.
+3. **Drawdown** — acceptable / improvable (report it; it's a development target, not a hard
+   gate).
+
+### Later stages (only for survivors)
+
+- **Combination stage** — *once ≥2 own-merit candidates exist*, measure cross-correlations
+  and build the portfolio (this is where diversification matters — not before).
+- **Capital gate** — formal ship-gate (`cycle.py`) + a fresh **live-forward**
+  (`paper_forward`) before sizing past the 0.001 lot.
+
+> **Rule:** change one variable at a time (eval §6.6); record thresholds before running;
+> evaluate the lockbox once per idea (don't tune on it).
 
 ---
 
@@ -30,7 +37,7 @@ gets reserve capital — pre-registered here *before* results (eval §6):
 | **2. Build** | `signs/<name>.py` + `strategy/<name>.py` (inherit base), register. | — |
 | **3. Ship gate** | `run_cycle` on the traded timeframe (1h default). | Equity Sharpe < B&H in IS *or* OOS → not shippable. |
 | **4. Robustness** | Walk-forward (fixed config across 6 folds), cost-sensitivity sweep, one-knob sanity. | < 4/6 folds positive, or edge dies at stressed cost → demote. |
-| **5. Correlation** | Bar-return corr vs density_pullback + BTC. | \|corr\| > ~0.30 to either → reject (not a diversifier). |
+| **5. Correlation** | Bar-return corr vs density_pullback + BTC. | **Diagnostic only — NOT a kill gate.** Recorded for the later combination stage; an idea with genuine standalone edge is kept regardless of correlation. |
 | **6. Forward** | Add to `paper_forward`; accrue. | Not CONFIRMED → stays at 0.001 lot, no reserve capital. |
 
 Capital is gated **sequentially** (validate → size → next), even though research can run
