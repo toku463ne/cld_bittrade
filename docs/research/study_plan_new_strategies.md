@@ -141,14 +141,13 @@ gates):
   lags. Neither fading nor riding the ratio survives the 2-leg cost at 1h. Per the pre-registered
   rule → drop Strategy A. (A fresh A family — different asset/timeframe — could be revisited, but
   not now.)
-- **Strategy B (grid):** Stage-1 economics probe (`grid_range_probe.py`) **FAILED B-kill-1**
-  on density boxes (net −0.010/episode, 24% profitable, both halves negative, tail 4.8×,
-  2022/2024 negative). Root cause: the density box is *breakout-selected* → grid-fading it is
-  adversely selected. **OPEN DECISION (awaiting user):** (a) probe **B′** = same grid on a
-  *hold-prone* detector (high Choppiness / low ADX) — one-knob principled fix; (b) kill grid,
-  pick a new orthogonal family (seasonality / vol-regime); (c) pause new strategies and let
-  density_pullback's forward record accrue. User was clarifying the question when the session
-  was saved.
+- **Strategy B (grid): KILLED.** Stage-1 (`grid_range_probe.py`) FAILED B-kill-1 on the density
+  box (net −0.010/ep, 24% profitable, tail 4.8×). **B′** swapped in a hold-prone Choppiness
+  detector (chop≥61.8 and 55): it **fixed the tail** (4.8× → 2.7×/2.1×, confirming the
+  adverse-selection diagnosis) but stayed **net-negative** (−0.008/−0.011/ep, 30–33% profitable,
+  both halves negative, 2022/2024 negative) → **B-kill-1 FAIL again**. The grid's turnover cost
+  (~13 fills/episode) + short-gamma breakout losses structurally exceed the oscillation capture.
+  Per the pre-registered rule, **the grid concept is dead.**
 - Capital only flows to a strategy after Stages 1–6 pass; each scaled in steps as its
   forward Sharpe accrues (certainty-asymmetry discipline — backtest ≠ realized).
 
@@ -180,6 +179,12 @@ gates):
   density tight box (`window=168, max_band_pct=0.03`), `n=6` symmetric levels, breakout buffer
   `0.10×band`, episode cap `240` bars; report across `n∈{4,6,8}` for sanity. Fail either half
   or <50% episodes → KILL B.
+- **B′ detector swap (pre-registered 2026-06-07, before results)** — the only change from B is the
+  range *detector*: replace the breakout-prone density box with a **hold-prone** one — a range
+  episode fires when the **Choppiness Index (n=14) ≥ thresh** (sideways), bounds = the rolling
+  `[min low, max high]` over the last `RANGE_LB=48` bars (the recent oscillation range). Test
+  `chop_thresh ∈ {55, 61.8}`. PASS/KILL criteria are **unchanged** (B-kill-1 net>0 both halves &
+  ≥50% profitable; B-kill-2 tail ≤ 3×). If B′ also fails → the grid concept is dead.
 - **B-kill-2 breakout-tail / max-DD (pre-registered)** — report the breakout-loss distribution;
   require the **worst single-episode loss ≤ ~3× the median winning episode** (bounded tail) and
   the grid **net-positive across the 2022 crash and 2024 bull** sub-periods. Full check at

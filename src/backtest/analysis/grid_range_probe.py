@@ -33,6 +33,22 @@ FUNDING_PER_DAY = 0.0004
 SPREAD_RT = 0.0010  # 10 bp round-trip per grid fill
 BREAKOUT_BUF = 0.10  # × band height
 MAX_EP = 240  # episode cap (bars)
+# B' hold-prone detector (Choppiness Index): high = sideways/ranging.
+CHOP_N = 14
+RANGE_LB = 48  # rolling window for the grid bounds (recent oscillation range)
+CHOP_THRESH = 61.8  # Fibonacci "sideways" level
+
+
+def _chop(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, n: int) -> np.ndarray:
+    """Choppiness Index: 100·log10(ΣTR_n / range_n) / log10(n). High = ranging."""
+    import pandas as pd
+
+    h, low, c = pd.Series(highs), pd.Series(lows), pd.Series(closes)
+    prev = c.shift(1)
+    tr = pd.concat([h - low, (h - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+    rng = (h.rolling(n).max() - low.rolling(n).min()).replace(0.0, np.nan)
+    ci = (100.0 * np.log10(tr.rolling(n).sum() / rng) / np.log10(n)).to_numpy()
+    return np.asarray(ci, dtype=float)
 
 
 def _episode(
@@ -78,23 +94,36 @@ def _episode(
     return float(sum(realized)), fills, end
 
 
-def run(tf: Timeframe, *, n: int = 6) -> None:
-    """Detect density-box range episodes, grid-simulate each, report net economics."""
+def run(tf: Timeframe, *, n: int = 6, detector: str = "density", chop_thresh: float = CHOP_THRESH) -> None:
+    """Detect range episodes (density box or hold-prone chop), grid-sim each, report economics."""
     bars = load_cache(tf, product="GMO_BTC_JPY").bars
     highs = [b.high for b in bars]
     lows = [b.low for b in bars]
     closes = np.array([b.close for b in bars], dtype=float)
-    bl, bh = _rolling_bands(highs, lows, WINDOW, N_BINS, COVERAGE)
     nbars = len(bars)
     split_idx = nbars // 2
+    h_arr, l_arr = np.array(highs, dtype=float), np.array(lows, dtype=float)
+    bl, bh = _rolling_bands(highs, lows, WINDOW, N_BINS, COVERAGE) if detector == "density" else (None, None)
+    ci = _chop(h_arr, l_arr, closes, CHOP_N) if detector == "chop" else None
+    start_i = WINDOW
 
     episodes: list[tuple[int, float, int]] = []  # start_idx, net_frac, n_fills
-    i = WINDOW
+    i = start_i
     while i < nbars:
-        lo, hi = float(bl[i]), float(bh[i])
-        if not (hi > lo) or (hi - lo) > MAX_BAND_PCT * closes[i] or not (lo <= closes[i] <= hi):
-            i += 1
-            continue
+        if detector == "density":
+            lo, hi = float(bl[i]), float(bh[i])  # type: ignore[index]
+            if not (hi > lo) or (hi - lo) > MAX_BAND_PCT * closes[i] or not (lo <= closes[i] <= hi):
+                i += 1
+                continue
+        else:  # chop: hold-prone regime; bounds = recent oscillation range
+            if i < RANGE_LB or np.isnan(ci[i]) or ci[i] < chop_thresh:  # type: ignore[index]
+                i += 1
+                continue
+            lo, hi = float(l_arr[i - RANGE_LB : i].min()), float(h_arr[i - RANGE_LB : i].max())
+            bw = (hi - lo) / closes[i]
+            if not (0.005 <= bw <= 0.06) or not (lo <= closes[i] <= hi):
+                i += 1
+                continue
         net, fills, end = _episode(highs, lows, closes, i, lo, hi, n)
         episodes.append((i, net, fills))
         i = end + 1
@@ -106,7 +135,8 @@ def run(tf: Timeframe, *, n: int = 6) -> None:
     early = np.array([e[1] for e in episodes if e[0] < split_idx])
     late = np.array([e[1] for e in episodes if e[0] >= split_idx])
     wins = nets[nets > 0]
-    logger.info("Grid range probe (n={} levels), BTC {} — {} episodes", n, tf.value, len(episodes))
+    logger.info("Grid range probe [detector={}{}] (n={} levels), BTC {} — {} episodes",
+                detector, f" chop>={chop_thresh}" if detector == "chop" else "", n, tf.value, len(episodes))
     logger.info("  net/episode: mean {:+.5f} | total {:+.3f} | %profitable {:.0%} | avg fills {:.1f}",
                 nets.mean(), nets.sum(), float((nets > 0).mean()), np.mean([e[2] for e in episodes]))
     logger.info("  (B-kill-1) early mean {:+.5f} ({} ep) | late mean {:+.5f} ({} ep) -> {}",
@@ -130,9 +160,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stage-1 grid range-fade economics probe.")
     parser.add_argument("--timeframe", choices=[tf.value for tf in Timeframe], default="1h")
     parser.add_argument("--levels", type=int, default=6)
+    parser.add_argument("--detector", choices=["density", "chop"], default="density")
+    parser.add_argument("--chop-thresh", type=float, default=CHOP_THRESH)
     args = parser.parse_args()
     configure_logging()
-    run(Timeframe(args.timeframe), n=args.levels)
+    run(Timeframe(args.timeframe), n=args.levels, detector=args.detector, chop_thresh=args.chop_thresh)
 
 
 if __name__ == "__main__":
