@@ -283,11 +283,20 @@ density_breakout fires ≈ 24 trades/year on GMO 1h. Consequences:
      consistency) and matches the Sharpe gate's displaced-capital logic, without the
      absolute bias against diversifier payoffs. Implemented in
      `src/backtest/cycle.py::_quarter_consistency`.
-  3. **Test the entry-edge where n is large.** The density *definition* is an
+  4. **Test the entry-edge where n is large.** The density *definition* is an
      entry question; measure its degradation on 5m/15m (100k+ bars, thousands of
      fires) even if the variant is traded on 1h. Caveat: microstructure differs,
      so transfer is not guaranteed — use it to rank the *definition's*
      generalization, then confirm on the traded timeframe.
+  5. **Gate (a) is both-splits, equity-Sharpe, split-matched** (tightened
+     2026-06-07). Use the annualised **equity-path** Sharpe (scale-invariant →
+     identical for single- and multi-position; the old single-position path
+     compared a per-trade Sharpe to *0*, not B&H) and require it ≥ B&H in **both**
+     the IS and OOS splits, **each split vs its own B&H** (IS-vs-IS, OOS-vs-OOS).
+     Split-matching is essential: in the current OOS window BTC fell (B&H OOS
+     Sharpe ≈ −0.60), so the OOS leg is cleared by beating a *falling* market — the
+     displaced-capital principle. Never compare OOS strategy Sharpe to *IS* B&H
+     (the apples-to-oranges trap). Implemented in `src/backtest/cycle.py`.
 
 ### 6.5 Walk-forward vs fixed lockbox — complementary roles
 

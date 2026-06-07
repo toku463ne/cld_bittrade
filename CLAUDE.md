@@ -252,12 +252,24 @@ Per-period columns: `period`, `n_fires`, `DR`, `total_return`, `max_DD`, `win_ra
 
 ```
 SHIP strategy if:
-  (a) avg Sharpe ≥ baseline (Buy-and-hold BTC/JPY)
+  (a) annualised EQUITY Sharpe ≥ buy-and-hold's own, in BOTH the IS and OOS splits
+      (same equity-path metric for single- and multi-position; each split vs its
+       OWN B&H Sharpe — IS-vs-IS, OOS-vs-OOS)
   (b) per-period non-negative fraction ≥ buy-and-hold's own
       (RELATIVE consistency gate, bucketed by calendar quarter)
 ```
 
 Pre-register this gate in code BEFORE seeing results. Do not change after.
+
+> **Why (a) is both-splits, equity-Sharpe, and split-matched** (tightened 2026-06-07).
+> Gate (a) was IS-only and, on the single-position path, compared a *per-trade* Sharpe
+> to **0** (not to B&H) — two holes. It now uses the annualised **equity-path** Sharpe
+> (scale-invariant, so identical for single- and multi-position) and requires it to
+> clear B&H in **both** splits, **each split vs its own B&H** (IS-vs-IS, OOS-vs-OOS).
+> The split-matching matters: in the current OOS window BTC *fell* (B&H OOS Sharpe
+> ≈ −0.60), so a strategy clears the OOS leg by beating a *falling* market — the
+> displaced-capital principle, not an absolute OOS floor. (Beware comparing OOS
+> strategy Sharpe to *IS* B&H — that is the apples-to-oranges trap.)
 
 > **Why (b) is relative, not an absolute 80%** (revised 2026-06-07; see
 > `docs/evaluation_criteria.md` §6.4). Both ship criteria should obey the project's

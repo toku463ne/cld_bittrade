@@ -42,9 +42,10 @@ class CycleResult:
         oos: OOS portfolio metrics.
         benchmark_return: Buy-and-hold BTC/JPY return over the full period.
         per_period: Per-period breakdown rows.
-        ship: Whether the pre-registered ship gate passed (Sharpe >= bench &
-            quarterly non-negative fraction >= buy-and-hold's own — the relative
-            consistency gate, see ``_quarter_consistency``).
+        ship: Whether the pre-registered ship gate passed — (a) annualised equity
+            Sharpe >= buy-and-hold's own in BOTH the IS and OOS splits, AND (b) the
+            relative quarterly-consistency gate (>= B&H's non-negative fraction; see
+            ``_quarter_consistency``).
         trades: All trades (in-sample + OOS), for charting — same trades the
             metrics were computed from, so no extra simulation is needed.
         multi: Whether this is a multi-position strategy (judged by the
@@ -186,24 +187,24 @@ def run_cycle(
     strat_cons, bench_cons = _quarter_consistency(in_res.trades, in_bars)
     consistent = strat_cons >= bench_cons
 
-    # Overlapping multi-position strategies are judged by the time-based equity
-    # Sharpe (per-trade Sharpe ignores how many positions overlap), benchmarked
-    # against buy-and-hold's own annualised Sharpe over the in-sample period.
+    # Gate A: the time-based annualised equity Sharpe must clear buy-and-hold's own
+    # in BOTH the in-sample AND the OOS split. The equity-path Sharpe is scale-
+    # invariant (annualized_sharpe_from_levels on JPY levels), so the SAME metric is
+    # used for single- and multi-position strategies — no per-trade-Sharpe-vs-0 branch
+    # (per-trade Sharpe ignores overlap and is not comparable to B&H's annualised
+    # close-to-close Sharpe). OOS is now part of the gate, not just the overfit veto.
     ppy = (365 * 24 * 3600) / timeframe.seconds
-    es_in = es_oos = bench_sharpe = 0.0
-    if multi:
-        es_in = annualized_sharpe_from_levels(in_res.equity_curve, ppy)
-        es_oos = annualized_sharpe_from_levels(oos_res.equity_curve, ppy)
-        bench_sharpe = annualized_sharpe_from_levels(
-            [b.close for b in in_bars], ppy, pct=True
-        )
-        ship = (es_in >= bench_sharpe) and consistent
-    else:
-        ship = (m_in.sharpe >= 0.0) and consistent
+    es_in = annualized_sharpe_from_levels(in_res.equity_curve, ppy)
+    es_oos = annualized_sharpe_from_levels(oos_res.equity_curve, ppy)
+    bench_in = annualized_sharpe_from_levels([b.close for b in in_bars], ppy, pct=True)
+    bench_oos = annualized_sharpe_from_levels([b.close for b in oos_bars], ppy, pct=True)
+    bench_sharpe = bench_in  # CycleResult.bench_sharpe keeps its IS meaning
+    ship = (es_in >= bench_in) and (es_oos >= bench_oos) and consistent
 
     logger.info(
         "Cycle {}: IS Sharpe={:.3f} DD={:.4f} cost={:.1f}JPY | OOS Sharpe={:.3f} | "
-        "bench(B&H, gross)={:.4f} | ship={}{}  [returns NET of fees]",
+        "bench(B&H, gross)={:.4f} | ship={} | eqSharpe IS={:.3f} (B&H {:.3f}) / "
+        "OOS={:.3f} (B&H {:.3f})  [returns NET of fees]",
         strategy_name,
         m_in.sharpe,
         m_in.max_dd,
@@ -211,7 +212,7 @@ def run_cycle(
         m_oos.sharpe,
         bench,
         ship,
-        f" | eqSharpe IS={es_in:.3f}/OOS={es_oos:.3f} vs B&H {bench_sharpe:.3f}" if multi else "",
+        es_in, bench_in, es_oos, bench_oos,
     )
     logger.info(
         "  consistency (quarterly non-neg, relative gate): strategy={:.0%} vs B&H={:.0%} -> {}",

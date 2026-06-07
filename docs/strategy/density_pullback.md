@@ -155,13 +155,15 @@ default: IS eqSharpe +1.27 / OOS +1.47 (both > B&H +0.64), quarterly consistency
 quality lifts over the random null, a pullback fill buys robustness over a market
 fill, and a walk-forward-tuned slow-ratchet / tight-stop exit makes it ride.
 
+It clears gate (a) in **both** splits (IS +1.27 ≥ B&H +0.64, OOS +1.47 ≥ B&H −0.60)
+and on a high margin — its OOS pass is not just "beat a falling market," it is a strong
+absolute Sharpe.
+
 **Honest caveats before live:** the exit (`sl0.75, recalc=48`) was tuned on this same
-5y, and the consistency gate was revised (to relative) during this work — so there is
-accumulated researcher freedom. Per eval §6.5 the only honest *final* estimate is an
-untouched lockbox / forward period; **paper-trade it forward before sizing up.** Also
-note the ship gate (a) checks *IS* Sharpe ≥ B&H — here OOS also clears comfortably, so
-this is not a concern for `density_pullback`, but it is the lever to watch for weaker
-siblings (see `zigzag_bounce_ride`).
+5y, and both ship gates were revised (consistency → relative; gate (a) → both-splits)
+during this work — so there is accumulated researcher freedom. Per eval §6.5 the only
+honest *final* estimate is an untouched lockbox / forward period; **paper-trade it
+forward before sizing up.**
 
 Lineage: [`random_hedge.md`](random_hedge.md) (null baseline + fade reject) →
 this. Sibling: [`density_multi_breakout.md`](density_multi_breakout.md).

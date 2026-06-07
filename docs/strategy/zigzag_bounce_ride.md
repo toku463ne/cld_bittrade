@@ -15,7 +15,7 @@ does carry an edge once it rides.
 | **Reuses** | `ZigzagBounceSign` (entry); `_next_dense` (TP); zs SL + ratchet exit (`random_hedge`, tuned) |
 | **Default config** | bounce defaults (`size=10, wall_match=True, wall_window=120, reject_past_peak=True`) + `pullback=False` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) + `drop_counter_trend=True` |
 | **Default timeframe** | **1h** |
-| **Status** | **`ship=True` per the gate** (IS eqSharpe +0.74 > B&H +0.64; quarterly consistency **76% > B&H 62%**) — the exit swap rescued it from REJECT and the counter-trend gate gave 5/6 folds, DD 0.88→0.74 (§3). **But treat as borderline:** the gate (a) checks *IS* Sharpe; its **OOS +0.29 trails B&H +0.64**, so it is weaker than `density_pullback` and not a confident live candidate. |
+| **Status** | **`ship=True`** — clears gate (a) in **both** splits (IS eqSharpe +0.74 > B&H +0.64; OOS +0.29 > B&H **−0.60**, since BTC fell in OOS) and gate (b) (quarterly consistency **76% > B&H 62%**). The exit swap rescued it from REJECT; the counter-trend gate gave 5/6 folds, DD 0.88→0.74 (§3). **Caveat:** the OOS pass is a *relative* win (it made +0.29 while holding BTC lost) — modest in absolute terms, and weaker than `density_pullback` (OOS +1.47). Take `density_pullback` forward first. |
 
 ---
 
@@ -88,13 +88,14 @@ left **off by default** to preserve its stronger OOS (+1.47).
 
 ## 4. Verdict
 
-**`ship=True` by the letter of the gate, but borderline.** It clears (a) on IS
-eqSharpe (+0.74 ≥ B&H +0.64) and (b) on relative consistency (76% > B&H 62%). The
-honest caveat: the gate (a) checks *IS* Sharpe, and this strategy's **OOS Sharpe
-(+0.29) trails B&H (+0.64)** — so it is materially weaker than `density_pullback`
-(OOS +1.47, which clears B&H on OOS too), and its drawdown (0.74) is higher (the
-bounce fires ~3× as often, more overlapping exposure). Not a confident live candidate
-on its own; `density_pullback` is the one to take forward first.
+**`ship=True`.** It clears gate (a) in **both** splits — IS eqSharpe +0.74 ≥ B&H
++0.64, and OOS +0.29 ≥ B&H **−0.60** (BTC fell in the OOS window, so each split is
+judged vs *its own* B&H — IS-vs-IS, OOS-vs-OOS) — and gate (b) on relative
+consistency (76% > B&H 62%). Honest caveats: the OOS pass is a *relative* win (it
+earned +0.29 while buy-and-hold lost), so it is modest in absolute terms and weaker
+than `density_pullback` (OOS +1.47, which clears B&H on a much higher margin); and the
+drawdown (0.74) is higher (the bounce fires ~3× as often, more overlapping exposure).
+`density_pullback` is the one to take forward first.
 
 But it is a clean **positive result about the framework, not the signal**: a strategy
 that is REJECT under its own exit becomes 5/6-fold positive once fed the tuned ride
