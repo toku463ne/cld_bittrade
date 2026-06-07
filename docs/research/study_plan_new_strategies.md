@@ -134,12 +134,13 @@ gates):
 
 - **density_pullback:** shipped (revised gate); at 0.001 lot accruing its forward record
   via the weekly cron; reserve in BTC.
-- **Strategy A (BCH/BTC):** Stage 0 import was **in progress** (background; BCH 1h, ~through
-  2023 when last checked). **Smoke tests (partial data) point to KILL:** `log(BCH/BTC)`
-  half-life ~5000+ bars (drifts, doesn't revert), A2 reversion 0/9 cells, A2′ momentum 0/9,
-  A1 lead-lag ≈ 0. **PENDING on import completion** (probes built, thresholds pre-registered):
-  run (1) coverage verification BCH∩BTC, (2) `bch_btc_probe --mode reversion` (A2 verdict),
-  (3) `bch_btc_probe --mode momentum` (A2′ verdict). If all fail → KILL Strategy A.
+- **Strategy A (BCH/BTC): KILLED** (full-data verdict, 2026-06-07). Import complete (BCH 1h
+  43,756 bars, 97.6% overlap with BTC, prices sane). All three framings fail the pre-registered
+  gates: `log(BCH/BTC)` AR(1) **half-life 3,304 bars (~138 d)** → drifts, fails (i); **A2
+  reversion 0/9** cells positive both halves; **A2′ momentum 0/9**; **A1 lead-lag ≈ 0** at all
+  lags. Neither fading nor riding the ratio survives the 2-leg cost at 1h. Per the pre-registered
+  rule → drop Strategy A. (A fresh A family — different asset/timeframe — could be revisited, but
+  not now.)
 - **Strategy B (grid):** Stage-1 economics probe (`grid_range_probe.py`) **FAILED B-kill-1**
   on density boxes (net −0.010/episode, 24% profitable, both halves negative, tail 4.8×,
   2022/2024 negative). Root cause: the density box is *breakout-selected* → grid-fading it is
