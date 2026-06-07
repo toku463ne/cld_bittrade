@@ -59,18 +59,31 @@ cannot see, so the rising Sharpe / falling win-rate (0.18→0.12) below ~0.4 is 
 **`sl_mult=0.4` is the realistic floor** — DD 1.29→0.77 (−40%), Sharpe up — and going
 tighter needs tick-level slippage validation before being trusted.
 
-**What the DD fix did and did not do.** It cut the drawdown and lifted the aggregate
-Sharpe, but the **walk-forward is still 4/6** and the two losing regimes are unchanged
-(early-2021; the 2023 raging bull, where counter-trend down-bursts bleed) — actually more
-negative, because a tighter stop just takes more small losses where the *direction* is
-systematically wrong. The remaining weakness is a **direction** problem, not a stop one.
+## 4. Counter-trend gate (`drop_counter_trend=True`, default)
 
-## 4. Verdict & next
+The remaining weakness after the stop fix was a **direction** problem — counter-trend
+down-bursts bleeding in strong uptrends. Applying the inherited `drop_counter_trend` gate
+(skip a burst whose side opposes the EMA-200 trend) is a clean risk/robustness trade
+(@10bp):
 
-A real **2nd-strategy candidate** — cost-robust, diversifying (+0.20 / −0.05), beats B&H
-both lockbox splits untuned, DD now 0.77. **Not robust across regimes** (4/6 folds; weak
-in strong bulls). Obvious next lever: the **counter-trend entry gate** (`drop_counter_trend`,
-already built for the ride strategies) — it fixed the analogous bull-fold weakness for
-`zigzag_bounce_ride`, so it likely helps the 2023 fold here. Then formal ship-gate and a
-fresh live-forward before capital. Lineage: reuses the `random_hedge` ride exit; sibling of
+| | gate off | gate on (default) |
+|---|---|---|
+| IS eqSh / DD | +1.44 / 0.77 | +1.38 / **0.47** |
+| OOS eqSh / DD | +1.25 / 0.14 | +0.99 / 0.15 |
+| folds | 4/6 | 4/6 (bad folds less bad: −2.2→−1.6, −1.9→−1.2) |
+| corr to density_pullback | +0.20 | +0.155 |
+
+It **cuts DD 0.77 → 0.47** (now near density_pullback's 0.34), softens both bad regimes,
+and is *more* diversifying — for a modest Sharpe giveback (OOS +1.25→+0.99, still well
+above B&H −0.16). It does **not** flip a fold positive (still 4/6) — the two regimes stay
+negative, just less so. Adopted as default per robustness-over-absolute.
+
+## 5. Verdict & next
+
+A real **2nd-strategy candidate**: cost-robust, diversifying (+0.155 / −0.04), beats B&H in
+both lockbox splits untuned, DD now **0.47**. **Still not regime-robust** (4/6 folds; the
+2023 raging bull and early-2021 stay negative — a vol-expansion ride structurally misfires
+when bursts mostly reverse). Remaining path: formal ship-gate (`run_cycle`) and a fresh
+live-forward before capital; the 2 bad regimes are the honest ceiling on confidence.
+Lineage: reuses the `random_hedge` ride exit; sibling of
 [`density_pullback.md`](density_pullback.md).

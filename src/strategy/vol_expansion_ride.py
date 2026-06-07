@@ -59,6 +59,9 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         # artifact (intrabar noise the bar sim can't see), so 0.4 is the realistic floor
         # (~one 1h-bar range). See docs/strategy/vol_expansion_ride.md §3.
         kwargs.setdefault("sl_mult", 0.4)
+        # Skip counter-trend bursts (a down-burst in a strong uptrend bleeds): cuts DD
+        # 0.77→0.47 and softens the bad regimes, for a modest Sharpe giveback (§3).
+        kwargs.setdefault("drop_counter_trend", True)
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.atr_period = atr_period
         self.squeeze_rank_max = squeeze_rank_max
@@ -78,6 +81,7 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         peak_idx = [p.bar_index for p in peaks]
         peak_price = [p.price for p in peaks]
         atr_s = self._atr_series(highs, lows, closes, self.atr_period)
+        self._ensure_trend(bars)  # for the optional drop_counter_trend gate
         # true range per bar
         tr = [highs[0] - lows[0]] + [
             max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
@@ -103,6 +107,8 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
                 continue
             side = Side.LONG if closes[t] >= opens[t] else Side.SHORT
             if not self._gate_ok(t, None, None):
+                continue
+            if not self._trend_ok(side, t):  # optional: skip counter-trend bursts
                 continue
             entry = closes[t]
             legs = self._legs(peak_idx, peak_price, t)
