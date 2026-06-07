@@ -53,7 +53,12 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
             **kwargs: forwarded to RandomHedgeStrategy (the tuned ride exit + gates).
         """
         kwargs.setdefault("recalc_bars", 48)  # tuned ride exit
-        kwargs.setdefault("sl_mult", 0.75)
+        # Tighter stop than the density ride: a vol-expansion entry has an immediate
+        # directional thesis, so a wrong one is cut fast. sl=0.4 cuts the DD (1.29→0.77)
+        # AND raises Sharpe; backtest keeps "improving" to ~0.15 but that is sub-bar-range
+        # artifact (intrabar noise the bar sim can't see), so 0.4 is the realistic floor
+        # (~one 1h-bar range). See docs/strategy/vol_expansion_ride.md §3.
+        kwargs.setdefault("sl_mult", 0.4)
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.atr_period = atr_period
         self.squeeze_rank_max = squeeze_rank_max
