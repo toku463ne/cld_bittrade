@@ -171,6 +171,12 @@ robustness, it does not redefine the gate):
 | 2025-09 | +1.40 (+0.63) | +0.24 (−1.22) | ✓ |
 | 2026-01 | +1.26 (+0.55) | −0.41 (−1.50) | ✓ |
 
+**Multi-timeframe (idea-stage probe, lockbox OOS 2025-04→2026-04): 1h is the cost-robust
+home — faster TFs KILL on turnover.** The density edge *transmits gross* to 15m/5m but
+turnover scales faster than edge: at a realistic 10 bp round-trip, 15m limps (IS +0.19,
+3.7k trades) and 5m is deeply negative (IS −0.74 / OOS −2.75, 15k trades), vs 1h which
+holds at 10 bp. So 1h stays the traded timeframe; no faster-TF sibling.
+
 Gate A holds in **all five** — the verdict is not an artifact of the boundary. The
 *earlier* 2024-07 split is the **strongest** test (B&H OOS positive +0.23, yet
 density_pullback +1.19 beats it), so the result is not merely "beat a falling market";
