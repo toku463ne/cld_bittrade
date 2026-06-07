@@ -145,7 +145,15 @@ gates):
 
 ## Pre-registration log (fill BEFORE running each stage)
 - A1 lead-lag kill threshold: _TBD before probe_
-- A2 reversion edge vs cost threshold: _TBD before probe_
+- **A2 reversion (pre-registered 2026-06-07, before results)** — PASS Stage 1 iff ALL hold:
+  (i) AR(1) **half-life of `log(BCH/BTC)` < 96 bars** (4 days — reverts within a tradeable
+  horizon); (ii) the **hedged-spread** reversion trade (enter at `|z|≥k`, exit on `z`-cross-0
+  or `max_hold`) has **mean net return > 0 in BOTH the early and late half**, net of 2-leg
+  cost = 0.04%/day funding/leg + **15 bp/leg round-trip** spread; (iii) **|corr(Δlog-ratio,
+  Δlog-BTC)| < 0.30** (the spread is genuinely BTC-neutral); (iv) the edge holds across a
+  **majority** of `k∈{1.5,2.0,2.5} × window∈{120,168,336}` cells, not one mined corner.
+  Diagnostics also reported: DR, n, the outright-BCH (1-leg) variant as a fallback. Miss any
+  of (i)–(iv) → KILL A2 (fall back to A1 or A3).
 - B family chosen: **Dynamic Range-Detected Grid Trading** (range fade inside the density
   tight box; capped grid of resting limits; flatten on breakout).
 - B-kill-1 (cost/turnover) threshold: _TBD before probe_
