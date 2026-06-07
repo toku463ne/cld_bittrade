@@ -159,6 +159,27 @@ It clears gate (a) in **both** splits (IS +1.27 ≥ B&H +0.64, OOS +1.47 ≥ B&H
 and on a high margin — its OOS pass is not just "beat a falling market," it is a strong
 absolute Sharpe.
 
+**Split-sensitivity (is the verdict an artifact of the 80/20 boundary?).** Re-cut the
+IS/OOS at several OOS-start dates — *all reported, none cherry-picked* (this measures
+robustness, it does not redefine the gate):
+
+| OOS start | IS eqSh (B&H) | OOS eqSh (B&H) | gate A |
+|---|---|---|---|
+| 2024-07 | +1.25 (+0.49) | **+1.19 (+0.23)** | ✓ |
+| 2025-01 | +1.55 (+0.65) | +0.90 (−0.42) | ✓ |
+| 2025-05 (canonical) | +1.30 (+0.64) | +1.46 (−0.88) | ✓ |
+| 2025-09 | +1.40 (+0.63) | +0.24 (−1.22) | ✓ |
+| 2026-01 | +1.26 (+0.55) | −0.41 (−1.50) | ✓ |
+
+Gate A holds in **all five** — the verdict is not an artifact of the boundary. The
+*earlier* 2024-07 split is the **strongest** test (B&H OOS positive +0.23, yet
+density_pullback +1.19 beats it), so the result is not merely "beat a falling market";
+the canonical 2025-05 split is actually the *harshest* B&H (−0.88). **The real caveat:**
+the **2026-only** tail is absolute-**negative** (−0.41, passing only vs a −1.50 B&H) —
+recent absolute softness in the crash that the forward lockbox (`paper_forward`) is the
+honest arbiter of. The canonical split is left **unchanged** (changing it post-hoc would
+be goalpost-moving; eval §6.5).
+
 **Honest caveats before live:** the exit (`sl0.75, recalc=48`) was tuned on this same
 5y, and both ship gates were revised (consistency → relative; gate (a) → both-splits)
 during this work — so there is accumulated researcher freedom. Per eval §6.5 the only
