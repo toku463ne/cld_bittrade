@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 
 from src.core.types import Bar, ExitConfig, ExitReason, Side, Signal
 from src.exit.rules import OpenPosition
@@ -60,6 +61,28 @@ def test_multi_simulator_two_bar_fill() -> None:
     res = MultiSimulator(_EveryBarLong(), size=0.001).run(bars)
     # The earliest entry is bar index 1 (filled at the open after the bar-0 fire).
     assert min(t.entry_time for t in res.trades) == _T0 + timedelta(hours=1)
+
+
+def test_multi_simulator_daily_swap() -> None:
+    # 30 flat hourly bars from 2024-01-01 00:00 UTC cross exactly one calendar-day
+    # boundary (2024-01-02 00:00). With max_slots=3 all three positions are open
+    # before the boundary and held to end, so each is charged swap once.
+    n = 30
+    bars = _bars([100.0] * n, [100.5] * n, [99.5] * n)
+    rate, size = 0.01, 1.0  # swap = rate * size * close = 0.01 * 1 * 100 = 1.0 / boundary
+
+    base = MultiSimulator(_EveryBarLong(), size=size, fee_rate=0.0).run(bars)
+    swapped = MultiSimulator(
+        _EveryBarLong(), size=size, fee_rate=0.0, daily_swap_rate=rate
+    ).run(bars)
+
+    assert sum(t.cost for t in base.trades) == 0.0  # fee-free, no swap
+    # 3 positions held across 1 boundary -> 3 * 1.0 folded into trade cost.
+    assert sum(t.cost for t in swapped.trades) == pytest.approx(3.0)
+    # Flat price -> realised PnL is exactly minus the swap; it shows in the equity path.
+    assert swapped.equity_curve[-1] == pytest.approx(-3.0)
+    # daily_swap_rate=0.0 must be a no-op vs the default constructor.
+    assert base.equity_curve[-1] == pytest.approx(0.0)
 
 
 def test_multi_strategy_is_registered_and_multi() -> None:

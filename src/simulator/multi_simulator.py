@@ -37,6 +37,7 @@ class _Slot:
     entry_idx: int
     entry_time: datetime
     cfg: ExitConfig
+    swap: float = 0.0  # accrued daily-swap/funding cost (JPY) while held
 
 
 @dataclass(slots=True)
@@ -57,6 +58,13 @@ class MultiSimulator:
         size: Per-slot position size in BTC (minimum lot by default).
         atr_period: ATR period for entry sizing (parity with the single sim).
         fee_rate: Per-side taker cost; round-trip = ``entry × size × rate × 2``.
+        daily_swap_rate: Daily funding/swap as a fraction of position notional,
+            charged once per calendar day on every position **held across the
+            day boundary** (e.g. bitFlyer Lightning FX_BTC_JPY = ``0.0004`` =
+            0.04%/day at the 00:00 JST cutoff). ``0.0`` (default) = no swap, so
+            commission-free spot/GMO backtests are unchanged. The accrued swap is
+            folded into each trade's ``cost`` (so it flows into per-trade PnL and
+            returns) and debited from the mark-to-market equity path as it accrues.
     """
 
     def __init__(
@@ -66,11 +74,15 @@ class MultiSimulator:
         size: float = 0.001,
         atr_period: int = 14,
         fee_rate: float = DEFAULT_FEE_RATE,
+        daily_swap_rate: float = 0.0,
     ) -> None:
+        if daily_swap_rate < 0.0:
+            raise ValueError("daily_swap_rate must be >= 0")
         self.strategy = strategy
         self.size = size
         self.atr_period = atr_period
         self.fee_rate = fee_rate
+        self.daily_swap_rate = daily_swap_rate
 
     def run(self, bars: list[Bar]) -> SimResult:
         """Run the multi-position simulation over ``bars``."""
@@ -101,8 +113,23 @@ class MultiSimulator:
         pending: list[Signal] = []
         pending_atr = 0.0
         working: list[_Working] = []
+        swap_open = 0.0  # accrued swap on still-open positions (debited from equity)
+        prev_date = None  # JST calendar date of the previous bar
 
         for i, bar in enumerate(bars):
+            # 0. Daily swap/funding: on each new calendar day, charge every position
+            #    carried across the boundary (per-slot, folded into its eventual cost
+            #    and debited from equity now). New entries below are not yet held
+            #    across a cutoff, so they are charged from the next boundary on.
+            if self.daily_swap_rate > 0.0:
+                d = bar.timestamp.date()
+                if prev_date is not None and d != prev_date:
+                    for slot in book:
+                        inc = self.daily_swap_rate * self.size * bar.close
+                        slot.swap += inc
+                        swap_open += inc
+                prev_date = d
+
             # 1. Exits on the current bar (static config, then the dynamic hook).
             survivors: list[_Slot] = []
             for slot in book:
@@ -117,6 +144,7 @@ class MultiSimulator:
                     trade = self._close(slot, bar, exit_price, reason, i - slot.entry_idx)
                     trades.append(trade)
                     realised += trade.pnl
+                    swap_open -= slot.swap  # now realised via trade.cost
             book = survivors
 
             # 2. Fill market pending signals at this bar's open while slots are
@@ -160,11 +188,12 @@ class MultiSimulator:
                             _Working(s, s.limit_price, atr_vals[i], i + max(1, s.limit_expiry_bars))
                         )
 
-            # Mark-to-market: realised + unrealised across the open book.
+            # Mark-to-market: realised + unrealised across the open book, less the
+            # swap accrued so far on still-open positions.
             unreal = sum(
                 s.pos.side.sign * (bar.close - s.pos.entry_price) * self.size for s in book
             )
-            equity_curve.append(realised + unreal)
+            equity_curve.append(realised + unreal - swap_open)
 
         # Close anything still open at end of data.
         if book and bars:
@@ -226,7 +255,7 @@ class MultiSimulator:
         self, slot: _Slot, bar: Bar, exit_price: float, reason: ExitReason, bars_held: int
     ) -> Trade:
         pos = slot.pos
-        cost = pos.entry_price * self.size * self.fee_rate * 2.0
+        cost = pos.entry_price * self.size * self.fee_rate * 2.0 + slot.swap
         return Trade(
             side=pos.side,
             entry_time=slot.entry_time,
