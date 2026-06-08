@@ -86,6 +86,12 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         "edge and fill on the retest (buy broken resistance / sell broken support); "
         "same zs SL + next-dense TP + ratchet exit. Lift over random_hedge."
     )
+    # Concurrency cap. The observed peak overlap is 10 (max_slots>=10 are identical
+    # on every metric — the overlapping entries are additive edge, not redundancy,
+    # see the knob history); 12 leaves headroom over that peak while making a live
+    # budget a hard guarantee (peak exposure = max_slots * per-slot lot). Backtest
+    # unchanged vs the inherited 50.
+    max_slots = 12
 
     def __init__(
         self,

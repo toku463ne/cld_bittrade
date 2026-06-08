@@ -14,11 +14,51 @@ fill.
 | **Class** | `src/strategy/density_pullback.py` → `DensityPullbackStrategy` (subclasses `RandomHedgeStrategy`) |
 | **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (resting limit orders) |
 | **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
-| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
+| **Default config** | `window=168, max_band_pct=0.03, limit_window=6, pullback=True, recency=1.0, max_slots=12` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
 | **Default timeframe** | **1h** |
-| **Status** | **`ship=True`** (passes the revised ship gate — the project's first) — tuned default (`sl_mult=0.75, recalc_bars=48`) IS eqSharpe **+1.27 / OOS +1.47** (both > B&H +0.64), quarterly consistency **80% > B&H 62%**, 6/6 walk-forward folds. Caveat: the exit was tuned on this 5y, so per eval §6.5 the honest final confirmation is forward/lockbox data — paper-trade before live. |
+| **Status** | **`ship=True`** (passes the revised ship gate — the project's first). After the 2026-06-08 refinements (see below) the lockbox row is IS eqSharpe **+1.81 / OOS +1.26** (both > their own B&H), OOS@10bp **+1.07**, 6/6 walk-forward folds, lift-over-null **IS +1.04** (leads the candidate table). Caveat: the exit and these knobs were tuned on this 5y, so per eval §6.5 the honest final confirmation is forward/lockbox data — paper-trade before live. |
 
 ---
+
+## Update — post-ship refinements (2026-06-08)
+
+Three default changes after the original ship decision. Each was swept on the
+**lockbox** (`split_lockbox`, 1h GMO); regenerate the row with
+`python -m src.backtest.analysis.benchmark_table_row --strategy density_pullback`.
+The §2–§4 analysis below is the **original shipping record** (80/20 split,
+comparison-era exit) and predates these knobs.
+
+1. **`recency=1.0` — log recency-weighted value-area box** (now default). The box is
+   built with a per-bar weight that keeps the oldest bar at baseline `1.0` and the
+   newest at `1+recency`, with the lift decaying as `log1p(age)` so 3–5-day-old bars
+   keep most of their weight (`_recency_weights`; `time_at_price_profile` gained a
+   per-bar `weights` arg). Walk-forward-robust: +ve in all 6 folds, beats B&H 5/6 vs
+   4/6. `recency=0.0` recovers the old time-equal box (the control).
+2. **`limit_window` 24 → 6** — keep the retest *prompt*. At ~1 day the limit caught
+   delayed reversals crashing back through the edge (falling-knife fills, not breakout
+   retests — e.g. the 2026-05-15 22:00 long filled 23 bars after the breakout into a
+   1-bar −2% crash). Swept 3/6/12/18/24/36; **6 is the balance** (best IS Sharpe,
+   6/6 folds, OOS held). Longer windows lift OOS slightly but at lower IS and admit the
+   stale knife-catches.
+3. **`max_slots` 50 → 12** — concurrency cap for live risk control. The observed peak
+   overlap is **10** and `max_slots ≥ 10` are **identical on every metric** (the
+   overlapping entries are *additive* edge, not redundancy — a single-position cap
+   halves OOS). 12 leaves headroom over the peak while making a budget a hard
+   guarantee: peak exposure = `max_slots × per-slot lot`. Backtest unchanged vs 50.
+
+**Cumulative lockbox effect** (recency + limit_window vs the prior baseline):
+IS eqSharpe **1.39 → 1.81**, OOS **1.11 → 1.26**, OOS@10bp **0.90 → 1.07**, 6/6 folds,
+lift-over-null IS **+0.63 → +1.04**. Two ideas tested and **rejected** (kept as no-op
+controls): `breakout_k` (extent gate — non-monotonic, no edge) and `accept_band`
+(causal acceptance-band confirmation entry — strictly worse than the passive limit; a
+look-ahead first cut had looked good — see the knob-history note in the source).
+
+**Sizing note.** With `max_slots=12` and a **0.10 BTC budget**, per-slot lot ≈ `0.0083`
+BTC bounds peak exposure to 0.10 BTC. Earnings (and drawdown) scale **linearly** with
+lot: the 0.001-lot backtest ×10 (≈ `max_slots=10`, lot 0.01) ≈ **+304k JPY over 5.1y,
+~59k/yr average — but very lumpy** (2024–25 carried ~90%). As an overlay on a held BTC
+core it pads up-years and can erase mild down-years (2025), but is too small to offset
+a real BTC crash (2022/2026).
 
 ## 1. Idea
 
