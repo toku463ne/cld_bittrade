@@ -24,10 +24,57 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import numpy as np
+from numpy.typing import NDArray
+
 from src.core.types import Bar, ExitConfig, Side, Signal
 from src.exit.base import ExitContext
+from src.indicators.density import time_at_price_profile, value_area
 from src.strategy.density_multi_breakout import _next_dense, _rolling_bands
 from src.strategy.random_hedge import RandomHedgeStrategy
+
+
+def _recency_weights(window: int, strength: float) -> NDArray[np.float64]:
+    """Per-bar weights over a trailing window (index 0 = oldest, -1 = newest).
+
+    Log-shaped recency ramp: the most-recent bar gets ``1 + strength`` times the
+    weight of the oldest, and the lift falls off as ``log1p(age)`` so the boost
+    is concentrated on the last fraction of the window while older bars decay
+    *gently* toward the ``1.0`` baseline (never to zero) — a bar from 3-5 days
+    ago still carries most of its weight. ``strength <= 0`` -> uniform (the plain
+    time-equal profile).
+    """
+    if strength <= 0.0:
+        return np.ones(window, dtype=np.float64)
+    pos = np.arange(window, dtype=np.float64)  # 0 = oldest ... window-1 = newest
+    age = (window - 1) - pos  # 0 = newest ... window-1 = oldest
+    lift = 1.0 - np.log1p(age) / np.log1p(window - 1)  # 1 at newest, 0 at oldest
+    out: NDArray[np.float64] = 1.0 + strength * lift
+    return out
+
+
+def _rolling_bands_recency(
+    highs: list[float],
+    lows: list[float],
+    window: int,
+    n_bins: int,
+    coverage: float,
+    recency: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Like :func:`_rolling_bands` but tilts each window by a recency ramp."""
+    n = len(highs)
+    bl = np.full(n, np.nan)
+    bh = np.full(n, np.nan)
+    w = _recency_weights(window, recency)
+    for t in range(window, n):
+        centers, weights = time_at_price_profile(
+            highs[t - window : t], lows[t - window : t], n_bins, weights=w
+        )
+        _poc, lo, hi = value_area(centers, weights, coverage)
+        if hi > lo:
+            bl[t] = lo
+            bh[t] = hi
+    return bl, bh
 
 
 class DensityPullbackStrategy(RandomHedgeStrategy):
@@ -47,8 +94,11 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         density_bins: int = 48,
         coverage: float = 0.70,
         max_band_pct: float = 0.03,
-        limit_window: int = 24,
+        limit_window: int = 6,
         pullback: bool = True,
+        breakout_k: float = 0.0,
+        recency: float = 1.0,
+        accept_band: float | None = None,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -59,9 +109,28 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             coverage: Value-area coverage fraction (0.70 standard).
             max_band_pct: Tight-box filter — fire only when box height <= this
                 fraction of price.
-            limit_window: Bars the pullback limit rests before cancellation.
+            limit_window: Bars the pullback limit rests before cancellation. Kept
+                short (6 = ~6h on 1h) so the fill is a *prompt* retest: a limit that
+                rests ~a day (24) catches delayed reversals that crash back through
+                the edge — a different trade, not a breakout retest (swept 3/6/12/
+                18/24/36 → 6 is the balance: best IS Sharpe, 6/6 folds, OOS held).
             pullback: If True, enter via a limit at the broken edge (retest); if
                 False, enter at the breakout close (market) — the control.
+            breakout_k: Breakout-extent gate. The breakout close must clear the
+                broken edge by at least ``breakout_k * (hi - lo)`` (a fraction of
+                the box height), so a marginal close just past the lip does not
+                qualify. ``0.0`` (default) recovers the bare ``close > hi`` test.
+            recency: Log recency tilt on the value-area box (see
+                :func:`_recency_weights`). ``0.0`` (default) = time-equal box.
+            accept_band: Causal acceptance-band confirmation entry (replaces the
+                passive-limit fill when set, with ``pullback=True``). After a
+                breakout, wait up to ``limit_window`` bars for a bar that *closes*
+                back into the band ``[hi - accept_band*(hi-lo), hi]`` (long) — a
+                controlled pullback — then enter **market at the next bar's open**.
+                If a bar first closes *below* the floor, the retest has failed and
+                the setup is cancelled. No intrabar look-ahead (decisions on
+                closes, fills at next open). ``None`` (default) = passive limit at
+                the edge.
             **kwargs: Forwarded to :class:`RandomHedgeStrategy` (exit params, the
                 bad-entry gates, ...). ``entry_prob`` is unused (entries are the
                 breakouts, not random).
@@ -78,12 +147,21 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             raise ValueError("max_band_pct must be > 0")
         if limit_window < 1:
             raise ValueError("limit_window must be >= 1")
+        if breakout_k < 0.0:
+            raise ValueError("breakout_k must be >= 0")
+        if recency < 0.0:
+            raise ValueError("recency must be >= 0")
+        if accept_band is not None and accept_band <= 0.0:
+            raise ValueError("accept_band must be > 0 or None")
+        self.accept_band = accept_band
         self.window = window
         self.density_bins = density_bins
         self.coverage = coverage
         self.max_band_pct = max_band_pct
         self.limit_window = limit_window
         self.pullback = pullback
+        self.breakout_k = breakout_k
+        self.recency = recency
         self.warmup = max(self.warmup, window + 2)
         self.max_buffer = self.warmup + 2
 
@@ -104,7 +182,14 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             if self.max_chop_rank is not None
             else None
         )
-        band_lo, band_hi = _rolling_bands(highs, lows, self.window, self.density_bins, self.coverage)
+        if self.recency > 0.0:
+            band_lo, band_hi = _rolling_bands_recency(
+                highs, lows, self.window, self.density_bins, self.coverage, self.recency
+            )
+        else:
+            band_lo, band_hi = _rolling_bands(
+                highs, lows, self.window, self.density_bins, self.coverage
+            )
         self._ensure_trend(bars)
 
         out: dict[datetime, list[Signal]] = {}
@@ -118,9 +203,12 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             c = closes[t]
             if (hi - lo) > self.max_band_pct * c:
                 continue
-            if c > hi:
+            # Breakout-extent gate: the close must clear the broken edge by at
+            # least breakout_k of the box height (k=0 -> bare close-through).
+            margin = self.breakout_k * (hi - lo)
+            if c - hi > margin:
                 side, near = Side.LONG, hi
-            elif c < lo:
+            elif lo - c > margin:
                 side, near = Side.SHORT, lo
             else:
                 continue
@@ -128,6 +216,33 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 continue
             if not self._trend_ok(side, t):
                 continue
+
+            # Causal acceptance-band confirmation: wait for a bar to CLOSE back into
+            # [floor, hi] (long) / [lo, ceil] (short) — a controlled pullback — then
+            # enter market at the next open. A close past the floor/ceil first =
+            # failed retest, skip. No look-ahead (decision on closes, fill next bar).
+            entry_bar = t  # bar whose close the entry signal is read from
+            if self.pullback and self.accept_band is not None:
+                depth = self.accept_band * (hi - lo)
+                floor, ceil = hi - depth, lo + depth
+                conf: int | None = None
+                for j in range(t + 1, min(t + 1 + self.limit_window, len(bars))):
+                    cj = closes[j]
+                    if side is Side.LONG:
+                        if cj < floor:
+                            break  # pulled back too far — failed retest
+                        if cj <= hi:
+                            conf = j  # closed back into the acceptance band
+                            break
+                    else:
+                        if cj > ceil:
+                            break
+                        if cj >= lo:
+                            conf = j
+                            break
+                if conf is None:
+                    continue  # no controlled pullback within the window — no trade
+                entry_bar = conf
 
             entry_ref = near if self.pullback else c  # the price the trade is built around
             legs = self._legs(peak_idx, peak_price, t)
@@ -144,19 +259,48 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 tp_abs=abs(target - entry_ref) if target is not None else None,
                 time_stop_bars=self.time_stop_bars,
             )
-            ts = bars[t].timestamp
-            out[ts] = [
+            # Confirmation mode enters market at entry_bar+1 open (limit_price=None);
+            # passive-limit mode rests a limit at the edge; market mode fills next open.
+            confirm = self.pullback and self.accept_band is not None
+            ts = bars[entry_bar].timestamp
+            out.setdefault(ts, []).append(
                 Signal(
                     side=side,
                     timestamp=ts,
                     price=entry_ref,
                     score=1.0,
                     reason=self.name,
-                    ref_time=ts,
+                    ref_time=bars[t].timestamp,
                     ref_price=target,
                     exit_config=cfg,
-                    limit_price=near if self.pullback else None,
-                    limit_expiry_bars=self.limit_window if self.pullback else 0,
+                    limit_price=near if (self.pullback and not confirm) else None,
+                    limit_expiry_bars=self.limit_window if (self.pullback and not confirm) else 0,
                 )
-            ]
+            )
         return out
+
+
+# Knob history (2026-06-08):
+#   * limit_window — bars the retest limit rests — cut 24 -> 6. At 24 (~1 day) the
+#     limit caught delayed reversals crashing back through the edge (falling-knife
+#     fills, e.g. the 2026-05-15 22:00 trade: filled 23 bars after breakout into a
+#     1-bar -2% crash, instant stop). Swept 3/6/12/18/24/36; 6 is the balance —
+#     best IS Sharpe (1.74->1.81), 6/6 folds, OOS held, fewer losers. Longer windows
+#     lift OOS a touch but at lower IS and admit the stale knife-catches.
+#   * recency — log recency-weighted value-area box — is now ON BY DEFAULT
+#     (recency=1.0). Walk-forward-robust improvement over the old time-equal box
+#     (positive in all 6 folds, beats B&H 5/6 vs 4/6; lockbox IS eqSharpe
+#     1.39->1.74, IS DD 0.34->0.28, OOS 1.11->1.27). recency=0.0 recovers the old
+#     time-equal box (the control). Sweep 1.0/2.0/3.0 -> 1.0 best.
+#   * breakout_k — breakout-extent gate — was swept (0.10/0.15/0.25) and DROPPED:
+#     non-monotonic, no edge gain over baseline. The knob stays (no-op at 0.0) for
+#     future sweeps; no registered variant uses it.
+#   * accept_band — causal acceptance-band CONFIRMATION entry (wait for an in-band
+#     close, enter next open) — was built to test "blocking too-deep pullbacks cuts
+#     losers". REJECTED: a *look-ahead* version (cancel a limit that the touch bar
+#     pierces past) showed a monotone win, but the realizable causal version is
+#     STRICTLY WORSE than the baseline passive limit (lockbox IS_sh 1.74->~1.2,
+#     OOS 1.27->0.5-0.8, OOS@10bp 1.08->0.3-0.6, folds 6/6->4-5/6). The passive
+#     limit fills precisely at the edge and catches fast retests the confirmation
+#     misses; the look-ahead "win" was the artifact. Knob stays (no-op at None) as
+#     the documented rejected control.

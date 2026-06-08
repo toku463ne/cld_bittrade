@@ -1,7 +1,16 @@
 # Candidate benchmark table
 
 At-a-glance comparison of the multi-position strategy candidates, all on **one consistent
-basis** (snapshot **2026-06-07**, GMO_BTC_JPY 1h):
+basis** (snapshot **2026-06-08**, GMO_BTC_JPY 1h). Regenerate any row with
+`python -m src.backtest.analysis.benchmark_table_row --strategy <name>`.
+
+> **2026-06-08:** `density_pullback` retuned — (1) **log recency-weighted** value-area
+> box (`recency=1.0`, walk-forward-robust: +ve in all 6 folds, beats B&H 5/6 vs 4/6);
+> (2) **`limit_window` 24→6** — at ~1 day the retest limit caught delayed reversals
+> crashing back through the edge (falling-knife fills), not prompt retests; 6 is the
+> swept balance (best IS Sharpe, 6/6 folds, OOS held, ~47 stale trades dropped). Its
+> row below is recomputed. (`cBTC`/`cDP` for the other rows are vs the prior dp
+> definition and are non-gate diagnostics — left as-is.)
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -17,7 +26,7 @@ basis** (snapshot **2026-06-07**, GMO_BTC_JPY 1h):
 
 | candidate | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp | WF | cBTC | cDP | status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **density_pullback** | 428 | **+1.39** | 0.36 | **0.34** | +0.0048 | +1.11 | 0.15 | +0.90 | **6/6** | +0.04 | +1.00 | ship✓ |
+| **density_pullback** | 428 | **+1.81** | 0.36 | 0.31 | +0.0060 | **+1.26** | 0.18 | **+1.07** | **6/6** | +0.06 | +1.00 | **ship✓** |
 | **vol_expansion_ride** | 526 | **+1.56** | 0.21 | 0.41 | +0.0034 | +1.27 | 0.12 | +0.99 | 4/6 | −0.04 | +0.16 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.18 | +0.16 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
@@ -38,16 +47,18 @@ OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
 
 | candidate | IS lift / null | OOS lift / null |
 |---|---|---|
+| density_pullback | **+1.04** | **+0.35** |
 | vol_expansion_ride | **+0.79** | **+0.35** |
-| density_pullback | **+0.63** | **+0.19** |
 | rsi_extreme_ride | +0.51 | **+0.06** (≈ null) |
 | zigzag_bounce_ride | **−0.45** (< null) | +0.13 |
 | density_multi_breakout | +0.26 | **−0.60** (< null) |
 
-So on this window only **vol_expansion_ride** and **density_pullback** carry real OOS entry
-edge; **rsi_extreme_ride is ≈ the null**, and **zigzag_bounce_ride / density_multi_breakout
-are at or below it**. The plain `OOS_sh` column above is inflated by the window's
-directionality — read the **lift-over-null** before trusting any OOS Sharpe here.
+So on this window only **density_pullback** and **vol_expansion_ride** carry real OOS entry
+edge — and with the recency box, **density_pullback now leads on both** (IS +0.97, OOS +0.36),
+narrowly ahead of vol_expansion on OOS and clearly ahead on IS. **rsi_extreme_ride is ≈ the
+null**, and **zigzag_bounce_ride / density_multi_breakout are at or below it**. The plain
+`OOS_sh` column above is inflated by the window's directionality — read the **lift-over-null**
+before trusting any OOS Sharpe here.
 
 \* `random_hedge_volfilter` (and the `random_hedge` null) are **seeded** (seed=0); their
 single-seed lockbox numbers are rosier than the 8-seed mean — treat as indicative, not final.
@@ -57,10 +68,12 @@ All others are deterministic.
 
 - **Read OOS as lift-over-null, not vs B&H** (the ⚠ section): the directional window gives a
   random hedge OOS +0.91, so several "candidates" barely clear it.
-- **vol_expansion_ride** is the strongest on entry edge (lift over null **IS +0.79 / OOS +0.35**),
-  highest IS (+1.56), cost-robust — but only 4/6 folds (weak in raging bulls).
-- **density_pullback** is the most balanced and only *shipped* one (lift **+0.63 / +0.19**, lowest
-  DD 0.34, strong folds).
+- **density_pullback** (recency=1.0 box, prompt limit_window=6) is the strongest on entry edge
+  (lift over null **IS +1.04 / OOS +0.35**) AND the most balanced: highest IS (+1.81), **6/6** folds,
+  cost-robust (OOS@10bp +1.07), and the only *shipped* one. (Dropping the 24-bar window's stale
+  knife-catches nudged IS DD up slightly to 0.31 — the cost of window=6 over 12.)
+- **vol_expansion_ride** is the close second on entry edge (lift **IS +0.79 / OOS +0.35**),
+  high IS (+1.56), cost-robust — but only 4/6 folds (weak in raging bulls).
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below
@@ -72,4 +85,6 @@ All others are deterministic.
 A lockbox snapshot, not a final verdict — the lockbox has been reused across ideas (erodes it),
 so the **finalist still needs a fresh live-forward** (`paper_forward`) before real capital. Single
 IS/OOS split + 6 coarse folds; ride-exit candidates share the same exit (correlations in `cDP`).
-Regenerate by re-running the metric script against `split_lockbox` for each registered strategy.
+Regenerate any row with `python -m src.backtest.analysis.benchmark_table_row --strategy <name>`
+(lockbox basis; validated to reproduce the committed rows). Seeded rows (`random_hedge*`) are
+seed-0 and not reproduced by that deterministic script — see the ⚠ note.
