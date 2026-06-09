@@ -1,8 +1,8 @@
 # Candidate benchmark table
 
 At-a-glance comparison of the multi-position strategy candidates, all on **one consistent
-basis** (snapshot **2026-06-08**, GMO_BTC_JPY 1h; `vol_expansion_ride` row refreshed
-**2026-06-10**). Regenerate any row with
+basis** — every deterministic row regenerated in a **uniform snapshot 2026-06-10**,
+GMO_BTC_JPY 1h. Regenerate any row with
 `python -m src.backtest.analysis.benchmark_table_row --strategy <name>`.
 
 > **2026-06-08:** `density_pullback` retuned — (1) **log recency-weighted** value-area
@@ -10,8 +10,7 @@ basis** (snapshot **2026-06-08**, GMO_BTC_JPY 1h; `vol_expansion_ride` row refre
 > (2) **`limit_window` 24→6** — at ~1 day the retest limit caught delayed reversals
 > crashing back through the edge (falling-knife fills), not prompt retests; 6 is the
 > swept balance (best IS Sharpe, 6/6 folds, OOS held, ~47 stale trades dropped). Its
-> row below is recomputed. (`cBTC`/`cDP` for the other rows are vs the prior dp
-> definition and are non-gate diagnostics — left as-is.)
+> row below is recomputed.
 >
 > **2026-06-10:** `vol_expansion_ride` gained the **two-sided-burst filter**
 > (`skip_contra_extreme=1`, now default) — skip an entry whose squeeze→2×ATR burst bar
@@ -36,9 +35,9 @@ basis** (snapshot **2026-06-08**, GMO_BTC_JPY 1h; `vol_expansion_ride` row refre
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **density_pullback** | 428 | **+1.81** | 0.36 | 0.31 | +0.0060 | **+1.26** | 0.18 | **+1.07** | **6/6** | +0.06 | +1.00 | **ship✓** |
 | **vol_expansion_ride** | 369 | **+1.76** | 0.24 | 0.24 | +0.0051 | +1.25 | 0.11 | +0.97 | 4/6 | −0.06 | +0.18 | **ship✓** |
-| rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.18 | +0.16 | **demoted** (≈ null OOS) |
+| rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
-| **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | **6/6** | −0.08 | +0.17 | candidate |
+| **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | 5/6 | +0.00 | +0.13 | candidate |
 | **density_multi_breakout** | 439 | +1.03 | 0.40 | 0.56 | +0.0063 | +0.32 | 0.42 | +0.20 | 5/6 | +0.03 | +0.68 | weak (cost) |
 | random_hedge (null) | 684 | −0.15 | 0.37 | 0.70 | −0.0006 | +0.55 | 0.12 | +0.08 | 4/6 | +0.03 | +0.14 | null baseline |
 
@@ -71,7 +70,9 @@ before trusting any OOS Sharpe here.
 
 \* `random_hedge_volfilter` (and the `random_hedge` null) are **seeded** (seed=0); their
 single-seed lockbox numbers are rosier than the 8-seed mean — treat as indicative, not final.
-All others are deterministic.
+All others are deterministic and were regenerated in the 2026-06-10 uniform snapshot; the two
+seeded rows are **not** reproduced by `benchmark_table_row`, so their values (incl. `cBTC`/`cDP`)
+carry over from the prior snapshot — the only non-uniform rows in the table.
 
 ## Read at a glance
 
