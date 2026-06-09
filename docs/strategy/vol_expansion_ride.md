@@ -122,7 +122,33 @@ Same story on a different split — IS Sharpe up, IS_DD 0.41→**0.24** (now bel
 0.31), DR/mean_r up, OOS essentially flat — confirming the filter removes mostly losing,
 high-variance directionless bursts rather than trimming winners.
 
-## 6. Verdict & next
+## 6. Follow-through confirmation (`confirm_bars`) — tested, FRAGILE, not adopted
+
+Aimed squarely at the 4/6-fold problem: the failing regimes are where bursts mostly *reverse*,
+so the `confirm_bars=N` knob delays entry until the close N bars after the burst is beyond the
+burst-bar close in the ride direction (a follow-through vote; entry then fills N+1 bars after
+the burst). Causal, no-op at the default `None`. WF horizon sweep
+(`src/backtest/analysis/vol_expansion_confirm_ab.py`, on top of the shipped `skip_contra_extreme=1`):
+
+| confirm | IS n | IS eqSh | OOS eqSh | WF folds+ | WF mean | gate |
+|---|---|---|---|---|---|---|
+| **None (shipped)** | 383 | +1.69 | **+0.83** | 4/6 | +1.24 | ship |
+| 1 | 172 | +1.52 | −0.12 | 5/6 | +0.95 | ship |
+| **2** | 180 | +1.70 | +0.72 | **6/6** | **+1.37** | ship |
+| 3 | 182 | +1.55 | +0.00 | 4/6 | +1.10 | ship |
+| 4 | 184 | +2.01 | **−1.01** | 4/6 | +1.27 | **FAIL** |
+
+`confirm_bars=2` is the only config ever to flip **all 6 folds positive** — but the sweep
+exposes it as a **knife-edge, not structure**: WF folds-positive runs `4→5→6→4→4` (only the
+single value peaks) and OOS eqSharpe bounces `+0.83→−0.12→+0.72→+0.00→−1.01` across adjacent
+horizons. A real edge varies *smoothly* with the lookback; this does not. The filter drops ~half
+the trades at **every** N (383→~180) but *which* half is horizon-noise. Adopting `=2` would be
+selecting the one lucky horizon that aligns with the fixed fold boundaries (the multiple-comparison
+overfit the methodology warns against), and the shipped `None` keeps the best OOS (+0.83) of any
+positive-OOS arm regardless. **Hypothesis rejected; knob kept as a documented no-op (default
+`None`); shipped logic unchanged.** The 4/6 regimes remain open — see §7.
+
+## 7. Verdict & next
 
 A real **2nd-strategy candidate**: cost-robust, diversifying (+0.18 / −0.06), beats B&H in
 both lockbox splits untuned. After §4 (counter-trend gate) and §5 (two-sided-burst filter)
