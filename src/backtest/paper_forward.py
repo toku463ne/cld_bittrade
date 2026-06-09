@@ -37,11 +37,23 @@ from src.logging_setup import configure_logging
 from src.simulator.multi_simulator import MultiSimulator
 from src.strategy.registry import get_strategy
 
-# Frozen lockbox: the last bar present in the cache when density_pullback was
-# declared ship=True (tuning cutoff). Bars at or before this are "seen"; only bars
-# strictly after it count as forward. DO NOT move this — moving it re-tunes the test.
-LOCKBOX_BOUNDARY = pd.Timestamp("2026-06-02 05:00:00+09:00")
-LOCKBOX_FROZEN_ON = "2026-06-07"
+# Frozen lockbox boundaries, PER STRATEGY: the last bar present in the cache when each
+# strategy's CURRENT logic was declared ship=True (its tuning cutoff). Bars at or before a
+# strategy's boundary are "seen"; only bars strictly after it count as forward.
+# DO NOT move an existing entry — moving it re-tunes that strategy's test. A strategy whose
+# shipped LOGIC materially changes earns a NEW (later) boundary at its re-ship cutoff, so its
+# forward record never overlaps the data its new logic was selected on.
+LOCKBOX_BOUNDARIES: dict[str, tuple[pd.Timestamp, str]] = {
+    # density_pullback ship (recency box + limit_window=6), frozen 2026-06-07.
+    "density_pullback": (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07"),
+    # vol_expansion_ride RE-ship (skip_contra_extreme=1 two-sided-burst filter): the contra
+    # filter was selected on a walk-forward over data through the 2026-06-07 22:00 cache
+    # cutoff, so the forward clock restarts there (re-frozen 2026-06-10). Earlier bars were
+    # seen by that selection.
+    "vol_expansion_ride": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-10"),
+}
+# Fallback for any strategy without an explicit entry (the original density boundary).
+DEFAULT_LOCKBOX: tuple[pd.Timestamp, str] = (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07")
 
 MIN_FWD_TRADES = 20  # below this, a forward Sharpe is too noisy to read
 MIN_FWD_DAYS = 60  # and the span must cover a couple of months
@@ -54,17 +66,18 @@ def run(strategy_name: str, tf: Timeframe, *, product: str | None) -> None:
     if not bars:
         raise RuntimeError("no bars in cache")
     ppy = (365 * 24 * 3600) / tf.seconds
+    boundary, frozen_on = LOCKBOX_BOUNDARIES.get(strategy_name, DEFAULT_LOCKBOX)
 
     # Index of the first forward bar (strictly after the frozen boundary).
     fwd_start = next(
-        (i for i, b in enumerate(bars) if pd.Timestamp(b.timestamp) > LOCKBOX_BOUNDARY),
+        (i for i, b in enumerate(bars) if pd.Timestamp(b.timestamp) > boundary),
         len(bars),
     )
     n_fwd_bars = len(bars) - fwd_start
     fwd_days = n_fwd_bars * tf.seconds / 86400.0
     logger.info(
         "{} forward/lockbox: boundary {} (frozen {}); cache ends {}",
-        strategy_name, LOCKBOX_BOUNDARY, LOCKBOX_FROZEN_ON, bars[-1].timestamp,
+        strategy_name, boundary, frozen_on, bars[-1].timestamp,
     )
     logger.info("  forward bars: {} (~{:.1f} days)", n_fwd_bars, fwd_days)
 
@@ -72,7 +85,7 @@ def run(strategy_name: str, tf: Timeframe, *, product: str | None) -> None:
     # forward slice of the equity path and trades entered after the boundary.
     res = MultiSimulator(get_strategy(strategy_name)).run(bars)
     fwd_curve = res.equity_curve[fwd_start:]
-    fwd_trades = [t for t in res.trades if pd.Timestamp(t.entry_time) > LOCKBOX_BOUNDARY]
+    fwd_trades = [t for t in res.trades if pd.Timestamp(t.entry_time) > boundary]
 
     es = annualized_sharpe_from_levels(fwd_curve, ppy) if len(fwd_curve) >= 3 else 0.0
     bh = annualized_sharpe_from_levels(
