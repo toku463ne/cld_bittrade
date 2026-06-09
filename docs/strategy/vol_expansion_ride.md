@@ -148,7 +148,7 @@ overfit the methodology warns against), and the shipped `None` keeps the best OO
 positive-OOS arm regardless. **Hypothesis rejected; knob kept as a documented no-op (default
 `None`); shipped logic unchanged.** The 4/6 regimes remain open — see §7.
 
-## 7. Squeeze-depth × expansion-magnitude sweep (`squeeze_rank_max` × `expand_mult`)
+## 7. Squeeze-depth × expansion-magnitude sweep (`expand_mult` 2.0→2.5, ADOPTED)
 
 A 2D sweep of the two *existing* trigger knobs (`vol_expansion_squeeze_sweep.py`), again on top
 of the shipped `skip_contra_extreme=1`, looking for a **smooth region** (not a confirm_bars
@@ -165,27 +165,33 @@ knife-edge) that helps the 4/6-fold problem.
 
 | (sq=0.25) | IS eqSh | OOS eqSh | WF folds+ | WF mean | IS n |
 |---|---|---|---|---|---|
-| ex=2.0 (shipped) | +1.69 | +0.83 | 4/6 | +1.24 | 383 |
-| ex=2.5 | +1.46 | +0.82 | **5/6** | +1.16 | 247 |
+| ex=2.0 (prev) | +1.69 | +0.83 | 4/6 | +1.24 | 383 |
+| ex=2.5 (adopted) | +1.46 | +0.82 | **5/6** | +1.16 | 247 |
 
-It is a genuine **trade, not a free win**: +1 rescued regime, lower turnover (−35%, cost-light)
-and flat OOS, in exchange for ~0.2 IS Sharpe and a weakened strong fold (f5 +1.96→+0.90); WF
-mean ≈ flat; still 5/6, not 6/6 (f3 unsolved). Whether to adopt is a robustness-vs-IS-Sharpe
-judgement under the project's robustness-over-absolute philosophy — left to a ship decision; the
-sweep harness is committed either way.
+It is a genuine **trade, not a free win**: +1 rescued regime, lower turnover (−35%, cost-light),
+in exchange for ~0.2 IS Sharpe and a weakened strong fold (f5 +1.96→+0.90); WF mean ≈ flat; still
+5/6, not 6/6 (f3 unsolved). **Adopted 2026-06-10** under the project's robustness-over-absolute
+philosophy (same reasoning as §4's counter-trend gate). The independent lockbox basis is even
+kinder than the 80/20 cycle — it improves nearly everything *except* IS Sharpe: turnover
+369→**236**, IS_DD 0.24→**0.17**, OOS Sharpe +1.25→**+1.28**, OOS_DD 0.11→**0.05**, OOS@10bp
++0.97→**+1.03**, quarterly consistency 76%→**82%**, cDP +0.18→**+0.10** (more diversifying), WF
+4/6→**5/6**; only IS Sharpe gives back (+1.76→+1.51). `run_cycle` ships `True`; forward boundary
+unchanged (same 2026-06-07 selection cutoff). See `benchmark_table.md`.
 
 ## 8. Verdict & next
 
-A real **2nd-strategy candidate**: cost-robust, diversifying (+0.18 / −0.06), beats B&H in
-both lockbox splits untuned. After §4 (counter-trend gate) and §5 (two-sided-burst filter)
-its lockbox **IS_DD is down to 0.24** — now *below* density_pullback's 0.31 — at a higher IS
-Sharpe (+1.76) and flat OOS. **Still not regime-robust** (4/6 folds; the 2023 raging bull and
-early-2021 stay negative — a vol-expansion ride structurally misfires when bursts mostly
-reverse). Remaining path: the ship-gate (`run_cycle`) passes; the **live-forward is now
+A real **2nd-strategy candidate**: cost-robust, diversifying (+0.10 / −0.06), beats B&H in
+both lockbox splits untuned. After §4 (counter-trend gate), §5 (two-sided-burst filter) and §7
+(`expand_mult=2.5`) its lockbox **IS_DD is down to 0.17 / OOS_DD 0.05** — the lowest DD of any
+candidate — at IS Sharpe +1.51, OOS +1.28 and **82% quarterly consistency**. Now **5/6 WF folds**:
+§7 rescued the early-2021 regime, but **the 2023 raging bull stays negative** — a vol-expansion
+ride structurally misfires when that regime's bursts mostly reverse (the §6 confirm_bars attempt
+on this exact problem was a fragile knife-edge and was rejected). Remaining path: the ship-gate
+(`run_cycle`) passes; the **live-forward is now
 queued and running clean** — `paper_forward` was given a per-strategy lockbox boundary
-re-anchored to **2026-06-07 22:00** (the §5 selection cutoff), so the forward record never
-overlaps the data the filter was chosen on, and the weekly Monday cron
-(`scripts/weekly_forward_check.sh`) scores it. No CONFIRMED/NOT-CONFIRMED verdict until
-≥20 forward trades AND ≥60 days (~2 months out); the 2 bad regimes remain the honest ceiling
-on confidence. Lineage: reuses the `random_hedge` ride exit; sibling of
+re-anchored to **2026-06-07 22:00** (the selection cutoff for both §5 and §7, which used data
+through that point), so the forward record never overlaps the data the logic was chosen on, and
+the weekly Monday cron (`scripts/weekly_forward_check.sh`) scores it. No CONFIRMED/NOT-CONFIRMED
+verdict until ≥20 forward trades AND ≥60 days (~2 months out); the 2023-bull regime remains the
+honest ceiling on confidence. Lineage: reuses the `random_hedge` ride exit; sibling of
 [`density_pullback.md`](density_pullback.md).

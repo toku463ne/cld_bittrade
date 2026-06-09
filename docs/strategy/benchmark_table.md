@@ -18,6 +18,10 @@ GMO_BTC_JPY 1h. Regenerate any row with
 > expansion). Selected inside-sample on the 6 WF folds (per-trade lift +ve 6/6). Its row
 > below is recomputed: drops ~30% of trades (526→369) yet **IS Sharpe +1.56→+1.76**,
 > **IS_DD nearly halves 0.41→0.24**, DR/mean_r up, OOS ~flat. See `vol_expansion_ride.md` §5.
+> Then **`expand_mult` 2.0→2.5** (squeeze×expand sweep, §7): a smooth 5/6-fold choice that
+> rescues the early-2021 regime, cutting turnover further (369→**236**) and DD (IS 0.24→**0.17**,
+> OOS 0.11→**0.05**) and lifting OOS (+1.25→**+1.28**) for a ~0.2 IS-Sharpe giveback
+> (+1.76→**+1.51**). The row below is this final state.
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -34,7 +38,7 @@ GMO_BTC_JPY 1h. Regenerate any row with
 | candidate | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp | WF | cBTC | cDP | status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **density_pullback** | 428 | **+1.81** | 0.36 | 0.31 | +0.0060 | **+1.26** | 0.18 | **+1.07** | **6/6** | +0.06 | +1.00 | **ship✓** |
-| **vol_expansion_ride** | 369 | **+1.76** | 0.24 | 0.24 | +0.0051 | +1.25 | 0.11 | +0.97 | 4/6 | −0.06 | +0.18 | **ship✓** |
+| **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
 | **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | 5/6 | +0.00 | +0.13 | candidate |
@@ -55,16 +59,16 @@ OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
 | candidate | IS lift / null | OOS lift / null |
 |---|---|---|
 | density_pullback | **+1.04** | **+0.35** |
-| vol_expansion_ride | **+0.99** | **+0.34** |
+| vol_expansion_ride | **+0.74** | **+0.37** |
 | rsi_extreme_ride | +0.51 | **+0.06** (≈ null) |
 | zigzag_bounce_ride | **−0.45** (< null) | +0.13 |
 | density_multi_breakout | +0.26 | **−0.60** (< null) |
 
 So on this window only **density_pullback** and **vol_expansion_ride** carry real OOS entry
-edge — and the two are now near-tied on IS lift (dp +1.04 vs ver +0.99 after the two-sided-burst
-filter) and on OOS (+0.35 vs +0.34); density_pullback keeps a slim overall lead (highest raw IS
-and 6/6 folds vs ver's 4/6). **rsi_extreme_ride is ≈ the
-null**, and **zigzag_bounce_ride / density_multi_breakout are at or below it**. The plain
+edge. density_pullback leads on raw entry edge (IS lift +1.04 vs ver +0.74) and folds (6/6 vs
+5/6), but **vol_expansion_ride now leads on OOS lift (+0.37 vs +0.35), drawdown and
+diversification** after `expand_mult=2.5` traded IS Sharpe for robustness. **rsi_extreme_ride is
+≈ the null**, and **zigzag_bounce_ride / density_multi_breakout are at or below it**. The plain
 `OOS_sh` column above is inflated by the window's directionality — read the **lift-over-null**
 before trusting any OOS Sharpe here.
 
@@ -82,10 +86,11 @@ carry over from the prior snapshot — the only non-uniform rows in the table.
   (lift over null **IS +1.04 / OOS +0.35**) AND the most balanced: highest IS (+1.81), **6/6** folds,
   cost-robust (OOS@10bp +1.07), and the only *shipped* one. (Dropping the 24-bar window's stale
   knife-catches nudged IS DD up slightly to 0.31 — the cost of window=6 over 12.)
-- **vol_expansion_ride** is a near-tied second on entry edge (lift **IS +0.99 / OOS +0.34**)
-  after the **two-sided-burst filter** (`skip_contra_extreme=1`): it cut ~30% of trades while
-  raising IS (+1.76) and **nearly halving IS_DD to 0.24** (now below dp's 0.31), cost-robust
-  (OOS@10bp +0.97) — but still only 4/6 folds (weak in raging bulls).
+- **vol_expansion_ride** (entry-edge lift **IS +0.74 / OOS +0.37**) after the two-sided-burst
+  filter (`skip_contra_extreme=1`) + **`expand_mult=2.5`**: low-turnover (236 trades), the
+  **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
+  most diversifying (cDP +0.10), now **5/6 folds**. The IS-Sharpe giveback (to +1.51) bought DD,
+  consistency (82% quarters) and the early-2021 regime; only the 2023 raging bull stays negative.
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below

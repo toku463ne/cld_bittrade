@@ -38,7 +38,7 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         *,
         atr_period: int = 14,
         squeeze_rank_max: float = 0.25,
-        expand_mult: float = 2.0,
+        expand_mult: float = 2.5,
         rank_window: int = 500,
         skip_contra_extreme: int | None = 1,
         confirm_bars: int | None = None,
@@ -50,7 +50,11 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
             atr_period: ATR lookback for squeeze/expansion.
             squeeze_rank_max: squeeze if the prior-bar ATR trailing-percentile rank
                 is <= this (low-vol regime).
-            expand_mult: expansion if the bar's true range >= this × the prior ATR.
+            expand_mult: expansion if the bar's true range >= this × the prior ATR. Default
+                ``2.5`` (raised from 2.0): a smooth structural choice from the squeeze×expand
+                sweep — the whole ex=2.5 column is 5/6 WF folds (vs 2.0's jittery 4/6),
+                rescuing the early-2021 fold at every squeeze value, for ~35% less turnover and
+                ~0.2 IS-Sharpe giveback. See docs/strategy/vol_expansion_ride.md §7.
             rank_window: trailing window for the ATR percentile rank.
             skip_contra_extreme: if set (lookback in bars), skip an entry whose trigger
                 bar made an extreme AGAINST the ride direction over the prior N bars — a
