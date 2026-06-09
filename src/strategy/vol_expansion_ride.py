@@ -40,6 +40,7 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         squeeze_rank_max: float = 0.25,
         expand_mult: float = 2.0,
         rank_window: int = 500,
+        skip_contra_extreme: int | None = 1,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -50,6 +51,14 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
                 is <= this (low-vol regime).
             expand_mult: expansion if the bar's true range >= this × the prior ATR.
             rank_window: trailing window for the ATR percentile rank.
+            skip_contra_extreme: if set (lookback in bars), skip an entry whose trigger
+                bar made an extreme AGAINST the ride direction over the prior N bars — a
+                LONG burst that undercut the prior-N low, or a SHORT burst that printed a
+                higher high than the prior-N high (a "two-sided / directionless"
+                expansion). None disables the filter; the default ``1`` is the
+                WF-validated contra-1bar definition (lifts WF-mean equity Sharpe
+                +0.93→+1.24, beat-B&H 3/6→4/6, quarter-consistency 65%→76%, while
+                cutting ~27% of trades; see docs/strategy/vol_expansion_ride.md §4).
             **kwargs: forwarded to RandomHedgeStrategy (the tuned ride exit + gates).
         """
         kwargs.setdefault("recalc_bars", 48)  # tuned ride exit
@@ -67,6 +76,7 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         self.squeeze_rank_max = squeeze_rank_max
         self.expand_mult = expand_mult
         self.rank_window = rank_window
+        self.skip_contra_extreme = skip_contra_extreme
         self.warmup = max(self.warmup, rank_window + 2)
         self.max_buffer = self.warmup + 2
 
@@ -106,6 +116,16 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
             if tr[t] < self.expand_mult * a_prev:
                 continue
             side = Side.LONG if closes[t] >= opens[t] else Side.SHORT
+            # Two-sided/directionless expansion filter: skip if the burst bar made an
+            # extreme AGAINST the ride direction over the prior N bars. Causal (bar t is
+            # closed; decision uses [t-lb, t)). See docs/strategy/vol_expansion_ride.md.
+            if self.skip_contra_extreme is not None:
+                lb = self.skip_contra_extreme
+                if t - lb >= 0:
+                    if side == Side.LONG and lows[t] < min(lows[t - lb : t]):
+                        continue
+                    if side == Side.SHORT and highs[t] > max(highs[t - lb : t]):
+                        continue
             if not self._gate_ok(t, None, None):
                 continue
             if not self._trend_ok(side, t):  # optional: skip counter-trend bursts

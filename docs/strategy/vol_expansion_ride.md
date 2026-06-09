@@ -78,7 +78,38 @@ and is *more* diversifying — for a modest Sharpe giveback (OOS +1.25→+0.99, 
 above B&H −0.16). It does **not** flip a fold positive (still 4/6) — the two regimes stay
 negative, just less so. Adopted as default per robustness-over-absolute.
 
-## 5. Verdict & next
+## 5. Two-sided / directionless-burst filter (`skip_contra_extreme=1`, default)
+
+A chart-driven idea: not every burst has a *direction*. A bar that, before closing in the
+ride side, printed an extreme **against** it (a LONG burst undercutting the prior-bar low, a
+SHORT burst making a higher high than the prior bar) is a two-sided/outside expansion —
+there is no clean side for a directional ride to follow. The knob `skip_contra_extreme=N`
+skips an entry whose trigger bar made a contrary-side extreme over the prior `N` bars;
+default `1` is the WF-validated contra-1bar definition. Causal (bar `t` closed, fill `t+1`
+open).
+
+Selection was done **inside-sample via the 6 walk-forward folds** (per-trade mean-return
+lift +ve in 6/6 folds, mean +0.44%), reserving the lockbox OOS for one-shot confirmation —
+not peeked during ideation (see `docs/evaluation_criteria.md`; the idea was once a
+*false-negative* killed on a single OOS peek that landed on the one quiet fold). On the
+**equity metric**:
+
+| | baseline (off) | filter on (default) |
+|---|---|---|
+| IS eqSh (B&H +0.64) | +1.487 | **+1.686** |
+| OOS eqSh (B&H −0.85) | +0.904 | +0.828 |
+| quarter-consistency | 65% | **76%** |
+| WF mean eqSh / beat-B&H | +0.93 / 3-of-6 | **+1.24 / 4-of-6** |
+| trades (IS / OOS) | 542 / 143 | **383 / 117** (−27%) |
+
+It improves equity Sharpe in **5 of 6 WF folds** (only f4 a −0.10 giveback), lifts the WF
+mean and beat-rate and quarter-consistency, and **cuts turnover 27%** (the branch's recurring
+"cost kills edges" win). The only loss is the single 80/20 OOS split (−0.076) — but that
+window ≈ the most-recent fold, which **improves** in the WF view (+1.07→+1.22), so it is the
+known one-fold artifact, not a real regression. Ship gate (`run_cycle`) still `True`. Adopted
+as default. (`src/backtest/analysis/vol_expansion_contra_ab.py` reproduces the table.)
+
+## 6. Verdict & next
 
 A real **2nd-strategy candidate**: cost-robust, diversifying (+0.155 / −0.04), beats B&H in
 both lockbox splits untuned, DD now **0.47**. **Still not regime-robust** (4/6 folds; the
