@@ -148,7 +148,33 @@ overfit the methodology warns against), and the shipped `None` keeps the best OO
 positive-OOS arm regardless. **Hypothesis rejected; knob kept as a documented no-op (default
 `None`); shipped logic unchanged.** The 4/6 regimes remain open — see §7.
 
-## 7. Verdict & next
+## 7. Squeeze-depth × expansion-magnitude sweep (`squeeze_rank_max` × `expand_mult`)
+
+A 2D sweep of the two *existing* trigger knobs (`vol_expansion_squeeze_sweep.py`), again on top
+of the shipped `skip_contra_extreme=1`, looking for a **smooth region** (not a confirm_bars
+knife-edge) that helps the 4/6-fold problem.
+
+- **Squeeze depth is a dead end.** IS equity Sharpe *decreases monotonically* as the squeeze
+  tightens (sq 0.30→0.10 at ex=2.0: +1.80→+1.17). Deeper squeezes do **not** make cleaner
+  directional bursts — shallower is mildly better; shipped 0.25 is near the gate's sweet spot.
+- **`expand_mult=2.5` is a smooth, structural fold-rescue.** The whole ex=2.5 row is uniformly
+  **5/6 folds across every squeeze value** (vs the shipped ex=2.0 row's jittery 5,4,5,4,5).
+  Per-fold, it rescues **f1 (early-2021)** at every squeeze cell (−0.23→+0.5…+1.2) — the same
+  fold each time, the signature of structure, not luck. But **f3 (the 2023 raging bull) stays
+  negative everywhere** (even slightly worse), so it fixes *one* of the two bad regimes.
+
+| (sq=0.25) | IS eqSh | OOS eqSh | WF folds+ | WF mean | IS n |
+|---|---|---|---|---|---|
+| ex=2.0 (shipped) | +1.69 | +0.83 | 4/6 | +1.24 | 383 |
+| ex=2.5 | +1.46 | +0.82 | **5/6** | +1.16 | 247 |
+
+It is a genuine **trade, not a free win**: +1 rescued regime, lower turnover (−35%, cost-light)
+and flat OOS, in exchange for ~0.2 IS Sharpe and a weakened strong fold (f5 +1.96→+0.90); WF
+mean ≈ flat; still 5/6, not 6/6 (f3 unsolved). Whether to adopt is a robustness-vs-IS-Sharpe
+judgement under the project's robustness-over-absolute philosophy — left to a ship decision; the
+sweep harness is committed either way.
+
+## 8. Verdict & next
 
 A real **2nd-strategy candidate**: cost-robust, diversifying (+0.18 / −0.06), beats B&H in
 both lockbox splits untuned. After §4 (counter-trend gate) and §5 (two-sided-burst filter)
