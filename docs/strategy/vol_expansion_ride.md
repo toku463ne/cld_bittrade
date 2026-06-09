@@ -109,12 +109,31 @@ window ≈ the most-recent fold, which **improves** in the WF view (+1.07→+1.2
 known one-fold artifact, not a real regression. Ship gate (`run_cycle`) still `True`. Adopted
 as default. (`src/backtest/analysis/vol_expansion_contra_ab.py` reproduces the table.)
 
+The independent **lockbox** basis (`benchmark_table.md`, fixed IS pre-2025-04-01 / OOS
+2025-04-01→2026-04-01) agrees and adds a headline the equity-split table hides — **IS_DD
+nearly halves**:
+
+| (lockbox) | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp |
+|---|---|---|---|---|---|---|---|---|
+| baseline (off) | 526 | +1.56 | 0.21 | 0.41 | +0.0034 | +1.27 | 0.12 | +0.99 |
+| filter on (default) | 369 | **+1.76** | 0.24 | **0.24** | +0.0051 | +1.25 | 0.11 | +0.97 |
+
+Same story on a different split — IS Sharpe up, IS_DD 0.41→**0.24** (now below density_pullback's
+0.31), DR/mean_r up, OOS essentially flat — confirming the filter removes mostly losing,
+high-variance directionless bursts rather than trimming winners.
+
 ## 6. Verdict & next
 
-A real **2nd-strategy candidate**: cost-robust, diversifying (+0.155 / −0.04), beats B&H in
-both lockbox splits untuned, DD now **0.47**. **Still not regime-robust** (4/6 folds; the
-2023 raging bull and early-2021 stay negative — a vol-expansion ride structurally misfires
-when bursts mostly reverse). Remaining path: formal ship-gate (`run_cycle`) and a fresh
-live-forward before capital; the 2 bad regimes are the honest ceiling on confidence.
-Lineage: reuses the `random_hedge` ride exit; sibling of
+A real **2nd-strategy candidate**: cost-robust, diversifying (+0.18 / −0.06), beats B&H in
+both lockbox splits untuned. After §4 (counter-trend gate) and §5 (two-sided-burst filter)
+its lockbox **IS_DD is down to 0.24** — now *below* density_pullback's 0.31 — at a higher IS
+Sharpe (+1.76) and flat OOS. **Still not regime-robust** (4/6 folds; the 2023 raging bull and
+early-2021 stay negative — a vol-expansion ride structurally misfires when bursts mostly
+reverse). Remaining path: the ship-gate (`run_cycle`) passes; the **live-forward is now
+queued and running clean** — `paper_forward` was given a per-strategy lockbox boundary
+re-anchored to **2026-06-07 22:00** (the §5 selection cutoff), so the forward record never
+overlaps the data the filter was chosen on, and the weekly Monday cron
+(`scripts/weekly_forward_check.sh`) scores it. No CONFIRMED/NOT-CONFIRMED verdict until
+≥20 forward trades AND ≥60 days (~2 months out); the 2 bad regimes remain the honest ceiling
+on confidence. Lineage: reuses the `random_hedge` ride exit; sibling of
 [`density_pullback.md`](density_pullback.md).
