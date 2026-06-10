@@ -293,6 +293,28 @@ edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS o
   lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
   forward boundary at 2026-06-10 23:00 + weekly cron line.
 
+## Strategy D — stale-box fade (anti-density_pullback; pre-registered 2026-06-11)
+
+**Hypothesis (from our own diagnostics, both assets):** breakouts from *mature* value
+areas get faded — the base-length work found the 64+ acceptance bucket runs DR 0.12–0.18
+with negative/flat mean_r (BTC and ETH independently), and `max_base_bars=64` now makes
+dp *skip* those events. Strategy D trades the other side: **fade the stale-box breakout
+back toward the POC** — the book's first short-vol / mean-reversion payoff (everything
+live is a long-vol ride). Honest caution: the per-asset tail was thin (n≈16) and the BTC
+IS-only read was weakly positive — hence the widened Stage-1 below.
+
+**Stage-1 probe (pre-registered BEFORE results):** event = close beyond the rolling
+recency-box edge with acceptance streak > threshold; **thresholds {32, 48, 64} reported,
+BTC + ETH lockbox-IS windows pooled** (both lockbox OOS held out). Fade = enter next open
+against the break; **TP = event-time POC; SL = 1.0 box-height beyond entry; time stop 96
+bars; same-bar TP/SL collision books as SL** (pessimistic). Stop sensitivity s ∈
+{0.5, 1.0, 1.5} reported for sanity, not selection. **KILL unless ALL hold** at the
+primary cell (threshold 48, s=1.0): (i) mean net return > 0 at 4 bp RT in **both** the
+early and late half of the pooled IS; (ii) still > 0 at **10 bp RT**; (iii) tail bounded —
+**worst single loss ≤ 3× median win** (B-kill-2); (iv) not carried by one regime — the
+2022-crash and 2024-bull sub-periods are reported and at least one of each sign-class must
+be non-catastrophic; (v) pooled n ≥ 100. DR > 0.5 expected (reversion) — diagnostic only.
+
 ## Strategy C″ — failed-breakout invalidation exit on ETH (pre-registered 2026-06-11)
 
 **Question:** does the `invalidation_depth` exit (close back inside the value area beyond
