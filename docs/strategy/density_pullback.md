@@ -53,6 +53,32 @@ controls): `breakout_k` (extent gate — non-monotonic, no edge) and `accept_ban
 (causal acceptance-band confirmation entry — strictly worse than the passive limit; a
 look-ahead first cut had looked good — see the knob-history note in the source).
 
+**2026-06-10 — `invalidation_depth` (failed-breakout invalidation exit) tested and
+REJECTED** (kept as a no-op control, default `None`). The hypothesis: 58% of trades
+exit `stop_loss` (sum_r −3.95 vs the trail winners' +5.27), the zs stop is generic
+and takes a median 9 bars to fire, while the strategy has a structural invalidation —
+a bar **closing** back inside the value area beyond `depth × box-height` from the
+broken edge means the breakout is dead; exit at that close. Swept depth
+0.25/0.5/0.75/1.0/1.25 + 6-fold fixed-config WF
+(`src/backtest/analysis/density_pullback_invalidation_ab.py`):
+
+| arm | WF folds +ve | WF mean | IS trail winners | IS stop bleed |
+|---|---|---|---|---|
+| baseline | **6/6** | **+1.18** | 143 | −3.28 |
+| depth=0.25 | 5/6 | +1.05 | 95 | −2.61 |
+| depth=0.5 | 5/6 | +0.92 | 117 | −3.30 |
+| depth=0.75 | 6/6 | +1.14 | 138 | −3.28 |
+| depth=1.0 / 1.25 | 6/6 | +1.18 | ≈143 | −3.28 |
+
+At `depth ≥ 1.0` the knob is a **literal no-op** — the zs `0.75`-band stop always
+fires first. Everywhere it acts (`< 1.0`) it is neutral-to-worse: fold f2 (the 2022
+bear) flips negative, and the mechanism evidence contradicts the hypothesis — the
+stop *bleed barely moves* while trail winners get converted into stops (143→95 at
+0.25). **The dip-then-run winners are the trades that close back inside the box**;
+re-acceptance is not a reliable death signal at this timeframe. depth=0.5's 80/20-OOS
+bump (+0.95→+1.13) is a single-split artifact contradicted by its worst-of-sweep WF
+mean — the standing lesson about selecting on one OOS peek.
+
 **Sizing note.** With `max_slots=12` and a **0.10 BTC budget**, per-slot lot ≈ `0.0083`
 BTC bounds peak exposure to 0.10 BTC. Earnings (and drawdown) scale **linearly** with
 lot: the 0.001-lot backtest ×10 (≈ `max_slots=10`, lot 0.01) ≈ **+304k JPY over 5.1y,

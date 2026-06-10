@@ -27,8 +27,9 @@ from datetime import datetime
 import numpy as np
 from numpy.typing import NDArray
 
-from src.core.types import Bar, ExitConfig, Side, Signal
+from src.core.types import Bar, ExitConfig, ExitReason, Side, Signal
 from src.exit.base import ExitContext
+from src.exit.rules import OpenPosition
 from src.indicators.density import time_at_price_profile, value_area
 from src.strategy.density_multi_breakout import _next_dense, _rolling_bands
 from src.strategy.random_hedge import RandomHedgeStrategy
@@ -105,6 +106,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         breakout_k: float = 0.0,
         recency: float = 1.0,
         accept_band: float | None = None,
+        invalidation_depth: float | None = None,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -137,6 +139,19 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 the setup is cancelled. No intrabar look-ahead (decisions on
                 closes, fills at next open). ``None`` (default) = passive limit at
                 the edge.
+            invalidation_depth: Failed-breakout invalidation exit. If set, a
+                position exits (at the close, via ``dynamic_exit``) when a bar
+                **closes** back inside the value area by more than this fraction of
+                the box height from the broken edge — for a LONG, ``close <
+                hi − depth·(hi−lo)``; for a SHORT, ``close > lo + depth·(hi−lo)``.
+                The hypothesis was that the breakout thesis is structurally dead
+                once price is re-accepted inside the box, cutting the loser before
+                the (generic) zs-band stop fires. The level is frozen from the
+                signal-time box. ``None`` (default) = off, exit framework
+                unchanged. Books as ``STOP_LOSS``. **Tested and REJECTED** — at
+                depth >= 1.0 the zs stop always fires first (literal no-op);
+                shallower depths clip the dip-then-run trail winners without
+                cutting the stop bleed (see the 2026-06-10 knob history below).
             **kwargs: Forwarded to :class:`RandomHedgeStrategy` (exit params, the
                 bad-entry gates, ...). ``entry_prob`` is unused (entries are the
                 breakouts, not random).
@@ -159,6 +174,9 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             raise ValueError("recency must be >= 0")
         if accept_band is not None and accept_band <= 0.0:
             raise ValueError("accept_band must be > 0 or None")
+        if invalidation_depth is not None and invalidation_depth <= 0.0:
+            raise ValueError("invalidation_depth must be > 0 or None")
+        self.invalidation_depth = invalidation_depth
         self.accept_band = accept_band
         self.window = window
         self.density_bins = density_bins
@@ -265,6 +283,12 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 tp_abs=abs(target - entry_ref) if target is not None else None,
                 time_stop_bars=self.time_stop_bars,
             )
+            # Failed-breakout invalidation level, frozen from the signal-time box;
+            # carried on ref2_price -> OpenPosition for the dynamic_exit check.
+            inval: float | None = None
+            if self.invalidation_depth is not None:
+                depth_abs = self.invalidation_depth * (hi - lo)
+                inval = (hi - depth_abs) if side is Side.LONG else (lo + depth_abs)
             # Confirmation mode enters market at entry_bar+1 open (limit_price=None);
             # passive-limit mode rests a limit at the edge; market mode fills next open.
             confirm = self.pullback and self.accept_band is not None
@@ -278,12 +302,33 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                     reason=self.name,
                     ref_time=bars[t].timestamp,
                     ref_price=target,
+                    ref2_time=bars[t].timestamp if inval is not None else None,
+                    ref2_price=inval,
                     exit_config=cfg,
                     limit_price=near if (self.pullback and not confirm) else None,
                     limit_expiry_bars=self.limit_window if (self.pullback and not confirm) else 0,
                 )
             )
         return out
+
+    def dynamic_exit(
+        self, pos: OpenPosition, bar: Bar, i: int, entry_idx: int
+    ) -> tuple[ExitReason, float] | None:  # noqa: D102 (inherited)
+        # Ratchet / trail breach first (the inherited exit framework, unchanged).
+        res = super().dynamic_exit(pos, bar, i, entry_idx)
+        if res is not None:
+            return res
+        # Failed-breakout invalidation: a CLOSE re-accepted inside the box beyond
+        # the frozen level kills the thesis -> exit at the close (the decision uses
+        # only this bar's close; same fill convention as the density stall exit).
+        if self.invalidation_depth is None or pos.ref2_price is None:
+            return None
+        c = bar.close
+        if pos.side is Side.LONG and c < pos.ref2_price:
+            return ExitReason.STOP_LOSS, c
+        if pos.side is Side.SHORT and c > pos.ref2_price:
+            return ExitReason.STOP_LOSS, c
+        return None
 
 
 # Knob history (2026-06-08):
@@ -310,3 +355,17 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
 #     limit fills precisely at the edge and catches fast retests the confirmation
 #     misses; the look-ahead "win" was the artifact. Knob stays (no-op at None) as
 #     the documented rejected control.
+# Knob history (2026-06-10):
+#   * invalidation_depth — failed-breakout invalidation exit (close re-accepted
+#     inside the box beyond depth x box-height -> exit at close, before the zs
+#     stop) — swept 0.25/0.5/0.75/1.0/1.25 + 6-fold WF. REJECTED: at depth >= 1.0
+#     it is a literal no-op (the zs 0.75-band stop always fires first); everywhere
+#     it acts (< 1.0) it is neutral-to-worse (WF mean 1.18 -> 1.05/0.92/1.14,
+#     folds 6/6 -> 5/6 at 0.25/0.5, fold f2 flips negative) and the mechanism
+#     evidence contradicts the hypothesis: the stop BLEED barely moves (-3.28 ->
+#     -3.30; -2.61 only at 0.25) while trail winners are converted into stops
+#     (IS trail 143 -> 95 at 0.25) — the dip-then-run winners ARE the trades that
+#     close back inside the box. depth=0.5's 80/20-OOS bump (+0.95 -> +1.13) is a
+#     single-split artifact contradicted by its WORST-of-sweep WF mean (+0.92).
+#     Knob stays (no-op at None) as the documented rejected control. Harness:
+#     src/backtest/analysis/density_pullback_invalidation_ab.py.
