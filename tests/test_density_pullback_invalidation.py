@@ -54,3 +54,12 @@ def test_invalidation_signals_carry_ref2_only_when_on() -> None:
         DensityPullbackStrategy(invalidation_depth=0.0)
     with pytest.raises(ValueError):
         DensityPullbackStrategy(invalidation_depth=-1.0)
+
+
+def test_max_base_bars_validation_and_default_off() -> None:
+    import pytest
+
+    assert DensityPullbackStrategy().max_base_bars is None
+    assert DensityPullbackStrategy(max_base_bars=32).max_base_bars == 32
+    with pytest.raises(ValueError):
+        DensityPullbackStrategy(max_base_bars=0)

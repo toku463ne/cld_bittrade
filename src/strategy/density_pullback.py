@@ -107,6 +107,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         recency: float = 1.0,
         accept_band: float | None = None,
         invalidation_depth: float | None = None,
+        max_base_bars: int | None = None,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -152,6 +153,17 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 depth >= 1.0 the zs stop always fires first (literal no-op);
                 shallower depths clip the dip-then-run trail winners without
                 cutting the stop bleed (see the 2026-06-10 knob history below).
+            max_base_bars: Stale-box gate. If set, skip a breakout whose *base
+                length* — the number of consecutive prior bars whose close sat
+                inside its own (rolling) value-area band — exceeds this. The
+                base-length diagnostic INVERTED the classical "longer base =
+                stronger breakout" prior: per-trade mean_r *declines* with base
+                length — good breakouts leave young pause-in-trend boxes. Causal
+                (uses closes/bands up to t−1). ``None`` (default) = off.
+                **Tested and NOT ADOPTED** — thresholds <= 48 flip a WF fold
+                negative (the "weak" 32–63 trades still add at the equity
+                level), and the one safe cell (64) gains only ~+0.04 WF mean on
+                15 trades, partly OOS-selected (see the knob history below).
             **kwargs: Forwarded to :class:`RandomHedgeStrategy` (exit params, the
                 bad-entry gates, ...). ``entry_prob`` is unused (entries are the
                 breakouts, not random).
@@ -176,7 +188,10 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             raise ValueError("accept_band must be > 0 or None")
         if invalidation_depth is not None and invalidation_depth <= 0.0:
             raise ValueError("invalidation_depth must be > 0 or None")
+        if max_base_bars is not None and max_base_bars < 1:
+            raise ValueError("max_base_bars must be >= 1 or None")
         self.invalidation_depth = invalidation_depth
+        self.max_base_bars = max_base_bars
         self.accept_band = accept_band
         self.window = window
         self.density_bins = density_bins
@@ -215,6 +230,16 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 highs, lows, self.window, self.density_bins, self.coverage
             )
         self._ensure_trend(bars)
+        # Base-length streak: consecutive bars (ending at j) whose close sits inside
+        # its own rolling band. base length at signal bar t = base_streak[t-1].
+        # NaN bands compare False -> streak resets, so warmup bars never count.
+        base_streak: list[int] = []
+        if self.max_base_bars is not None:
+            streak = 0
+            for j in range(len(bars)):
+                lo_j, hi_j = float(band_lo[j]), float(band_hi[j])
+                streak = streak + 1 if (hi_j > lo_j and lo_j <= closes[j] <= hi_j) else 0
+                base_streak.append(streak)
 
         out: dict[datetime, list[Signal]] = {}
         for t in range(self.warmup, len(bars)):
@@ -226,6 +251,10 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 continue
             c = closes[t]
             if (hi - lo) > self.max_band_pct * c:
+                continue
+            # Stale-box gate: skip breakouts from a value area price has been
+            # accepted in too long (the diagnostic's weak tail) — see docstring.
+            if self.max_base_bars is not None and base_streak[t - 1] > self.max_base_bars:
                 continue
             # Breakout-extent gate: the close must clear the broken edge by at
             # least breakout_k of the box height (k=0 -> bare close-through).
@@ -369,3 +398,16 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
 #     single-split artifact contradicted by its WORST-of-sweep WF mean (+0.92).
 #     Knob stays (no-op at None) as the documented rejected control. Harness:
 #     src/backtest/analysis/density_pullback_invalidation_ab.py.
+#   * max_base_bars — stale-box gate (skip breakouts from long-accepted boxes) —
+#     swept 16/24/32/48/64/96/128 + 6-fold WF. NOT ADOPTED. The DIAGNOSTIC is the
+#     keeper: per-trade mean_r declines MONOTONICALLY with base length (classical
+#     "longer base = stronger breakout" is INVERTED at 1h; 0-1 bars +0.0064 ->
+#     32-63 +0.0018 -> 64+ -0.0011, DR 0.18). But the gradient does not transfer
+#     to equity: thresholds <= 48 flip WF fold f6 negative (the weak 32-63 trades
+#     still add at the equity level via overlap), and the only safe cell (64,
+#     6/6 folds, WF mean 1.18 -> 1.22) gains +0.04 on 15 trades — within
+#     winner's-curse range of a 7-cell sweep, and the 64+ "negative tail" read
+#     leaned on the OOS column (IS-only it is weakly positive) = partial OOS-peek.
+#     Smooth from the no-op side (128 = literal no-op -> 96 -> 64 monotone), harmful
+#     below — no adoptable region. Knob stays (no-op at None). Harness:
+#     src/backtest/analysis/density_pullback_baselen_ab.py.

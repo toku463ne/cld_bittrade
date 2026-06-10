@@ -79,6 +79,21 @@ re-acceptance is not a reliable death signal at this timeframe. depth=0.5's 80/2
 bump (+0.95→+1.13) is a single-split artifact contradicted by its worst-of-sweep WF
 mean — the standing lesson about selecting on one OOS peek.
 
+**2026-06-10 — `max_base_bars` (stale-box gate) tested and NOT ADOPTED** (no-op control,
+default `None`) — but the diagnostic behind it is a keeper. Base length = consecutive prior
+closes accepted inside their own rolling value-area band. The classical "longer base →
+stronger breakout" prior is **inverted** at 1h: per-trade mean_r declines monotonically with
+base length (0–1 bars +0.0064 → 32–63 +0.0018 → 64+ −0.0011 with DR 0.18) — good breakouts
+leave *young* pause-in-trend boxes; breakouts from mature, long-defended value areas get
+faded. So the candidate gate was a **max** (skip stale boxes), not the classical min. Swept
+16/24/32/48/64/96/128 + 6-fold WF (`density_pullback_baselen_ab.py`): thresholds ≤ 48 flip
+fold f6 negative — the per-trade-weak 32–63 trades still contribute at the equity level
+(the recurring gradient-doesn't-transfer lesson) — and the only safe cell (64: 6/6 folds,
+WF mean 1.18→1.22, IS 1.504→1.545) gains +0.04 on 15 trades: within winner's-curse range of
+a 7-cell sweep, and the 64+ "negative tail" read leaned on the OOS bucket column (IS-only it
+is weakly positive) — a partial OOS-peek, so not adoptable under the project's hygiene rule.
+Net: no adoptable region; structural finding logged.
+
 **Sizing note.** With `max_slots=12` and a **0.10 BTC budget**, per-slot lot ≈ `0.0083`
 BTC bounds peak exposure to 0.10 BTC. Earnings (and drawdown) scale **linearly** with
 lot: the 0.001-lot backtest ×10 (≈ `max_slots=10`, lot 0.01) ≈ **+304k JPY over 5.1y,
