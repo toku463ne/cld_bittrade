@@ -315,6 +315,20 @@ early and late half of the pooled IS; (ii) still > 0 at **10 bp RT**; (iii) tail
 2022-crash and 2024-bull sub-periods are reported and at least one of each sign-class must
 be non-catastrophic; (v) pooled n ≥ 100. DR > 0.5 expected (reversion) — diagnostic only.
 
+**RESULT (2026-06-11): KILLED at the primary cell** (`stale_box_fade_probe.py`; BTC 87 /
+ETH 54 events at streak>32). streak>48, s=1.0 pooled (n=80): mean −0.0005, **late half
+−0.0022 (fails i)**, **@10bp −0.0011 (fails ii)**, **n=80 (fails v)**; tail 2.4× passes;
+regimes show the structural story — pays in the 2022 crash (+0.0041) and **gets run over
+in the 2024 bull (−0.0052)**, the textbook short-vol failure. Stop sensitivity confirms
+(tighter stop → tail 1.2× but mean ≈ 0; looser → worse). The thinnest cell (streak>64,
+n=39) is positive in both halves and at 10bp (+0.0016, DR 0.64, tail 2.5×) — consistent
+with the original diagnostic — but promoting a surviving sub-bucket after seeing results
+would be the survivorship trap, and it fails the n bar regardless (~10 trades/yr pooled,
+~+2%/yr per unit notional: not a strategy). **Per the pre-registered rule: drop Strategy D,
+no rescue.** The reusable negative: stale-box breakouts are bad to *ride* (hence
+`max_base_bars=64`) but not reliably profitable to *fade* net of costs — the weak tail is
+dead weight, not a reversible edge.
+
 ## Strategy C″ — failed-breakout invalidation exit on ETH (pre-registered 2026-06-11)
 
 **Question:** does the `invalidation_depth` exit (close back inside the value area beyond
