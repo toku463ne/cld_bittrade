@@ -55,6 +55,13 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 > (eroded) lockbox OOS fell +1.19→+0.83 (still > ETH B&H +0.59); the gate's ETH benefit is
 > IS-side and the **forward adjudicates**. All three forward clocks were RESET at adoption
 > (boundaries re-frozen 2026-06-11; records were only days old — the cheapest moment).
+>
+> **2026-06-11 (later still) — Strategy C″: `density_pullback_eth` registered** with the
+> **ETH-only `invalidation_depth=0.25`** failed-breakout exit (BTC's rejection of this knob
+> stands). ETH's geometry reverses the verdict: a smooth 0.10–0.35 WF plateau (IS-WF mean
+> +0.58→+0.95, 3/6→5/6 folds), a bleed-cutting mechanism (the opposite of BTC's failure),
+> and the one lockbox look recovered the max_base OOS giveback (+0.83→**+1.33**). Row
+> updated below; the ETH forward switched to the variant.
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -72,7 +79,7 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **combo_dp_ver** | 651 | **+2.23** | 0.31 | 0.38 | +0.0062 | **+1.66** | 0.18 | **+1.41** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 415 | **+1.84** | 0.36 | 0.32 | +0.0061 | **+1.35** | 0.18 | **+1.16** | **6/6** | +0.06 | +1.00 | **ship✓** |
-| **density_pullback (ETH)**\*\*\* | 252 | +1.12 | 0.33 | 0.43 | +0.0045 | +0.83 | 0.14 | +0.74 | 4/6 | −0.03 | — | **candidate (fwd accruing)** |
+| **density_pullback_eth**\*\*\* | 252 | **+1.31** | 0.26 | 0.29 | +0.0040 | **+1.33** | 0.07 | **+1.21** | 5/6 | −0.01 | — | **candidate (fwd accruing)** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
@@ -126,16 +133,16 @@ consistency on the 80/20 basis. This is the book the live-forward tracks. **Slot
 at ≤3. `max_slots` stays **12** in code (a budget guarantee, not a tuned knob — changing it
 would re-select on the lockbox), but **6 lots is the capital-planning number**.
 
-\*\*\* `density_pullback (ETH)` runs on **GMO_ETH_JPY** with **registry defaults — zero
-ETH-specific tuning** (the ETH band re-tuning sweep was rejected; the 2026-06-11
-`max_base_bars=64` adoption is a *global* default, validated by ETH replication, not an ETH
-fit). Its IS/OOS columns are vs **ETH's own B&H (IS +0.40 / OOS +0.59)**, not BTC's — all
-columns clear it, but note the gate's adoption moved ETH's (eroded) lockbox OOS +1.19→+0.83
-while lifting IS +1.01→+1.12; the **forward adjudicates**. cDP vs the BTC book is not yet
-measured on a common basis (its equity-path cBTC is −0.03 — promising for the combination
-stage). Not in the lift-over-null table (the random-hedge null floor was calibrated on BTC).
-**Forward accruing** since the 2026-06-10 23:00 per-(strategy, product) boundary, via the
-weekly cron's ETH line; no capital before it confirms.
+\*\*\* `density_pullback_eth` runs on **GMO_ETH_JPY**: the shared dp defaults + the
+**ETH-only `invalidation_depth=0.25`** failed-breakout exit (Strategy C″, 2026-06-11 —
+selected on ETH lockbox-IS WF; a smooth 0.10–0.35 plateau, NOT the BTC-rejected geometry:
+on ETH the exit cuts the stop bleed for a smaller winner cost). Its IS/OOS columns are vs
+**ETH's own B&H (IS +0.40 / OOS +0.59)**, not BTC's — all columns clear it, incl.
+15 bp/side OOS +0.82. cDP vs the BTC book is not yet measured on a common basis (its
+equity-path cBTC is −0.01). Not in the lift-over-null table (the null floor was calibrated
+on BTC). **Forward accruing** since the 2026-06-10 23:00 per-(strategy, product) boundary
+via the weekly cron; the ETH lockbox has been consumed twice for this family, so the
+forward is the only remaining honest test — no capital before it confirms.
 
 ## Read at a glance
 
@@ -155,11 +162,11 @@ weekly cron's ETH line; no capital before it confirms.
   **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
   most diversifying (cDP +0.10), now **5/6 folds**. The IS-Sharpe giveback (to +1.51) bought DD,
   consistency (82% quarters) and the early-2021 regime; only the 2023 raging bull stays negative.
-- **density_pullback (ETH)** — the same config (no ETH fit) carries a real-but-diluted edge
-  on a second asset (IS +1.12 / OOS +0.83 vs ETH's *rising* B&H +0.40/+0.59, cBTC −0.03);
-  the max_base gate lifted its IS but gave back lockbox OOS — forward adjudicates.
-  vol_expansion_ride did **not** transfer; ETH band re-tuning made dp worse — the gate works
-  in absolute-% terms.
+- **density_pullback_eth** — the dp edge on a second asset, plus the ETH-only invalidation
+  exit (IS +1.31 / OOS +1.33 vs ETH's *rising* B&H +0.40/+0.59; OOS_DD 0.07; cBTC −0.01).
+  The C″ exit recovered the lockbox OOS the max_base gate had given back (+0.83→+1.33).
+  vol_expansion_ride did **not** transfer; ETH band re-tuning failed (the tightness gate is
+  absolute-%); the invalidation exit is the one knob whose verdict ETH *reversed*.
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below

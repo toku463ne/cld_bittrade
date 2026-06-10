@@ -60,10 +60,11 @@ LOCKBOX_BOUNDARIES: dict[str | tuple[str, str], tuple[pd.Timestamp, str]] = {
     # component's max_base_bars=64 adoption (same data cutoff — no newer BTC bars were seen).
     # This is the book that would actually trade live.
     "combo_dp_ver": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-11"),
-    # density_pullback on GMO_ETH_JPY (per-PRODUCT key): the transfer-test promote decision
-    # (2026-06-11) and the max_base=64 ETH replication both consumed ETH data through the
-    # 2026-06-10 23:00 ETH cache end, so its forward clock starts there.
-    ("density_pullback", "GMO_ETH_JPY"): (pd.Timestamp("2026-06-10 23:00:00+09:00"), "2026-06-11"),
+    # density_pullback_eth on GMO_ETH_JPY (per-PRODUCT key): the transfer-test promote
+    # decision, the max_base=64 ETH replication AND the C″ invalidation_depth=0.25 adoption
+    # (incl. its one lockbox look) all consumed ETH data through the 2026-06-10 23:00 ETH
+    # cache end, so the variant's forward clock starts there.
+    ("density_pullback_eth", "GMO_ETH_JPY"): (pd.Timestamp("2026-06-10 23:00:00+09:00"), "2026-06-11"),
 }
 # Fallback for any strategy without an explicit entry (the original density boundary).
 DEFAULT_LOCKBOX: tuple[pd.Timestamp, str] = (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07")

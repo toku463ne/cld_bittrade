@@ -312,6 +312,32 @@ the trail-winner count collapsing** (the BTC failure mode was the opposite). Rep
 depths are no-ops (the zs-stop-fires-first geometry). One lockbox look only on an adopted
 config; miss any bar → kill, knob stays no-op on ETH too.
 
+**RESULT (2026-06-11): ADOPTED ETH-only — `density_pullback_eth` registered with
+`invalidation_depth=0.25`.** ETH's geometry reverses the BTC verdict on all three bars
+(grid extended to {0.10…1.25} to rule out the boundary-cell trap):
+
+| depth | IS eqSh | WF-IS | mean | stops / bleed / trails |
+|---|---|---|---|---|
+| baseline | +1.13 | 3/6 | +0.58 | 160 / −2.17 / 65 |
+| 0.10 | +1.15 | 5/6 | +0.94 | 207 / −1.18 / 29 |
+| 0.15–0.20 | +1.08/+1.13 | 5/6, 4/6 | +0.89 | — |
+| **0.25** | **+1.31** | **5/6** | **+0.95** | 185 / −1.67 / 45 |
+| 0.35 | +1.32 | 4/6 | +0.89 | 171 / −1.80 / 58 |
+| 0.5→1.25 | — | 4/6→3/6 | +0.71→+0.59 | smooth decay to no-op |
+
+(i) the whole **0.10–0.35 band is a plateau** (mean +0.89…+0.95), smooth decay to the
+no-op side ✓; (ii) 5/6 folds vs 3/6, f1/f6 flip positive ✓; (iii) **bleed falls**
+(−2.17→−1.67 at 0.25) — on ETH the invalidation books small early losses instead of full
+zs stops; trails drop 65→45 but the bleed offset nets clearly positive (the BTC failure
+had no bleed offset) ✓. Cell = 0.25: best mean, most winner-preserving strong cell.
+**One lockbox look (the permitted one):** IS **+1.31** / OOS **+1.33** (vs ETH B&H
++0.40/+0.59) — OOS *recovers* the max_base giveback (+0.83→+1.33); 10 bp/side IS +0.93 /
+OOS +1.01; 15 bp/side OOS +0.82. Row: n 252, OOS_DD 0.07, full-series WF 5/6.
+**BTC's rejection stands** (base default `invalidation_depth=None`). Forward: variant
+boundary ("density_pullback_eth", GMO_ETH_JPY) @ 2026-06-10 23:00, weekly cron switched
+to the variant. The lockbox has now been consumed twice on ETH for this family — the
+forward is the only remaining honest test.
+
 **2026-06-11 (later) — `max_base_bars=64` adopted into the dp default; ETH was the
 deciding evidence.** The base-length stale-tail finding (BTC, rejected 2026-06-10 as
 winner's-curse-sized + partly OOS-peeked) **replicated on ETH** — per-trade (64+ tail

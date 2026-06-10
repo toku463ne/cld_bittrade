@@ -67,6 +67,17 @@ def test_max_base_bars_validation_and_default() -> None:
         DensityPullbackStrategy(max_base_bars=0)
 
 
+def test_density_pullback_eth_variant_registered() -> None:
+    from src.strategy.density_pullback import DensityPullbackEthStrategy
+    from src.strategy.registry import get_strategy
+
+    s = get_strategy("density_pullback_eth")
+    assert isinstance(s, DensityPullbackEthStrategy)
+    assert s.invalidation_depth == 0.25  # the ETH-only adoption (C'')
+    # The BTC default must remain off — the BTC rejection stands.
+    assert DensityPullbackStrategy().invalidation_depth is None
+
+
 def test_combo_dp_ver_registered_and_multi() -> None:
     from src.strategy.combo_dp_ver import ComboDpVerStrategy
     from src.strategy.registry import get_strategy

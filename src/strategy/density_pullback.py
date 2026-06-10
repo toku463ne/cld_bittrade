@@ -415,7 +415,40 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
 #     Smooth from the no-op side (128 = literal no-op -> 96 -> 64 monotone), harmful
 #     below — no adoptable region. Knob stays (no-op at None). Harness:
 #     src/backtest/analysis/density_pullback_baselen_ab.py.
+class DensityPullbackEthStrategy(DensityPullbackStrategy):
+    """density_pullback for GMO_ETH_JPY: + failed-breakout invalidation exit.
+
+    Identical to the base strategy except ``invalidation_depth=0.25`` — ADOPTED
+    **ETH-only** 2026-06-11 (Strategy C″, pre-registered): on ETH the exit's
+    mechanism is the *reverse* of the BTC failure — the invalidation books small
+    early losses instead of full zs stops (IS stop bleed −2.17 → −1.67) and the
+    whole depth band 0.10–0.35 is a smooth WF plateau (mean +0.58 → +0.89…+0.95,
+    3/6 → 4-5/6 folds; 0.25 = best mean, most winner-preserving strong cell).
+    One lockbox look: IS +1.31 / OOS +1.33 vs ETH B&H +0.40/+0.59; 15 bp/side
+    OOS +0.82. On BTC the knob remains REJECTED (None) — see the knob history.
+    """
+
+    name = "density_pullback_eth"
+    description = (
+        "density_pullback tuned for GMO_ETH_JPY: failed-breakout invalidation "
+        "exit (depth=0.25) on top of the shared defaults; ETH-only adoption."
+    )
+
+    def __init__(self, **kwargs: object) -> None:
+        """Initialise with the ETH-adopted invalidation depth."""
+        kwargs.setdefault("invalidation_depth", 0.25)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+
+
 # Knob history (2026-06-11):
+#   * invalidation_depth=0.25 ADOPTED ETH-ONLY (DensityPullbackEthStrategy above; BTC
+#     default stays None/rejected). ETH's geometry reverses the BTC verdict: on BTC the
+#     exit clipped dip-then-run winners without cutting bleed; on ETH it cuts the stop
+#     bleed (IS −2.17 -> −1.67 at 0.25; −1.18 at 0.1) for a smaller winner cost, a
+#     smooth 0.10–0.35 plateau (WF mean +0.89…+0.95 vs baseline +0.58), folds 3/6 ->
+#     5/6 (f1/f6 flip positive). Selected on ETH lockbox-IS WF only; one lockbox look
+#     IS +1.31 / OOS +1.33 (vs ETH B&H +0.40/+0.59), 15bp/side OOS +0.82. Harness:
+#     src/backtest/analysis/density_pullback_eth_invalidation_sweep.py.
 #   * max_base_bars=64 ADOPTED as default — the 2026-06-10 rejection is REVERSED by
 #     independent-asset replication on ETH (GMO_ETH_JPY, imported 2026-06-11): the
 #     BTC-chosen 64 cell, tested UNTUNED on ETH, improves ETH at the per-trade level
