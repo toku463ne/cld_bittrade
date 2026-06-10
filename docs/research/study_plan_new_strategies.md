@@ -219,3 +219,27 @@ OOS 2025-04-01→2026-04-01), GMO_ETH_JPY 1h:
 Miss (1) or (2) for a strategy → that edge **does not transfer**; record and stop (no
 re-tuning rescue). Correlation to the BTC book is a *diagnostic for the combination stage
 only*, per the §priority rule.
+
+**RESULT (2026-06-11, one evaluation, untuned).** Import: 44,763 ETH 1h bars (99.8% of
+BTC's coverage), 2 low-coverage days. ETH's own B&H lockbox Sharpe: **IS +0.40 / OOS
++0.59** — note the ETH OOS window *rose* (+18%), so the OOS bar here is a rising market
+(harder than BTC's falling-market OOS bar).
+
+| strategy | IS_sh | OOS_sh | OOS@10bp/side | OOS@15bp/side | WF | verdict |
+|---|---|---|---|---|---|---|
+| density_pullback | +1.01 ≥ .40 ✓ | **+1.19 ≥ .59 ✓** | **+0.95 ✓** | +0.80 ✓ | 4/6 ✓ | **TRANSFERS — promote** |
+| vol_expansion_ride | +1.17 ≥ .40 ✓ | **+0.41 < .59 ✗** | −0.03 ✗ | −0.31 | 4/6 | **KILL — does not transfer** |
+
+- **density_pullback transfers**: passes every registered gate including the 15 bp/side
+  stress (margin to spare: +0.80 vs +0.59). It is a *weaker* edge than on BTC (IS +1.01
+  vs +1.81, mean_r +0.0038 vs +0.0060, IS_DD 0.46 vs 0.31, WF 4/6 vs 6/6, n 264) — real
+  but diluted. The value-area retest mechanism is not BTC-specific.
+- **vol_expansion_ride does not transfer**: its ETH OOS (+0.41) trails simply holding
+  ETH, and the edge is fully dead at the alt cost bar (10 bp/side → −0.03). Recorded;
+  no re-tuning rescue per the registration. The squeeze→burst edge appears
+  venue/asset-specific (or BTC's burst microstructure is special).
+- Next for dp-on-ETH (promotion path): its forward clock must start at **2026-06-10
+  23:00** (today's cache end — the promote *decision* consumed ETH data through then,
+  even though no parameter was tuned), which needs per-(strategy, product) boundaries in
+  `paper_forward`. Correlation to the BTC book: cBTC −0.03 on the equity path
+  (diagnostic; combination-stage).
