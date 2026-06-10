@@ -34,6 +34,16 @@ GMO_BTC_JPY 1h. Regenerate any row with
 > invalidation exit; stale-box/base-length gate — the classical "longer base = stronger
 > breakout" is *inverted* at 1h; swap-leak hypothesis refuted) — its row is unchanged; see
 > `density_pullback.md`.
+>
+> **2026-06-11 — ETH transfer test** (pre-registered gates; `study_plan_new_strategies.md`
+> §C/C′): **`density_pullback` TRANSFERS to GMO_ETH_JPY untuned** (row below, its own
+> benchmark: ETH B&H lockbox **IS +0.40 / OOS +0.59** — the ETH OOS window *rose* +18%, a
+> harder bar) and survives **15 bp/side** (OOS +0.80). **`vol_expansion_ride` does NOT
+> transfer** (ETH OOS +0.41 < B&H; dead at 10 bp/side → −0.03) — the squeeze→burst edge is
+> asset-specific. ETH-specific re-tuning of dp's tightness gate was swept and **NOT adopted**
+> (edge falls monotonically as the gate loosens; the gate is **absolute-%**, not
+> vol-quantile — ETH's rarer fires are load-bearing). Also: the combo **slot sweep** found
+> 6 slots ≈ the 12-slot book on every metric (see \*\* note).
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -51,6 +61,7 @@ GMO_BTC_JPY 1h. Regenerate any row with
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **combo_dp_ver** | 664 | **+2.20** | 0.31 | 0.38 | +0.0061 | **+1.57** | 0.18 | **+1.32** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 428 | **+1.81** | 0.36 | 0.31 | +0.0060 | **+1.26** | 0.18 | **+1.07** | **6/6** | +0.06 | +1.00 | **ship✓** |
+| **density_pullback (ETH)**\*\*\* | 264 | +1.01 | 0.31 | 0.46 | +0.0038 | **+1.19** | 0.14 | **+1.10** | 4/6 | −0.03 | — | **candidate (fwd owed)** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
@@ -98,7 +109,20 @@ carry over from the prior snapshot — the only non-uniform rows in the table.
 cDP is trivially high because dp is ~⅔ of its trades. Same peak capital as dp alone (combined
 occupancy peaks at 11/12, **zero** historical slot contention); the components' weak WF folds
 are complementary (dp's 2022-bear ↔ ver's 2023-bull), giving 6/6 folds and 94% quarterly
-consistency on the 80/20 basis. This is the book the live-forward tracks.
+consistency on the 80/20 basis. This is the book the live-forward tracks. **Slot sweep**
+(`combo_slots_sweep.py`, 2026-06-10): 6 slots matches the 12-slot book on every metric (IS
++1.95/OOS +1.16/6-6 folds, PnL even +1%; occupancy p95 = 4); erosion starts at 4 and is real
+at ≤3. `max_slots` stays **12** in code (a budget guarantee, not a tuned knob — changing it
+would re-select on the lockbox), but **6 lots is the capital-planning number**.
+
+\*\*\* `density_pullback (ETH)` runs on **GMO_ETH_JPY** with **registry defaults — zero
+ETH-specific tuning** (the re-tuning sweep was rejected, see the 2026-06-11 changelog). Its
+IS/OOS columns are vs **ETH's own B&H (IS +0.40 / OOS +0.59)**, not BTC's, and its OOS@10bp
+margin is wide (15 bp/side still +0.80). cDP vs the BTC book is not yet measured on a common
+basis (its equity-path cBTC is −0.03 — promising for the combination stage). Not in the
+lift-over-null table (the random-hedge null floor was calibrated on BTC). **Forward owed:**
+needs a per-(strategy, product) boundary (2026-06-10 23:00) in `paper_forward` + a cron line
+before any capital.
 
 ## Read at a glance
 
@@ -117,6 +141,10 @@ consistency on the 80/20 basis. This is the book the live-forward tracks.
   **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
   most diversifying (cDP +0.10), now **5/6 folds**. The IS-Sharpe giveback (to +1.51) bought DD,
   consistency (82% quarters) and the early-2021 regime; only the 2023 raging bull stays negative.
+- **density_pullback (ETH)** — the same untuned config carries a real-but-diluted edge on a
+  second asset (OOS +1.19 vs ETH's *rising* B&H +0.59, cost-robust to 15 bp/side, cBTC −0.03).
+  vol_expansion_ride did **not** transfer; ETH-specific re-tuning made dp worse — the defaults
+  are the optimum there too.
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below

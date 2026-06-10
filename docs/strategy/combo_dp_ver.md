@@ -33,6 +33,23 @@ already-shipped configs, so selection risk is minimal.
   Absolute DD is flat (~0.48 of one-slot notional) while the book earns ~+55% more trades
   and +0.42 IS Sharpe, so return/DD improves materially.
 
+## Slot sweep (2026-06-10, `combo_slots_sweep.py`)
+
+| slots | IS eqSh | OOS eqSh | n IS (drops) | IS PnL | PnL/slot | WF |
+|---|---|---|---|---|---|---|
+| 12 | +1.92 | +1.16 | 698 (0) | 34,454 | 2,871 | 6/6, +1.62 |
+| 8 | +1.94 | +1.16 | 692 (6) | 34,656 | 4,332 | 6/6, +1.64 |
+| **6** | **+1.95** | **+1.16** | 688 (10) | 34,819 | 5,803 | 6/6, +1.65 |
+| 4 | +1.96 | +1.13 | 671 (27) | 32,643 | 8,161 | 6/6, +1.64 |
+| 3 | +1.84 | +1.26 | 631 (67) | 27,510 | 9,170 | 6/6, +1.59 |
+| 2 | +1.65 | +1.25 | 556 (142) | 19,980 | 9,990 | 6/6, +1.45 |
+
+**6 slots matches the 12-slot book on every metric** (PnL even +1% — contention happened to
+drop net losers); erosion starts at 4 (−5% PnL, OOS dips) and is real at ≤3. Decision:
+`max_slots` stays **12 in code** — it is a budget *guarantee*, not a tuned knob, and lowering
+it now would re-select on the same lockbox — but **6 lots is the capital-planning number**
+(occupancy p95 = 4.0, so 6 covers the book with headroom).
+
 ## Caveats / live notes
 
 - Peak occupancy 11 of 12 leaves only 1 slot of headroom historically; a future overlap
