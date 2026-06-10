@@ -94,6 +94,24 @@ a 7-cell sweep, and the 64+ "negative tail" read leaned on the OOS bucket column
 is weakly positive) — a partial OOS-peek, so not adoptable under the project's hygiene rule.
 Net: no adoptable region; structural finding logged.
 
+**2026-06-10 — swap-aware exit tuning: hypothesis refuted, ratchet verified cost-robust**
+(no change shipped). Under `--bitflyer-realistic` (swap 0.04%/day + 5× burst spread on stop
+exits) density_pullback's total cost is 3.4× calm (1846 → 6345 JPY: base 1846 / burst 2053 /
+swap 2445) and the 80/20 gate drops IS 1.50→1.31, OOS 0.95→0.58 (still ships). The worry was
+a *swap leak on the 50-bar trail rides* → re-tune the ratchet. The decomposition refutes it:
+the 48–96h trail winners pay the most swap (1339 JPY) but it is only **3.4% of their PnL**
+(+41.0k→+39.6k; 22/158 flip negative) — the rides absorb swap easily. The realistic-cost
+damage concentrates on the **stops via the burst surcharge** (stop bucket −2660 JPY; the two
+flipped IS quarters are 2023Q2 ≈ 0 noise and 2023Q3, a stop-heavy −0.10 swing). The
+pre-registered verification sweep (`density_pullback_recalc_cost_ab.py`, recalc_bars
+24/36/48/72/96 × calm/realistic, 6-fold WF) shows **the optimum does not move**: 48 is the
+argmax on both bases (calm WF mean 1.18 vs 1.01–1.06; realistic 0.92 vs 0.76–0.79; best OOS
+on both), and the realistic basis subtracts ~0.25–0.3 WF mean *uniformly* across all recalc
+values rather than reshaping the curve. The exit was not tuned to the wrong cost model. The
+residual realistic-cost exposure is the burst surcharge on the 58% stop exits — an entry/
+stop-frequency property, not an exit-knob one (and the invalidation/base-length attempts on
+that side both failed; the live-forward remains the calibrator of the 5× burst assumption).
+
 **Sizing note.** With `max_slots=12` and a **0.10 BTC budget**, per-slot lot ≈ `0.0083`
 BTC bounds peak exposure to 0.10 BTC. Earnings (and drawdown) scale **linearly** with
 lot: the 0.001-lot backtest ×10 (≈ `max_slots=10`, lot 0.01) ≈ **+304k JPY over 5.1y,
