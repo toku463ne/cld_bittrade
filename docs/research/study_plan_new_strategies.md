@@ -197,3 +197,25 @@ gates):
   the grid **net-positive across the 2022 crash and 2024 bull** sub-periods. Full check at
   Stage 3 on the built strategy; the Stage-1 probe surfaces the tail.
 - Per-strategy ship/consistency/correlation thresholds: as in the gates table above.
+
+## Strategy C — transfer test: shipped edges on GMO ETH_JPY (2026-06-10)
+
+**Hypothesis:** the two shipped edges (`density_pullback` value-area retest;
+`vol_expansion_ride` squeeze→burst) are *structural*, not BTC-specific, so they should
+transfer to another liquid JPY pair **untuned** (registry defaults, zero parameter changes,
+one evaluation — no tuning on ETH, ever, before its own forward).
+
+**Pre-registered PASS criteria (recorded 2026-06-10 BEFORE running, per the §rule):**
+For each strategy independently, on the fixed lockbox split (IS pre-2025-04-01 /
+OOS 2025-04-01→2026-04-01), GMO_ETH_JPY 1h:
+
+1. **Edge:** lockbox equity Sharpe ≥ **ETH's own B&H Sharpe** in **BOTH** splits
+   (split-matched, displaced-capital principle — same as the BTC gate).
+2. **Cost:** still clears ETH's OOS B&H at **10 bp/side** (alt spreads are wider than
+   BTC's — this bar is mandatory, and 15 bp is reported as the stress margin).
+3. **Robustness (report, promote bar):** fixed-config 6-fold WF — ≥ **4/6** folds positive
+   to promote to candidate; < 4/6 = demote regardless of (1).
+
+Miss (1) or (2) for a strategy → that edge **does not transfer**; record and stop (no
+re-tuning rescue). Correlation to the BTC book is a *diagnostic for the combination stage
+only*, per the §priority rule.
