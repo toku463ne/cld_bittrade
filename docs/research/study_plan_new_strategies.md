@@ -318,6 +318,19 @@ round-trip per occurrence**) is **> 0 net**. Any survivor → Stage 2 (build the
 tradeable overlay) + one lockbox-OOS look + the 1m swap-cutoff microstructure as a refinement.
 No survivor → drop the family (record the calendar map as the negative).
 
+**RESULT (2026-06-11): KILLED — no calendar edge** (`stage1_calendar_probe.py`; BTC/ETH IS
+~34.5k bars each). **Named family:** the strongest bucket is Monday (mean +1.34 bp, **t=1.41,
+p=0.16**) — fails even an *uncorrected* single test, nowhere near Holm; its overlay also halves
+across the split (early +45.6 → late +11.2 bp) and is weak on ETH (+0.74 bp). Every other named
+bucket is |t|<0.9. Net-of-cost columns are mostly negative (a 1 h–block overlay can't clear
+4 bp). **Grid:** observed max-|t| = **2.83** vs the rotation-null 95th pct **3.57** (p=0.497) —
+the best of 168 cells (Thu 12:00, −10 bp) is *below* what shuffled calendars routinely produce,
+the textbook "168 cells manufacture an ~|t|≈3.5 winner from noise" result. Per the
+pre-registration: **drop the JST calendar/flow family.** The discipline did its job — without
+the rotation null, "Thu 12:00 −10 bp, n=207" would have looked like a finding. The 1m
+swap-cutoff microstructure refinement is **not** pursued (the 1h cutoff buckets pre/post are
+flat: pre −0.82 bp t=−0.70, post +0.62 bp t=0.45 — no signal to refine).
+
 ## Strategy D — stale-box fade (anti-density_pullback; pre-registered 2026-06-11)
 
 **Hypothesis (from our own diagnostics, both assets):** breakouts from *mature* value
