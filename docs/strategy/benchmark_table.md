@@ -62,6 +62,16 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 > +0.58→+0.95, 3/6→5/6 folds), a bleed-cutting mechanism (the opposite of BTC's failure),
 > and the one lockbox look recovered the max_base OOS giveback (+0.83→**+1.33**). Row
 > updated below; the ETH forward switched to the variant.
+>
+> **2026-06-11 (C‴) — three more ETH items:** (5) **keep both sides** (ETH shorts carry
+> MORE than longs, +0.79 vs +0.27 sum_r, and pay in rising regimes too); (3) swap refuted
+> again (3.3× cost = burst-on-stops) but the **recalc verification found the argmax moved
+> on BOTH cost bases → `recalc_bars=72` adopted ETH-only** (smooth 64–72 plateau; BTC
+> stays 48). (4) `limit_offset` **rejected** — the edge is a local max from both sides.
+> Row regenerated at recalc=72: IS +1.43, **WF 6/6**, but lockbox OOS reads +0.84 vs the
+> +1.33 the C″ config posted — the spent lockbox keeps disagreeing with ETH IS-WF
+> selections (noise on ~50 trades, or accumulating fold-fit). **The pristine forward at
+> 72 adjudicates; fallback = the C″ config (recalc=48).**
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -79,7 +89,7 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **combo_dp_ver** | 651 | **+2.23** | 0.31 | 0.38 | +0.0062 | **+1.66** | 0.18 | **+1.41** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 415 | **+1.84** | 0.36 | 0.32 | +0.0061 | **+1.35** | 0.18 | **+1.16** | **6/6** | +0.06 | +1.00 | **ship✓** |
-| **density_pullback_eth**\*\*\* | 252 | **+1.31** | 0.26 | 0.29 | +0.0040 | **+1.33** | 0.07 | **+1.21** | 5/6 | −0.01 | — | **candidate (fwd accruing)** |
+| **density_pullback_eth**\*\*\* | 252 | **+1.43** | 0.25 | 0.30 | +0.0049 | +0.84 | 0.08 | +0.75 | **6/6** | −0.00 | — | **candidate (fwd accruing)** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |

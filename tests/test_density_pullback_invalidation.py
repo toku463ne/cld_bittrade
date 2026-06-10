@@ -74,8 +74,11 @@ def test_density_pullback_eth_variant_registered() -> None:
     s = get_strategy("density_pullback_eth")
     assert isinstance(s, DensityPullbackEthStrategy)
     assert s.invalidation_depth == 0.25  # the ETH-only adoption (C'')
-    # The BTC default must remain off — the BTC rejection stands.
+    assert s.recalc_bars == 72  # ETH-only slower ratchet (C''')
+    # The BTC defaults must remain — those verdicts stand.
     assert DensityPullbackStrategy().invalidation_depth is None
+    assert DensityPullbackStrategy().recalc_bars == 48
+    assert DensityPullbackStrategy().limit_offset == 0.0  # offset rejected (C''')
 
 
 def test_combo_dp_ver_registered_and_multi() -> None:

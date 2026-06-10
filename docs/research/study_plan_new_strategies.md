@@ -352,6 +352,30 @@ involved; the ETH lockbox OOS is consumed and is NOT touched):
   not worse), which would then trigger a finer plateau grid; anything less = keep 0.0.
 - **(5) short-side per-fold:** diagnostic only, no build under any outcome.
 
+**RESULTS (2026-06-11, all three):**
+
+- **(5) keep both sides — emphatic.** ETH IS shorts carry MORE than longs (sum_r +0.79 vs
+  +0.27) and pay in a *rising* fold too (f3, B&H +0.41: shorts +0.31 vs longs −0.12), plus
+  the falling f6. Long-only is off the table; no build.
+- **(3a) swap refuted again** (same shape as BTC): ETH realistic cost 3.3× calm = base 31 /
+  burst 45 / swap 26 JPY; the 48–96h trail winners eat only 2.0% (2/41 flip negative); the
+  damage is the burst surcharge on the <24h loser buckets (12–16%).
+- **(3b) recalc verification → the argmax MOVED: `recalc_bars=72` ADOPTED ETH-only.**
+  Not a cost-model effect — the argmax moved on **both** bases identically (coarse:
+  48→72 mean +0.95→+1.08 calm / +0.73→+0.86 realistic; fine grid: a smooth **64–72
+  plateau**, 80+ falls away; realistic folds 3/6→4/6). ETH's higher vol wants a slower
+  ratchet than BTC's 48 (which stays verified-argmax on BTC). **Caveats recorded:** no
+  lockbox confirmation exists for this cell (lockbox spent; the C″ +1.33 OOS look was at
+  48); the post-adoption *reporting* row shows lockbox OOS +0.84 at 72 vs +1.33 at 48 —
+  the third time an ETH IS-WF selection disagrees with the spent lockbox OOS. Either
+  1-year-window noise (~50 trades) or accumulating IS-fold fit: **the pristine forward at
+  72 adjudicates; fallback on a weak forward = the C″ config (recalc=48).** Full-series
+  WF at 72: **6/6**. Post-adoption row: n 252, IS +1.43, OOS +0.84, OOS@10bp +0.75,
+  OOS_DD 0.08, cBTC −0.00.
+- **(4) limit_offset REJECTED — the edge is the natural level.** 0.0 is a local max from
+  both sides (−0.1: +0.79/4-6 with 290 fills; 0.0: **+0.95/5-6**; +0.1: +0.37/3-6 with 194
+  fills). Far from the ≥+0.2 bar; knob stays 0.0 (no-op control).
+
 **2026-06-11 (later) — `max_base_bars=64` adopted into the dp default; ETH was the
 deciding evidence.** The base-length stale-tail finding (BTC, rejected 2026-06-10 as
 winner's-curse-sized + partly OOS-peeked) **replicated on ETH** — per-trade (64+ tail

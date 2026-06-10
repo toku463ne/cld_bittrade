@@ -453,11 +453,36 @@ class DensityPullbackEthStrategy(DensityPullbackStrategy):
     )
 
     def __init__(self, **kwargs: object) -> None:
-        """Initialise with the ETH-adopted invalidation depth."""
+        """Initialise with the ETH-adopted invalidation depth + slower ratchet."""
         kwargs.setdefault("invalidation_depth", 0.25)
+        # ETH-only ratchet speed (C‴, 2026-06-11): the BTC-tuned 48 cuts ETH rides
+        # short — the IS-WF argmax sits on a 64–72 plateau IDENTICAL under both the
+        # calm and bitFlyer-realistic cost bases (mean +0.95→+1.08 calm, +0.73→+0.86
+        # realistic; realistic folds 3/6→4/6). NO lockbox confirmation exists for
+        # this cell (the C″ look was at 48; lockbox spent) — the live-forward is its
+        # first out-of-selection test.
+        kwargs.setdefault("recalc_bars", 72)
         super().__init__(**kwargs)  # type: ignore[arg-type]
 
 
+# Knob history (2026-06-11, C‴):
+#   * limit_offset — pullback-limit placement {-0.1, 0, +0.1} x box height — swept on
+#     ETH lockbox-IS WF: the EDGE (0.0) is a local max from BOTH sides (-0.1 mean
+#     +0.79/4-6, 0.0 +0.95/5-6, +0.1 +0.37/3-6). REJECTED; the broken edge is the
+#     natural level. Knob stays (no-op at 0.0). Harness:
+#     src/backtest/analysis/density_pullback_eth_offset_sweep.py.
+#   * recalc_bars=72 ADOPTED ETH-ONLY (DensityPullbackEthStrategy; BTC stays 48 —
+#     verified argmax there under both cost bases). ETH IS-WF: smooth 64-72 plateau
+#     IDENTICAL under calm AND bitflyer-realistic (mean +0.95->+1.08 / +0.73->+0.86,
+#     realistic folds 3/6->4/6); 80+ falls away. ETH vol wants a slower ratchet.
+#     HONEST CAVEATS: no lockbox confirmation exists for this cell (spent; the C''
+#     +1.33 OOS look was at 48; post-adoption reporting row shows lockbox OOS +0.84
+#     at 72 — the spent lockbox keeps disagreeing with IS-WF selections on ETH);
+#     full-series WF 6/6. The live-forward is this config's first out-of-selection
+#     test; fallback on a weak forward = the C'' config (recalc=48).
+#   * swap-leak on ETH: REFUTED again (real cost 3.3x calm = burst-on-stops; trail
+#     rides eat only 2%). Short-side per-fold: ETH shorts CARRY the book (IS sum_r
+#     +0.79 vs longs +0.27, pay in rising f3 too) — keep both sides, no build.
 # Knob history (2026-06-11):
 #   * invalidation_depth=0.25 ADOPTED ETH-ONLY (DensityPullbackEthStrategy above; BTC
 #     default stays None/rejected). ETH's geometry reverses the BTC verdict: on BTC the
