@@ -267,3 +267,28 @@ allowed under selection hygiene:
   eqSharpe ≥ ETH's own B&H (split-matched) **and** OOS @10bp/side ≥ ETH's OOS B&H.
   No further knobs after seeing the lockbox; any later knob (sl_mult, zigzag scale…)
   = a new registration and a forward-clock restart.
+
+**RESULT (2026-06-11): NOT ADOPTED — the normalization hypothesis is refuted on the
+edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS only):
+
+| band% | IS eqSh | n | WF-IS folds | mean |
+|---|---|---|---|---|
+| 0.030 (default) | **+1.01** | 264 | 3/6 | +0.45 |
+| 0.035 | +0.74 | 337 | 4/6 | +0.41 |
+| 0.040 | +0.72 | 446 | 3/6 | +0.46 |
+| 0.045 | +0.71 | 514 | 4/6 | **+0.63** |
+| 0.050 | +0.44 | 586 | 4/6 | +0.45 |
+| 0.060 | +0.02 | 719 | 3/6 | +0.07 |
+
+- Adoption bar (i) **fails**: 0.045's mean +0.63 is a **single-cell bump** (neighbours
+  +0.46/+0.45) — the knife-edge pattern, not a smooth region.
+- The mechanism prediction held on *fire count* (264→514, BTC-like) but inverted on
+  *edge*: IS eqSharpe **declines monotonically** as the gate loosens (1.01→0.02). The
+  extra fires a looser gate admits are worse trades.
+- **Structural finding:** the tightness gate works in **absolute** percentage terms
+  across assets, not BTC-relative quantile terms — the deep-tail 17% acceptance on ETH
+  is load-bearing, not a mis-scaling. Do not re-test quantile-normalized tightness.
+- Consequence: `density_pullback` on ETH stays at **registry defaults** (the
+  transfer-test config, lockbox IS +1.01 / OOS +1.19, OOS@10bp-side +0.95). No new
+  lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
+  forward boundary at 2026-06-10 23:00 + weekly cron line.
