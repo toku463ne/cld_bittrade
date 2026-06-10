@@ -108,6 +108,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         accept_band: float | None = None,
         invalidation_depth: float | None = None,
         max_base_bars: int | None = 64,
+        limit_offset: float = 0.0,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -168,6 +169,13 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 Do NOT lower below 64: thresholds <= 48 flip a WF fold negative
                 on BTC (the "weak" 32–63 trades still add at the equity level).
                 See the knob history below.
+            limit_offset: Pullback-limit placement, as a fraction of box height
+                relative to the broken edge. Positive = INSIDE the box (deeper
+                concession — a LONG limit below the broken resistance, better
+                price, fewer fills); negative = OUTSIDE (shallower — fills more
+                retests at a worse price). ``0.0`` (default) = the edge itself,
+                the shipped behaviour. The exit config is built around the
+                offset price (it is the actual fill).
             **kwargs: Forwarded to :class:`RandomHedgeStrategy` (exit params, the
                 bad-entry gates, ...). ``entry_prob`` is unused (entries are the
                 breakouts, not random).
@@ -194,6 +202,9 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
             raise ValueError("invalidation_depth must be > 0 or None")
         if max_base_bars is not None and max_base_bars < 1:
             raise ValueError("max_base_bars must be >= 1 or None")
+        if abs(limit_offset) >= 1.0:
+            raise ValueError("limit_offset must be in (-1, 1)")
+        self.limit_offset = limit_offset
         self.invalidation_depth = invalidation_depth
         self.max_base_bars = max_base_bars
         self.accept_band = accept_band
@@ -301,7 +312,14 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                     continue  # no controlled pullback within the window — no trade
                 entry_bar = conf
 
-            entry_ref = near if self.pullback else c  # the price the trade is built around
+            # Pullback-limit price: the broken edge, optionally offset by a fraction
+            # of box height (positive = deeper inside the box). offset=0 -> the edge.
+            if self.pullback:
+                off = self.limit_offset * (hi - lo)
+                lp = near - off if side is Side.LONG else near + off
+            else:
+                lp = c
+            entry_ref = lp  # the price the trade is built around
             legs = self._legs(peak_idx, peak_price, t)
             ctx = ExitContext(side=side, entry_price=entry_ref, zs_history=legs)
             band = self._zs.band(ctx)
@@ -338,7 +356,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                     ref2_time=bars[t].timestamp if inval is not None else None,
                     ref2_price=inval,
                     exit_config=cfg,
-                    limit_price=near if (self.pullback and not confirm) else None,
+                    limit_price=lp if (self.pullback and not confirm) else None,
                     limit_expiry_bars=self.limit_window if (self.pullback and not confirm) else 0,
                 )
             )

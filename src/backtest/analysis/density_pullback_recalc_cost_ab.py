@@ -16,7 +16,10 @@ Run::
     uv run --env-file .env.bt python -m src.backtest.analysis.density_pullback_recalc_cost_ab
 
 Env knobs: ``DP_TF`` (1h), ``DP_PRODUCT`` (GMO_BTC_JPY), ``DP_FOLDS`` (6),
-``DP_RECALC`` (comma list, default ``24,36,48,72,96``).
+``DP_RECALC`` (comma list, default ``24,36,48,72,96``), ``DP_STRATEGY``
+(registry name, default ``density_pullback`` — e.g. ``density_pullback_eth``),
+``DP_IS_ONLY`` (``1`` = restrict everything to the lockbox-IS window, for
+selection-hygiene on a consumed lockbox).
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from src.core.types import Bar, Timeframe, Trade
 from src.data.cache import load_cache
 from src.simulator import MultiSimulator
 from src.simulator.simulator import DEFAULT_FEE_RATE
-from src.strategy.density_pullback import DensityPullbackStrategy
+from src.strategy.registry import get_strategy
 
 # (label, daily_swap_rate, burst_cost_mult)
 BASES: list[tuple[str, float, float]] = [
@@ -49,7 +52,14 @@ def _run(
     bars: list[Bar], recalc: int, swap: float, burst: float
 ) -> tuple[list[float], list[Trade]]:
     """Run one (recalc, cost-basis) cell. Returns ``(equity_curve, trades)``."""
-    strat = DensityPullbackStrategy(recalc_bars=recalc)  # type: ignore[arg-type]
+    from src.strategy.random_hedge import RandomHedgeStrategy
+
+    name = os.environ.get("DP_STRATEGY", "density_pullback")
+    strat = get_strategy(name)
+    assert isinstance(strat, RandomHedgeStrategy)
+    # One-knob override on the registry config; recalc_bars is only read at
+    # dynamic_exit time, so post-init assignment is equivalent to a ctor arg.
+    strat.recalc_bars = recalc
     res = MultiSimulator(
         strat, size=0.001, fee_rate=DEFAULT_FEE_RATE,
         daily_swap_rate=swap, burst_cost_mult=burst,
@@ -68,10 +78,16 @@ def run_sweep() -> None:
     bars = load_cache(tf, product=product).bars
     if not bars:
         raise RuntimeError(f"No {tf.value} bars for {product}.")
+    if os.environ.get("DP_IS_ONLY", "0") == "1":
+        from src.backtest.sign_benchmark import split_lockbox
+
+        bars, _ = split_lockbox(bars)  # selection-hygiene: lockbox-IS window only
     n = len(bars)
     in_bars, oos_bars = split_in_out_sample(bars)
     bounds = _fold_bounds(n, k)
 
+    print(f"strategy={os.environ.get('DP_STRATEGY', 'density_pullback')} "
+          f"is_only={os.environ.get('DP_IS_ONLY', '0')}")
     for base_label, swap, burst in BASES:
         print(f"\n=== cost basis: {base_label} (swap={swap}, burst_mult={burst}) ===")
         print(f"    {'recalc':>7} | {'IS eqSh':>8} {'OOS eqSh':>8} | WF folds  mean")

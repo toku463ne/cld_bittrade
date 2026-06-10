@@ -338,6 +338,20 @@ boundary ("density_pullback_eth", GMO_ETH_JPY) @ 2026-06-10 23:00, weekly cron s
 to the variant. The lockbox has now been consumed twice on ETH for this family — the
 forward is the only remaining honest test.
 
+## Strategy C‴ — ETH exit-cost verification + limit-offset (pre-registered 2026-06-11)
+
+Three items run together on `density_pullback_eth` (lockbox-IS only where selection is
+involved; the ETH lockbox OOS is consumed and is NOT touched):
+
+- **(3) swap/exit-cost:** diagnostic first (cost decomposition by hold bucket). If swap is
+  a non-issue (as on BTC), the `recalc_bars` sweep × {calm, bitFlyer-realistic} is a
+  **verification** — argmax expected to stay at 48 on both bases; it MOVES → the exit was
+  tuned to the wrong cost model and the new argmax needs the plateau treatment.
+- **(4) limit_offset {−0.1, 0, +0.1} × box height:** low prior, 3 cells can't establish
+  smoothness → **adopt only on a LARGE win** (WF-IS mean ≥ +0.2 over baseline AND folds
+  not worse), which would then trigger a finer plateau grid; anything less = keep 0.0.
+- **(5) short-side per-fold:** diagnostic only, no build under any outcome.
+
 **2026-06-11 (later) — `max_base_bars=64` adopted into the dp default; ETH was the
 deciding evidence.** The base-length stale-tail finding (BTC, rejected 2026-06-10 as
 winner's-curse-sized + partly OOS-peeked) **replicated on ETH** — per-trade (64+ tail
