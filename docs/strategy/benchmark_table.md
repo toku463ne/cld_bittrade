@@ -72,6 +72,15 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 > +1.33 the C″ config posted — the spent lockbox keeps disagreeing with ETH IS-WF
 > selections (noise on ~50 trades, or accumulating fold-fit). **The pristine forward at
 > 72 adjudicates; fallback = the C″ config (recalc=48).**
+>
+> **2026-06-11 (later still) — XRP transfer (Strategy F):** **`density_pullback` transfers
+> strongly to GMO_XRP_JPY untuned** (row below; XRP B&H IS +0.60 / OOS −0.24) — 6/6 folds,
+> pays in BOTH bull and bear folds (not a falling-market artifact), promoted with a
+> per-product forward. **`vol_expansion_ride` clears the letter of the gate but is weak**
+> (passes only on XRP's falling OOS, the mirror of its ETH failure; recent fold negative) —
+> not promoted. The value-area-retest mechanism now holds untuned on **3 assets**
+> (BTC/ETH/XRP); the squeeze→burst ride does not transfer cleanly. See
+> `study_plan_new_strategies.md` §F. Families A/B/D/E (orthogonal hunts) all dead.
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -90,6 +99,7 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 | **combo_dp_ver** | 651 | **+2.23** | 0.31 | 0.38 | +0.0062 | **+1.66** | 0.18 | **+1.41** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 415 | **+1.84** | 0.36 | 0.32 | +0.0061 | **+1.35** | 0.18 | **+1.16** | **6/6** | +0.06 | +1.00 | **ship✓** |
 | **density_pullback_eth**\*\*\* | 252 | **+1.43** | 0.25 | 0.30 | +0.0049 | +0.84 | 0.08 | +0.75 | **6/6** | −0.00 | — | **candidate (fwd accruing)** |
+| **density_pullback (XRP)**† | 342 | +1.06 | 0.36 | 0.53 | +0.0053 | **+2.59** | 0.18 | **+2.50** | **6/6** | −0.03 | — | **candidate (fwd accruing)** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
@@ -157,6 +167,16 @@ calibrated on BTC). **Forward accruing** since the 2026-06-10 23:00 per-(strateg
 boundary via the weekly cron — the recalc=72 cell's *first* out-of-selection test (the
 lockbox is spent ×3); fallback on a weak forward = the C″ config (recalc=48). ETH knob
 budget is exhausted until the forward reads; no capital before it confirms.
+
+† `density_pullback (XRP)` runs on **GMO_XRP_JPY** with **untuned global defaults** (Strategy
+F transfer, 2026-06-11; *not* the ETH-tuned variant). Its IS/OOS columns are vs **XRP's own
+B&H (IS +0.60 / OOS −0.24)**, not BTC's. The eye-popping OOS +2.59 is partly displaced capital
+(beating a −34% market), but it is a **real, regime-robust** transfer: 6/6 folds paying in both
+bull (f3/f5) and bear (f6) folds, IS +1.06 clearing its own bar, cost-robust to 10 bp/side. ⚠
+**IS_DD 0.53** is the highest of the three assets (XRP is gappier — a development target).
+`vol_expansion_ride` was tested too and **not promoted** (clears the gate only on XRP's falling
+OOS; recent fold negative). Not in the lift-over-null table (BTC-calibrated null). **Forward
+accruing** since the 2026-06-11 05:00 per-(strategy, product) boundary.
 
 ## Read at a glance
 

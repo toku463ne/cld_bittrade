@@ -49,6 +49,11 @@ TO="$(date +%F)"
     --from "${FROM}" --to "${TO}" --timeframe 1h --symbol ETH_JPY --product GMO_ETH_JPY
   "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
     --strategy density_pullback_eth --timeframe 1h --product GMO_ETH_JPY
+  # density_pullback on XRP (transfer promotion, 2026-06-11; untuned global default).
+  "${UV}" run --env-file .env.bt python -m src.data.import_gmo \
+    --from "${FROM}" --to "${TO}" --timeframe 1h --symbol XRP_JPY --product GMO_XRP_JPY
+  "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
+    --strategy density_pullback --timeframe 1h --product GMO_XRP_JPY
   echo "=== $(date -Is) | done ==="
 } >>"${LOG_FILE}" 2>&1
 

@@ -314,6 +314,36 @@ Miss (1) or (2) → that edge does not transfer to XRP; record, no re-tuning res
 asset-specific tuning is a *separate* later exercise only on a strategy that first passes
 untuned. Correlation to the BTC/ETH books = combination-stage diagnostic only.
 
+**RESULT (2026-06-11, untuned).** Import: 44,875 XRP 1h bars (39–543 JPY span = SEC-suit
+bottom to 2024 spike, clean). XRP B&H lockbox: **IS +0.60 / OOS −0.24** (XRP fell −34% in
+OOS — a *falling*-market bar, like BTC's).
+
+| strategy | IS_sh | OOS_sh | OOS@10bp/side | WF | verdict |
+|---|---|---|---|---|---|
+| density_pullback | +1.06 ≥ .60 ✓ | **+2.59 ≥ −.24 ✓** | **+2.50 ✓** | **6/6** ✓ | **TRANSFERS (strong)** |
+| vol_expansion_ride | +0.84 ≥ .60 ✓ | +0.28 ≥ −.24 ✓ | +0.15 ✓ | 5/6 | passes gate, **weak** |
+
+- **density_pullback — strong, regime-robust transfer (promoted).** All gates cleared on wide
+  margins; per-fold it pays in BOTH rising folds (f3 B&H +1.6 → +1.31; f5 +2.5 → +1.59) and
+  falling ones (f6 B&H −1.5 → **+2.38**) — not a falling-market artifact. The headline OOS
+  +2.59 is inflated by the displaced-capital effect (beating a −34% market) but the IS (+1.06,
+  6/6) and the bull-fold passes make it real. Caveat: **IS_DD 0.53** is the highest of the
+  three assets (XRP is gappier); a development target, not a gate miss. Third asset on which
+  the value-area-retest mechanism holds untuned.
+- **vol_expansion_ride — clears the letter of the gate, but weak.** It passes only because XRP's
+  OOS *fell* (+0.28/+0.15 beats −0.24) — the exact mirror of its **ETH failure** (where OOS
+  rose and ver lost). Per-fold its edge is concentrated in the early SEC-suit era (f1–f3
+  +1.6…+2.1) and the **most-recent fold is negative** (f6 −1.25, overlapping the OOS). So:
+  recorded as a marginal pass, **not promoted** — the same strategy failed the ETH version of
+  this test, and a thin, deteriorating, falling-market-only edge is not capital-worthy without
+  a clean forward. Confirms ver is regime-fragile across assets (already its known weakness).
+
+**Promotion (density_pullback @ XRP):** per-(strategy, product) forward boundary
+`("density_pullback", "GMO_XRP_JPY")` @ 2026-06-11 05:00 (XRP cache end); weekly cron gains an
+XRP import + check. No new strategy class (untuned = the global default); XRP-specific tuning
+is a separate later exercise. The mechanism now holds untuned on **3 assets** — strong
+structural evidence it is not BTC-curve-fit.
+
 ## Strategy E — JST calendar/flow family (pre-registered 2026-06-11)
 
 **Hypothesis:** GMO BTC_JPY has venue/leverage-specific recurring flows — the 00:00 JST swap
