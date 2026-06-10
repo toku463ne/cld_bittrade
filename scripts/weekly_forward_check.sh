@@ -44,6 +44,11 @@ TO="$(date +%F)"
     "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
       --strategy "${STRATEGY}" --timeframe 1h --product "${PRODUCT}"
   done
+  # density_pullback on ETH (transfer-test promotion 2026-06-11; per-product boundary).
+  "${UV}" run --env-file .env.bt python -m src.data.import_gmo \
+    --from "${FROM}" --to "${TO}" --timeframe 1h --symbol ETH_JPY --product GMO_ETH_JPY
+  "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
+    --strategy density_pullback --timeframe 1h --product GMO_ETH_JPY
   echo "=== $(date -Is) | done ==="
 } >>"${LOG_FILE}" 2>&1
 

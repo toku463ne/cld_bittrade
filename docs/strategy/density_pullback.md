@@ -79,6 +79,18 @@ re-acceptance is not a reliable death signal at this timeframe. depth=0.5's 80/2
 bump (+0.95→+1.13) is a single-split artifact contradicted by its worst-of-sweep WF
 mean — the standing lesson about selecting on one OOS peek.
 
+> **2026-06-11 REVERSAL — `max_base_bars=64` ADOPTED as default.** The rejection above was
+> the right call on the evidence at the time; it is reversed by **independent-asset
+> replication**. GMO_ETH_JPY (imported 2026-06-11, dp transfers untuned — see
+> `study_plan_new_strategies.md` §C): the per-trade 64+ stale tail replicates **cleaner**
+> than BTC's (mean_r −0.0065, DR 0.12, free of the BTC read's OOS-peek flag), and the
+> BTC-chosen 64 cell — tested *untuned* on ETH, nothing fitted — improves the ETH equity
+> path (lockbox-IS WF mean +0.45→+0.58, **4/6 folds improve, none worsen**, IS eqSh
+> +1.01→+1.13). On BTC it keeps 6/6 folds and nudges every metric up. The ≤48 region
+> remains harmful — **do not deepen the gate**. Forward clocks for density_pullback,
+> combo_dp_ver and dp-on-ETH were reset at adoption (records were only days old — the
+> cheapest moment to change shipped logic).
+
 **2026-06-10 — `max_base_bars` (stale-box gate) tested and NOT ADOPTED** (no-op control,
 default `None`) — but the diagnostic behind it is a keeper. Base length = consecutive prior
 closes accepted inside their own rolling value-area band. The classical "longer base →

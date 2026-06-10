@@ -292,3 +292,13 @@ edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS o
   transfer-test config, lockbox IS +1.01 / OOS +1.19, OOS@10bp-side +0.95). No new
   lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
   forward boundary at 2026-06-10 23:00 + weekly cron line.
+
+**2026-06-11 (later) — `max_base_bars=64` adopted into the dp default; ETH was the
+deciding evidence.** The base-length stale-tail finding (BTC, rejected 2026-06-10 as
+winner's-curse-sized + partly OOS-peeked) **replicated on ETH** — per-trade (64+ tail
+mean_r −0.0065, DR 0.12) *and* equity (the BTC-chosen cell, untuned on ETH: IS-WF mean
++0.45→+0.58, 4/6 folds up, none down). Adopted while the forward clocks were days old;
+all three forwards (dp, combo_dp_ver, dp@ETH) re-frozen — dp@ETH now has a
+per-(strategy, product) boundary (2026-06-10 23:00) in `paper_forward` and an ETH
+import+check line in the weekly cron. This **changes the ETH config from the
+transfer-test snapshot** — the row regenerates with the gate on.

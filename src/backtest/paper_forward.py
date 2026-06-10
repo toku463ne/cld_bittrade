@@ -43,19 +43,27 @@ from src.strategy.registry import get_strategy
 # DO NOT move an existing entry — moving it re-tunes that strategy's test. A strategy whose
 # shipped LOGIC materially changes earns a NEW (later) boundary at its re-ship cutoff, so its
 # forward record never overlaps the data its new logic was selected on.
-LOCKBOX_BOUNDARIES: dict[str, tuple[pd.Timestamp, str]] = {
-    # density_pullback ship (recency box + limit_window=6), frozen 2026-06-07.
-    "density_pullback": (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07"),
+# Keys are either a strategy name (applies on the default/BTC product) or a
+# (strategy, product) pair for product-specific records — looked up most-specific first.
+LOCKBOX_BOUNDARIES: dict[str | tuple[str, str], tuple[pd.Timestamp, str]] = {
+    # density_pullback RE-ship (max_base_bars=64 stale-box gate adopted 2026-06-11 after
+    # ETH replication): the 64 cell was selected on BTC data through the 2026-06-07 22:00
+    # cache cutoff, so the forward clock RESTARTS there (the prior 2026-06-02 record, ~5
+    # days, was sacrificed at adoption — clocks were cheap).
+    "density_pullback": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-11"),
     # vol_expansion_ride RE-ship (skip_contra_extreme=1 two-sided-burst filter): the contra
     # filter was selected on a walk-forward over data through the 2026-06-07 22:00 cache
     # cutoff, so the forward clock restarts there (re-frozen 2026-06-10). Earlier bars were
     # seen by that selection.
     "vol_expansion_ride": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-10"),
-    # combo_dp_ver (shared 12-slot book of the two above, frozen 2026-06-10): composes two
-    # shipped configs with no new parameters, but the COMBINATION was confirmed on data
-    # through the same 2026-06-07 22:00 cutoff, so its forward clock starts there — the
-    # later of its components' boundaries. This is the book that would actually trade live.
-    "combo_dp_ver": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-10"),
+    # combo_dp_ver (shared 12-slot book of the two above): re-frozen 2026-06-11 with the dp
+    # component's max_base_bars=64 adoption (same data cutoff — no newer BTC bars were seen).
+    # This is the book that would actually trade live.
+    "combo_dp_ver": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-11"),
+    # density_pullback on GMO_ETH_JPY (per-PRODUCT key): the transfer-test promote decision
+    # (2026-06-11) and the max_base=64 ETH replication both consumed ETH data through the
+    # 2026-06-10 23:00 ETH cache end, so its forward clock starts there.
+    ("density_pullback", "GMO_ETH_JPY"): (pd.Timestamp("2026-06-10 23:00:00+09:00"), "2026-06-11"),
 }
 # Fallback for any strategy without an explicit entry (the original density boundary).
 DEFAULT_LOCKBOX: tuple[pd.Timestamp, str] = (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07")
@@ -71,7 +79,12 @@ def run(strategy_name: str, tf: Timeframe, *, product: str | None) -> None:
     if not bars:
         raise RuntimeError("no bars in cache")
     ppy = (365 * 24 * 3600) / tf.seconds
-    boundary, frozen_on = LOCKBOX_BOUNDARIES.get(strategy_name, DEFAULT_LOCKBOX)
+    # Most-specific first: (strategy, product) -> strategy -> default.
+    boundary, frozen_on = (
+        LOCKBOX_BOUNDARIES.get((strategy_name, product or ""))
+        or LOCKBOX_BOUNDARIES.get(strategy_name)
+        or DEFAULT_LOCKBOX
+    )
 
     # Index of the first forward bar (strictly after the frozen boundary).
     fwd_start = next(

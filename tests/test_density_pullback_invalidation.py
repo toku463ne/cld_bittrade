@@ -56,10 +56,12 @@ def test_invalidation_signals_carry_ref2_only_when_on() -> None:
         DensityPullbackStrategy(invalidation_depth=-1.0)
 
 
-def test_max_base_bars_validation_and_default_off() -> None:
+def test_max_base_bars_validation_and_default() -> None:
     import pytest
 
-    assert DensityPullbackStrategy().max_base_bars is None
+    # Adopted default (2026-06-11): the BTC-chosen stale-box gate, ETH-replicated.
+    assert DensityPullbackStrategy().max_base_bars == 64
+    assert DensityPullbackStrategy(max_base_bars=None).max_base_bars is None
     assert DensityPullbackStrategy(max_base_bars=32).max_base_bars == 32
     with pytest.raises(ValueError):
         DensityPullbackStrategy(max_base_bars=0)

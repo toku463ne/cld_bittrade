@@ -107,7 +107,7 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
         recency: float = 1.0,
         accept_band: float | None = None,
         invalidation_depth: float | None = None,
-        max_base_bars: int | None = None,
+        max_base_bars: int | None = 64,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -153,17 +153,21 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
                 depth >= 1.0 the zs stop always fires first (literal no-op);
                 shallower depths clip the dip-then-run trail winners without
                 cutting the stop bleed (see the 2026-06-10 knob history below).
-            max_base_bars: Stale-box gate. If set, skip a breakout whose *base
-                length* — the number of consecutive prior bars whose close sat
-                inside its own (rolling) value-area band — exceeds this. The
-                base-length diagnostic INVERTED the classical "longer base =
-                stronger breakout" prior: per-trade mean_r *declines* with base
-                length — good breakouts leave young pause-in-trend boxes. Causal
-                (uses closes/bands up to t−1). ``None`` (default) = off.
-                **Tested and NOT ADOPTED** — thresholds <= 48 flip a WF fold
-                negative (the "weak" 32–63 trades still add at the equity
-                level), and the one safe cell (64) gains only ~+0.04 WF mean on
-                15 trades, partly OOS-selected (see the knob history below).
+            max_base_bars: Stale-box gate. Skip a breakout whose *base length* —
+                the number of consecutive prior bars whose close sat inside its
+                own (rolling) value-area band — exceeds this. The base-length
+                diagnostic INVERTED the classical "longer base = stronger
+                breakout" prior: per-trade mean_r *declines* with base length —
+                good breakouts leave young pause-in-trend boxes; breakouts from
+                mature, long-defended value areas get faded. Causal (uses
+                closes/bands up to t−1). ``None`` = off. Default ``64`` —
+                ADOPTED 2026-06-11 after the BTC-chosen cell replicated on ETH
+                (independent asset) at both the per-trade level (ETH 64+ tail
+                mean_r −0.0065, DR 0.12) and the equity level (ETH IS-WF mean
+                +0.45→+0.58, 4/6 folds up, none down; BTC 6/6 held, +0.04).
+                Do NOT lower below 64: thresholds <= 48 flip a WF fold negative
+                on BTC (the "weak" 32–63 trades still add at the equity level).
+                See the knob history below.
             **kwargs: Forwarded to :class:`RandomHedgeStrategy` (exit params, the
                 bad-entry gates, ...). ``entry_prob`` is unused (entries are the
                 breakouts, not random).
@@ -411,3 +415,16 @@ class DensityPullbackStrategy(RandomHedgeStrategy):
 #     Smooth from the no-op side (128 = literal no-op -> 96 -> 64 monotone), harmful
 #     below — no adoptable region. Knob stays (no-op at None). Harness:
 #     src/backtest/analysis/density_pullback_baselen_ab.py.
+# Knob history (2026-06-11):
+#   * max_base_bars=64 ADOPTED as default — the 2026-06-10 rejection is REVERSED by
+#     independent-asset replication on ETH (GMO_ETH_JPY, imported 2026-06-11): the
+#     BTC-chosen 64 cell, tested UNTUNED on ETH, improves ETH at the per-trade level
+#     (64+ tail mean_r -0.0065, DR 0.12 — cleaner than BTC's, and free of the BTC
+#     read's OOS-peek flag) AND the equity level (ETH lockbox-IS WF mean +0.45 ->
+#     +0.58, 4/6 folds improve, none worsen, IS eqSh +1.01 -> +1.13). On BTC the 64
+#     cell keeps 6/6 folds and nudges every metric up (+0.04 WF mean). The <= 48
+#     region remains harmful on BTC — do not deepen the gate. Forward clocks for
+#     density_pullback / combo_dp_ver / dp-on-ETH were RESET at adoption (cheap: the
+#     records were only days old). Evidence: /tmp diagnostics 2026-06-11 + the
+#     baselen_ab harness; writeups in docs/strategy/density_pullback.md and
+#     docs/research/study_plan_new_strategies.md.
