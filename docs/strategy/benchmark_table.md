@@ -22,6 +22,18 @@ GMO_BTC_JPY 1h. Regenerate any row with
 > rescues the early-2021 regime, cutting turnover further (369→**236**) and DD (IS 0.24→**0.17**,
 > OOS 0.11→**0.05**) and lifting OOS (+1.25→**+1.28**) for a ~0.2 IS-Sharpe giveback
 > (+1.76→**+1.51**). The row below is this final state.
+>
+> **2026-06-10 (later):** **`combo_dp_ver`** added — the **shared 12-slot book** of the two
+> shipped strategies (see the \*\* note and `combo_dp_ver.md`); registered, ship✓, and the
+> live-forward now tracks it (boundary 2026-06-07 22:00, weekly cron). Also: the cycle gained
+> a **realistic bitFlyer cost preset** (`--bitflyer-realistic` = 0.04%/day swap + 5× burst
+> spread on stop exits; defaults unchanged) — both shipped components **survive** it (dp IS
+> 1.50→1.31 / OOS 0.95→0.58; ver IS 1.46→1.28 / OOS 0.82→0.47, 80/20 basis) and dp's
+> `recalc_bars=48` exit was verified the argmax under **both** cost bases. Three
+> density_pullback improvement attempts were tested and **not adopted** (failed-breakout
+> invalidation exit; stale-box/base-length gate — the classical "longer base = stronger
+> breakout" is *inverted* at 1h; swap-leak hypothesis refuted) — its row is unchanged; see
+> `density_pullback.md`.
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -67,8 +79,9 @@ OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
 | density_multi_breakout | +0.26 | **−0.60** (< null) |
 
 So on this window only **density_pullback** and **vol_expansion_ride** carry real OOS entry
-edge. density_pullback leads on raw entry edge (IS lift +1.04 vs ver +0.74) and folds (6/6 vs
-5/6), but **vol_expansion_ride now leads on OOS lift (+0.37 vs +0.35), drawdown and
+edge (**combo_dp_ver** is their composition, not a third edge — its lift is the two combined
+on one book). density_pullback leads on raw entry edge (IS lift +1.04 vs ver +0.74) and folds
+(6/6 vs 5/6), but **vol_expansion_ride leads on OOS lift (+0.37 vs +0.35), drawdown and
 diversification** after `expand_mult=2.5` traded IS Sharpe for robustness. **rsi_extreme_ride is
 ≈ the null**, and **zigzag_bounce_ride / density_multi_breakout are at or below it**. The plain
 `OOS_sh` column above is inflated by the window's directionality — read the **lift-over-null**
@@ -94,10 +107,11 @@ consistency on the 80/20 basis. This is the book the live-forward tracks.
 - **combo_dp_ver** — the shared-book portfolio of the two shipped strategies — is the
   strongest row on every headline (IS +2.20, OOS +1.57, OOS@10bp +1.32, lift-over-null
   IS +1.43 / OOS +0.66, 6/6) at density_pullback's existing peak-capital budget.
-- **density_pullback** (recency=1.0 box, prompt limit_window=6) is the strongest on entry edge
-  (lift over null **IS +1.04 / OOS +0.35**) AND the most balanced: highest IS (+1.81), **6/6** folds,
-  cost-robust (OOS@10bp +1.07), and the only *shipped* one. (Dropping the 24-bar window's stale
-  knife-catches nudged IS DD up slightly to 0.31 — the cost of window=6 over 12.)
+- **density_pullback** (recency=1.0 box, prompt limit_window=6) is the strongest single
+  strategy on entry edge (lift over null **IS +1.04 / OOS +0.35**) and the most balanced:
+  highest single-strategy IS (+1.81), **6/6** folds, cost-robust (OOS@10bp +1.07, survives
+  `--bitflyer-realistic`, exit verified argmax under both cost bases). Three 2026-06-10
+  improvement attempts all rejected — it is tuned out pending forward data.
 - **vol_expansion_ride** (entry-edge lift **IS +0.74 / OOS +0.37**) after the two-sided-burst
   filter (`skip_contra_extreme=1`) + **`expand_mult=2.5`**: low-turnover (236 trades), the
   **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
@@ -112,8 +126,14 @@ consistency on the 80/20 basis. This is the book the live-forward tracks.
 ## Caveats & regeneration
 
 A lockbox snapshot, not a final verdict — the lockbox has been reused across ideas (erodes it),
-so the **finalist still needs a fresh live-forward** (`paper_forward`) before real capital. Single
-IS/OOS split + 6 coarse folds; ride-exit candidates share the same exit (correlations in `cDP`).
-Regenerate any row with `python -m src.backtest.analysis.benchmark_table_row --strategy <name>`
-(lockbox basis; validated to reproduce the committed rows). Seeded rows (`random_hedge*`) are
-seed-0 and not reproduced by that deterministic script — see the ⚠ note.
+so real capital waits on the **live-forwards now running** (`paper_forward`, weekly Monday cron
+via `scripts/weekly_forward_check.sh`): `density_pullback` (boundary 2026-06-02),
+`vol_expansion_ride` and `combo_dp_ver` (boundary 2026-06-07 22:00; the combo is the book that
+would actually trade). Verdicts are withheld until ≥20 forward trades AND ≥60 days per
+strategy (~Aug 2026 earliest). Headline costs are the calm basis (4 bp round-trip); stress with
+`python -m src.backtest.cycle --strategy <name> --bitflyer-realistic` (swap + burst spread on
+stops) — both shipped components and hence the combo survive it. Single IS/OOS split + 6 coarse
+folds; ride-exit candidates share the same exit (correlations in `cDP`). Regenerate any row with
+`python -m src.backtest.analysis.benchmark_table_row --strategy <name>` (lockbox basis;
+validated to reproduce the committed rows). Seeded rows (`random_hedge*`) are seed-0 and not
+reproduced by that deterministic script — see the ⚠ note.
