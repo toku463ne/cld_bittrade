@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Weekly forward/lockbox confirmation for the shipped strategies (density_pullback,
-# vol_expansion_ride).
+# vol_expansion_ride) and the combined live book (combo_dp_ver).
 #
 # Each run: (1) imports the latest ~2 weeks of GMO 1h BTC_JPY klines (idempotent —
 # skip_existing dedupes, so re-runs only fetch new days), then (2) runs the
@@ -17,7 +17,7 @@ PROJECT_DIR="/home/ubuntu/cld_bittrade"
 UV="/home/ubuntu/.local/bin/uv"
 PRODUCT="${FORWARD_PRODUCT:-GMO_BTC_JPY}"
 # Space-separated list of shipped strategies to forward-check (override via env).
-STRATEGIES="${FORWARD_STRATEGIES:-density_pullback vol_expansion_ride}"
+STRATEGIES="${FORWARD_STRATEGIES:-density_pullback vol_expansion_ride combo_dp_ver}"
 LOG_DIR="${PROJECT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/forward.log"
 LOCK_FILE="${LOG_DIR}/forward.lock"

@@ -51,6 +51,11 @@ LOCKBOX_BOUNDARIES: dict[str, tuple[pd.Timestamp, str]] = {
     # cutoff, so the forward clock restarts there (re-frozen 2026-06-10). Earlier bars were
     # seen by that selection.
     "vol_expansion_ride": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-10"),
+    # combo_dp_ver (shared 12-slot book of the two above, frozen 2026-06-10): composes two
+    # shipped configs with no new parameters, but the COMBINATION was confirmed on data
+    # through the same 2026-06-07 22:00 cutoff, so its forward clock starts there — the
+    # later of its components' boundaries. This is the book that would actually trade live.
+    "combo_dp_ver": (pd.Timestamp("2026-06-07 22:00:00+09:00"), "2026-06-10"),
 }
 # Fallback for any strategy without an explicit entry (the original density boundary).
 DEFAULT_LOCKBOX: tuple[pd.Timestamp, str] = (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07")

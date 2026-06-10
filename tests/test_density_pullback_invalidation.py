@@ -63,3 +63,14 @@ def test_max_base_bars_validation_and_default_off() -> None:
     assert DensityPullbackStrategy(max_base_bars=32).max_base_bars == 32
     with pytest.raises(ValueError):
         DensityPullbackStrategy(max_base_bars=0)
+
+
+def test_combo_dp_ver_registered_and_multi() -> None:
+    from src.strategy.combo_dp_ver import ComboDpVerStrategy
+    from src.strategy.registry import get_strategy
+
+    s = get_strategy("combo_dp_ver")
+    assert isinstance(s, ComboDpVerStrategy)
+    assert s.max_slots == 12  # dp's existing live peak-capital budget
+    # Empty input -> empty signal dict (the merged precompute path is wired).
+    assert s.precompute_multi([]) == {}

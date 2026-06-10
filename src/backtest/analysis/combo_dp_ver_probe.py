@@ -32,45 +32,20 @@ Env knobs: ``DP_TF`` (1h), ``DP_PRODUCT`` (GMO_BTC_JPY), ``DP_FOLDS`` (6),
 from __future__ import annotations
 
 import os
-from datetime import datetime
 
 import numpy as np
 
 from src.backtest.cycle import _quarter_consistency
 from src.backtest.metrics import annualized_sharpe_from_levels
 from src.backtest.sign_benchmark import split_in_out_sample
-from src.core.types import Bar, Signal, Timeframe, Trade
+from src.core.types import Bar, Timeframe, Trade
 from src.data.cache import load_cache
 from src.simulator import MultiSimulator
 from src.simulator.simulator import DEFAULT_FEE_RATE
+from src.strategy.combo_dp_ver import ComboDpVerStrategy
 from src.strategy.density_pullback import DensityPullbackStrategy
 from src.strategy.random_hedge import RandomHedgeStrategy
 from src.strategy.vol_expansion_ride import VolExpansionRideStrategy
-
-
-class ComboDpVerStrategy(RandomHedgeStrategy):
-    """Merged signal stream of density_pullback + vol_expansion_ride, one book.
-
-    Exits are the shared inherited ratchet (``recalc_bars=48``) — identical to
-    what each sub-strategy runs on its own, since the trail band is per-position
-    (from the signal's ``exit_config``), not per-strategy.
-    """
-
-    name = "combo_dp_ver"
-
-    def __init__(self, *, max_slots: int = 12) -> None:
-        super().__init__(recalc_bars=48)
-        self.max_slots = max_slots
-        self._dp = DensityPullbackStrategy()
-        self._ver = VolExpansionRideStrategy()
-
-    def precompute_multi(self, bars: list[Bar]) -> dict[datetime, list[Signal]] | None:  # noqa: D102
-        out: dict[datetime, list[Signal]] = {}
-        for sub in (self._dp, self._ver):
-            sub.reset()
-            for ts, sigs in (sub.precompute_multi(bars) or {}).items():
-                out.setdefault(ts, []).extend(sigs)
-        return out
 
 
 def _fold_bounds(n: int, k: int) -> list[int]:

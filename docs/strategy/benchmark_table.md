@@ -37,6 +37,7 @@ GMO_BTC_JPY 1h. Regenerate any row with
 
 | candidate | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp | WF | cBTC | cDP | status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **combo_dp_ver** | 664 | **+2.20** | 0.31 | 0.38 | +0.0061 | **+1.57** | 0.18 | **+1.32** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 428 | **+1.81** | 0.36 | 0.31 | +0.0060 | **+1.26** | 0.18 | **+1.07** | **6/6** | +0.06 | +1.00 | **ship✓** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
@@ -58,6 +59,7 @@ OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
 
 | candidate | IS lift / null | OOS lift / null |
 |---|---|---|
+| combo_dp_ver | **+1.43** | **+0.66** |
 | density_pullback | **+1.04** | **+0.35** |
 | vol_expansion_ride | **+0.74** | **+0.37** |
 | rsi_extreme_ride | +0.51 | **+0.06** (≈ null) |
@@ -78,10 +80,20 @@ All others are deterministic and were regenerated in the 2026-06-10 uniform snap
 seeded rows are **not** reproduced by `benchmark_table_row`, so their values (incl. `cBTC`/`cDP`)
 carry over from the prior snapshot — the only non-uniform rows in the table.
 
+\*\* `combo_dp_ver` is the **shared 12-slot book** of density_pullback + vol_expansion_ride
+(2026-06-10, `docs/strategy/combo_dp_ver.md`) — a portfolio composition, not a new edge; its
+cDP is trivially high because dp is ~⅔ of its trades. Same peak capital as dp alone (combined
+occupancy peaks at 11/12, **zero** historical slot contention); the components' weak WF folds
+are complementary (dp's 2022-bear ↔ ver's 2023-bull), giving 6/6 folds and 94% quarterly
+consistency on the 80/20 basis. This is the book the live-forward tracks.
+
 ## Read at a glance
 
 - **Read OOS as lift-over-null, not vs B&H** (the ⚠ section): the directional window gives a
   random hedge OOS +0.91, so several "candidates" barely clear it.
+- **combo_dp_ver** — the shared-book portfolio of the two shipped strategies — is the
+  strongest row on every headline (IS +2.20, OOS +1.57, OOS@10bp +1.32, lift-over-null
+  IS +1.43 / OOS +0.66, 6/6) at density_pullback's existing peak-capital budget.
 - **density_pullback** (recency=1.0 box, prompt limit_window=6) is the strongest on entry edge
   (lift over null **IS +1.04 / OOS +0.35**) AND the most balanced: highest IS (+1.81), **6/6** folds,
   cost-robust (OOS@10bp +1.07), and the only *shipped* one. (Dropping the 24-bar window's stale
