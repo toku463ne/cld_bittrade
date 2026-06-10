@@ -178,7 +178,35 @@ kinder than the 80/20 cycle — it improves nearly everything *except* IS Sharpe
 4/6→**5/6**; only IS Sharpe gives back (+1.76→+1.51). `run_cycle` ships `True`; forward boundary
 unchanged (same 2026-06-07 selection cutoff). See `benchmark_table.md`.
 
-## 8. Verdict & next
+## 8. Cost realism — the headline is no longer calm-only (`--bitflyer-realistic`)
+
+The shipped headline is backtested on **GMO** OHLC at the calm default cost (2 bp/side, no
+swap). The binding risk is the **burst-moment bitFlyer spread on stop-outs** — ~79% of exits are
+stops, firing in the aftermath of a 2×ATR burst (the widest-spread moment), and GMO OHLC cannot
+observe it. `run_cycle` now models it with two knobs (`src/backtest/cycle.py`, defaults are exact
+no-ops so the §2/§7 deterministic snapshot is unchanged):
+
+- **`daily_swap_rate`** (`--swap`, bitFlyer FX ≈ `0.0004`/day) — funding on positions held across
+  the 00:00 JST cutoff (already in `MultiSimulator`; now threaded through the cycle).
+- **`burst_cost_mult`** (`--burst-mult`) — multiplies the **exit-leg half-spread on `STOP_LOSS`
+  fills only** (entry leg and winners' exits stay at base). `5.0` → 10 bp/side on stops.
+
+`--bitflyer-realistic` = `--swap 0.0004 --burst-mult 5` (the non-calm headline). On the 80/20
+cycle split:
+
+| basis | IS eqSharpe (B&H 0.64) | OOS eqSharpe (B&H −0.85) | total cost | ship |
+|---|---|---|---|---|
+| calm (default, 2 bp, no swap) | **+1.46** | **+0.82** | 621 JPY | ✓ |
+| bitFlyer-realistic (swap + 10 bp stop-out burst) | **+1.28** | **+0.47** | 1980 JPY (3.2×) | ✓ |
+
+The edge **survives** the realistic stress (both splits still clear B&H, gate still ships). Note
+this is *gentler* than the uniform "10 bp on every leg of every trade" stress (which collapsed OOS
+to +0.13): charging the wide spread only where it actually occurs — the stop exits, not the entry
+or the trailing winners — is both more honest and less punitive. Swap is a near-non-issue (median
+hold 6 h). The **still-unmeasurable** unknown is whether real stop fills stay ≤~10 bp/side on
+bitFlyer; only the live-forward settles it. See memory `vol-expansion-bitflyer-cost-gap`.
+
+## 9. Verdict & next
 
 A real **2nd-strategy candidate**: cost-robust, diversifying (+0.10 / −0.06), beats B&H in
 both lockbox splits untuned. After §4 (counter-trend gate), §5 (two-sided-burst filter) and §7

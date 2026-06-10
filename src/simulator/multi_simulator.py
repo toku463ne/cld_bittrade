@@ -65,6 +65,16 @@ class MultiSimulator:
             commission-free spot/GMO backtests are unchanged. The accrued swap is
             folded into each trade's ``cost`` (so it flows into per-trade PnL and
             returns) and debited from the mark-to-market equity path as it accrues.
+        burst_cost_mult: Spread multiplier applied to the **exit leg** of a
+            ``STOP_LOSS`` exit only — the burst-aftermath fill, the widest-spread
+            moment on bitFlyer FX. The stop's exit half-spread becomes
+            ``fee_rate × burst_cost_mult`` (entry leg and all non-stop exits stay at
+            ``fee_rate``). ``1.0`` (default) = exact no-op, preserving the
+            deterministic benchmark snapshot. e.g. base ``fee_rate=0.0002`` (2 bp)
+            with ``burst_cost_mult=5.0`` charges 10 bp on stop exits — the realistic
+            burst-fill cost identified as vol_expansion_ride's binding, otherwise-
+            unmeasurable risk (~79% of its exits are stops). GMO OHLC cannot observe
+            this spread, so it is modelled as a parameter rather than read from bars.
     """
 
     def __init__(
@@ -75,14 +85,18 @@ class MultiSimulator:
         atr_period: int = 14,
         fee_rate: float = DEFAULT_FEE_RATE,
         daily_swap_rate: float = 0.0,
+        burst_cost_mult: float = 1.0,
     ) -> None:
         if daily_swap_rate < 0.0:
             raise ValueError("daily_swap_rate must be >= 0")
+        if burst_cost_mult < 1.0:
+            raise ValueError("burst_cost_mult must be >= 1")
         self.strategy = strategy
         self.size = size
         self.atr_period = atr_period
         self.fee_rate = fee_rate
         self.daily_swap_rate = daily_swap_rate
+        self.burst_cost_mult = burst_cost_mult
 
     def run(self, bars: list[Bar]) -> SimResult:
         """Run the multi-position simulation over ``bars``."""
@@ -256,6 +270,10 @@ class MultiSimulator:
     ) -> Trade:
         pos = slot.pos
         cost = pos.entry_price * self.size * self.fee_rate * 2.0 + slot.swap
+        # Burst-aftermath surcharge: a stop-out fills at the widest-spread moment, so
+        # its exit leg pays (mult-1)x extra half-spread. No-op when burst_cost_mult==1.
+        if reason is ExitReason.STOP_LOSS and self.burst_cost_mult != 1.0:
+            cost += exit_price * self.size * self.fee_rate * (self.burst_cost_mult - 1.0)
         return Trade(
             side=pos.side,
             entry_time=slot.entry_time,

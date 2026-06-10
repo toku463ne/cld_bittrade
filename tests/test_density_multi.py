@@ -85,6 +85,63 @@ def test_multi_simulator_daily_swap() -> None:
     assert base.equity_curve[-1] == pytest.approx(0.0)
 
 
+class _OneLongTightStop(Strategy):
+    """Fires LONG once (bar 0); a tight stop is hit on the down-bar -> STOP_LOSS exit."""
+
+    name = "_one_long_tight_stop"
+    max_slots = 1
+
+    def precompute(self, bars: list[Bar]) -> dict[object, Signal] | None:  # type: ignore[override]
+        cfg = ExitConfig(sl_abs=1.0)  # stop 1.0 below entry
+        b0 = bars[0]
+        return {
+            b0.timestamp: Signal(side=Side.LONG, timestamp=b0.timestamp, price=b0.close, exit_config=cfg)
+        }
+
+    def on_bar(self, bar: Bar) -> Signal | None:
+        return None
+
+    def get_exit_rules(self) -> ExitConfig:
+        return ExitConfig()
+
+
+def test_multi_simulator_burst_cost_on_stop_only() -> None:
+    # Entry fills at bar-1 open (100); bar-2 low (97) breaches the stop at 99 -> STOP_LOSS.
+    closes = [100.0, 100.0, 100.0, 100.0]
+    highs = [100.5, 100.5, 100.5, 100.5]
+    lows = [99.5, 99.5, 97.0, 99.5]
+    bars = _bars(closes, highs, lows)
+    fee, size, mult = 0.0002, 1.0, 5.0
+
+    base = MultiSimulator(_OneLongTightStop(), size=size, fee_rate=fee).run(bars)
+    burst = MultiSimulator(
+        _OneLongTightStop(), size=size, fee_rate=fee, burst_cost_mult=mult
+    ).run(bars)
+
+    assert len(base.trades) == 1
+    t_base, t_burst = base.trades[0], burst.trades[0]
+    assert t_base.exit_reason is ExitReason.STOP_LOSS
+    # Base round-trip = entry*size*fee*2; burst adds exit_price*size*fee*(mult-1) on the stop.
+    assert t_base.cost == pytest.approx(100.0 * size * fee * 2.0)
+    surcharge = t_burst.exit_price * size * fee * (mult - 1.0)
+    assert t_burst.cost == pytest.approx(t_base.cost + surcharge)
+    # burst_cost_mult=1.0 must be an exact no-op.
+    noop = MultiSimulator(
+        _OneLongTightStop(), size=size, fee_rate=fee, burst_cost_mult=1.0
+    ).run(bars)
+    assert noop.trades[0].cost == pytest.approx(t_base.cost)
+
+
+def test_burst_cost_no_surcharge_off_stop_exits() -> None:
+    # _EveryBarLong never stops out (huge sl) -> burst_cost_mult must not change cost.
+    bars = _bars([100.0] * 8, [100.5] * 8, [99.5] * 8)
+    base = MultiSimulator(_EveryBarLong(), size=1.0, fee_rate=0.0002).run(bars)
+    burst = MultiSimulator(
+        _EveryBarLong(), size=1.0, fee_rate=0.0002, burst_cost_mult=5.0
+    ).run(bars)
+    assert sum(t.cost for t in base.trades) == pytest.approx(sum(t.cost for t in burst.trades))
+
+
 def test_multi_strategy_is_registered_and_multi() -> None:
     from src.strategy.registry import get_strategy
 
