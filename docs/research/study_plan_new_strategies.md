@@ -293,6 +293,25 @@ edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS o
   lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
   forward boundary at 2026-06-10 23:00 + weekly cron line.
 
+## Strategy C″ — failed-breakout invalidation exit on ETH (pre-registered 2026-06-11)
+
+**Question:** does the `invalidation_depth` exit (close back inside the value area beyond
+`depth × box-height` → exit at that close; REJECTED on BTC 2026-06-10 — depth ≥ 1.0 was a
+literal no-op because the zs stop fires first, depth < 1.0 clipped dip-then-run winners
+without cutting bleed) behave differently on **ETH**, where the box/zs-band geometry and
+the stop bleed structure differ? Precedent: the max_base gate's BTC rejection was reversed
+by ETH evidence — but note the asymmetry: there a BTC-chosen *fixed cell* transferred;
+here BTC chose **no** cell, so this is a fresh ETH sweep and any adoption would be
+**ETH-only** (allowed per the C′ reframe; BTC's rejection stands regardless).
+
+**Pre-registered (recorded BEFORE results):** depth ∈ {0.25, 0.5, 0.75, 1.0, 1.25} on the
+**ETH lockbox-IS 6-fold WF only** (baseline = current defaults incl. `max_base_bars=64`).
+Adopt (ETH-only) iff: (i) a smooth ≥2-adjacent-cell improvement region; (ii) folds ≥
+baseline's and WF mean up; (iii) the mechanism check holds — **stop bleed falls without
+the trail-winner count collapsing** (the BTC failure mode was the opposite). Report which
+depths are no-ops (the zs-stop-fires-first geometry). One lockbox look only on an adopted
+config; miss any bar → kill, knob stays no-op on ETH too.
+
 **2026-06-11 (later) — `max_base_bars=64` adopted into the dp default; ETH was the
 deciding evidence.** The base-length stale-tail finding (BTC, rejected 2026-06-10 as
 winner's-curse-sized + partly OOS-peeked) **replicated on ETH** — per-trade (64+ tail
