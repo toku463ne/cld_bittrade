@@ -293,6 +293,27 @@ edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS o
   lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
   forward boundary at 2026-06-10 23:00 + weekly cron line.
 
+## Strategy F — XRP_JPY transfer test (pre-registered 2026-06-11)
+
+**Hypothesis:** the price-structure edges transfer to a *third* asset. XRP is the strongest
+orthogonality test yet — its regime profile (2021–23 SEC-suit bear, 2024 spike) is unlike
+BTC/ETH — so a transfer here is real structural evidence, not beta. Same protocol as the ETH
+transfer (Strategy C): **untuned global registry defaults, one lockbox evaluation per shipped
+strategy** (`density_pullback` — incl. the global `max_base_bars=64`; and `vol_expansion_ride`).
+No ETH-tuned config (`density_pullback_eth`) is tested — those knobs are ETH-fitted.
+
+**Pre-registered PASS (recorded BEFORE results), per strategy independently,** XRP_JPY 1h,
+fixed lockbox (IS pre-2025-04-01 / OOS 2025-04-01→2026-04-01):
+
+1. **Edge:** lockbox equity Sharpe ≥ **XRP's own B&H** in **BOTH** splits (split-matched).
+2. **Cost:** clears XRP OOS B&H at **10 bp/side** (alt spreads ≥ ETH's; 15 bp reported as
+   margin).
+3. **Robustness:** fixed-config 6-fold WF — ≥ **4/6** folds positive to promote.
+
+Miss (1) or (2) → that edge does not transfer to XRP; record, no re-tuning rescue. ETH-style
+asset-specific tuning is a *separate* later exercise only on a strategy that first passes
+untuned. Correlation to the BTC/ETH books = combination-stage diagnostic only.
+
 ## Strategy E — JST calendar/flow family (pre-registered 2026-06-11)
 
 **Hypothesis:** GMO BTC_JPY has venue/leverage-specific recurring flows — the 00:00 JST swap
