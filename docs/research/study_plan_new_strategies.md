@@ -243,3 +243,27 @@ BTC's coverage), 2 low-coverage days. ETH's own B&H lockbox Sharpe: **IS +0.40 /
   even though no parameter was tuned), which needs per-(strategy, product) boundaries in
   `paper_forward`. Correlation to the BTC book: cBTC −0.03 on the equity path
   (diagnostic; combination-stage).
+
+## Strategy C′ — `density_pullback_eth` (ETH-tuned variant; pre-registered 2026-06-11)
+
+**Reframe (user decision):** not bound to "same strategy as BTC" — develop the best ETH
+strategy. Base = the dp family (the only proven ETH edge). ETH-specific tuning is now
+allowed under selection hygiene:
+
+- **Selection data: ETH lockbox IS ONLY** (pre-2025-04-01), decided on a fixed-config
+  **6-fold WF inside the IS window** (folds positive, mean eqSharpe, smoothness).
+- **Acknowledged erosion:** the ETH lockbox OOS was consumed once by the transfer test
+  (untuned dp scores +1.19 there) — the final lockbox look below is a *weakened*
+  confirmation for this family; the **live-forward is the real gate**.
+- **Knob 1 (the sole pre-planned knob): `max_band_pct`** ∈ {0.03 (baseline), 0.035,
+  0.04, 0.045, 0.05, 0.06} — motivated by the scale diagnostic recorded BEFORE this
+  sweep: the fixed 3% gate passes 31% of BTC bars but only **17%** of ETH bars (ETH vol
+  ~76% vs 56% ann.), so on ETH it selects a deeper-tail regime and fires 40% less.
+  Acceptance-matching predicts the sweet region ≈ **0.04–0.045**.
+- **Adopt iff (recorded before results):** (i) a *smooth* improvement region — ≥2
+  adjacent cells agree (anti-knife-edge); (ii) IS-WF folds ≥ baseline's and mean
+  eqSharpe up; (iii) the mechanism check holds (fires rise toward a BTC-like rate).
+- **Then ONE lockbox evaluation of the adopted config only:** PASS iff IS & OOS
+  eqSharpe ≥ ETH's own B&H (split-matched) **and** OOS @10bp/side ≥ ETH's OOS B&H.
+  No further knobs after seeing the lockbox; any later knob (sl_mult, zigzag scale…)
+  = a new registration and a forward-clock restart.
