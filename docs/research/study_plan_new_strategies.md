@@ -293,6 +293,31 @@ edge dimension.** IS-WF sweep (`density_pullback_eth_sweep.py`, ETH lockbox-IS o
   lockbox look needed (nothing adopted). Remaining path: per-(strategy, product)
   forward boundary at 2026-06-10 23:00 + weekly cron line.
 
+## Strategy E — JST calendar/flow family (pre-registered 2026-06-11)
+
+**Hypothesis:** GMO BTC_JPY has venue/leverage-specific recurring flows — the 00:00 JST swap
+cutoff (leveraged squaring), Tokyo open, US session, weekend fiat-ramp drift — that leave a
+calendar footprint. **Fully orthogonal** to the price-structure book (the diversifier slot).
+The whole risk is multiple testing: 168 hour×dow cells throw ~8 false positives at p<.05.
+
+**Stage-1 probe (pre-registered BEFORE results):** BTC_JPY 1h, **lockbox-IS only** (OOS held
+out), split early/late halves, per-bar simple returns. Two arms, each with its own
+multiple-testing control:
+
+- **Named family (7, Holm-corrected α=0.05):** weekend (dow∈{Sat,Sun}); pre-cutoff
+  (21–23 JST); post-cutoff (00–01); Tokyo-open (09–11); US-session (22–05); Friday; Monday.
+- **Full grid (168 hour×dow):** **circular-rotation max-|t| permutation test** (2000 rotations
+  of the return series against fixed calendar labels — preserves autocorrelation, destroys
+  alignment); the observed max-|t| must exceed the rotation null's 95th pct.
+
+**KILL the whole family unless ≥1 effect clears ALL of:** (i) Holm-significant (named) OR beats
+the rotation null (grid); (ii) **same sign in BOTH IS halves**; (iii) **same sign on ETH**
+(GMO leverage twin — a real flow effect is cross-asset; single-asset = noise at this n);
+(iv) the tradeable per-occurrence overlay return (summed over the bucket's hold, **one 4 bp
+round-trip per occurrence**) is **> 0 net**. Any survivor → Stage 2 (build the coarsest
+tradeable overlay) + one lockbox-OOS look + the 1m swap-cutoff microstructure as a refinement.
+No survivor → drop the family (record the calendar map as the negative).
+
 ## Strategy D — stale-box fade (anti-density_pullback; pre-registered 2026-06-11)
 
 **Hypothesis (from our own diagnostics, both assets):** breakouts from *mature* value
