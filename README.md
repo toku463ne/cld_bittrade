@@ -73,7 +73,11 @@ and a `KILL` kill-switch in code. See **`docs/deploy.md`** for the full runbook.
 #   USE_LIVE_API=true        # enables live reads
 #   ALLOW_ORDERS=false       # keep false until you are ready to send orders
 
-# Verify the key + see account/positions/margin (read-only, no orders)
+# Verify the WHOLE setup at once (config, DB, GMO read, bars, strategy, logs) — no
+# orders, no waiting for a signal. All PASS = ready. (On the prod box use .env.prod.)
+uv run --env-file .env.dev python -m src.execution.selfcheck
+
+# Or just see account/positions/margin (read-only, no orders)
 uv run --env-file .env.dev python -m src.execution.gmo_account
 
 # Manual trade tools — min-lot, leverage long/short, DRY-RUN unless --execute
@@ -91,7 +95,7 @@ AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1 \
 ### Production box (t3.micro)
 
 ```bash
-git clone <repo> ~/cld_bittrade && cd ~/cld_bittrade
+git clone https://github.com/toku463ne/cld_bittrade.git ~/cld_bittrade && cd ~/cld_bittrade
 DB_PASSWORD='strong-pw' bash scripts/setup_prod.sh   # swap, postgres+db, deps, schema, hourly timer
 # then: add GMO keys to .env.prod, verify with gmo_account, watch the dry-run:
 #   journalctl -u btc-autotrader.service -f

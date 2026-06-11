@@ -22,8 +22,15 @@ Plus, always-on in code: **0.001-equivalent min-lot hard cap** per symbol, an
 git clone <repo> ~/cld_bittrade && cd ~/cld_bittrade
 DB_PASSWORD='strong-pw' bash scripts/setup_prod.sh
 # then edit ~/cld_bittrade/.env.prod: add GMO_API_KEY / GMO_API_SECRET
-uv run --env-file .env.prod python -m src.execution.gmo_account     # verify reads
+uv run --env-file .env.prod python -m src.execution.selfcheck      # verify the WHOLE setup
 ```
+
+`selfcheck` verifies everything except *placing* an order — config + GMO keys, DB +
+schema, GMO public + private reads, kline fetch, strategy compute, log writability —
+and exits non-zero on any failure. All 6 PASS = the box is ready (you don't wait for
+a signal). The one thing it can't test is sending a real order (needs a funded,
+approved leverage account); prove that with one manual `gmo_trade ... --execute`
+round-trip when funded.
 After this the box runs the trader **hourly at HH:05 in dry-run** (it logs intended
 actions, places nothing). Dry-run config: `AUTO_BOOKS=combo_dp_ver:BTC_JPY,
 density_pullback_xrp:XRP_JPY` — **both books at full slots** for the most samples to
