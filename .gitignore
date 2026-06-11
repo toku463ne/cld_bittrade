@@ -21,10 +21,10 @@ __pycache__/
 # Transient harness state (scheduler locks etc.)
 .claude/scheduled_tasks.lock
 
-# Data / logs
+# Data / logs (anchored to repo root so they don't match src/data, src/logs, ...)
 *.log
-logs/
-data/
+/logs/
+/data/
 *.sqlite
 
 # OS
