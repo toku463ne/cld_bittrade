@@ -25,8 +25,11 @@ DB_PASSWORD='strong-pw' bash scripts/setup_prod.sh
 uv run --env-file .env.prod python -m src.execution.gmo_account     # verify reads
 ```
 After this the box runs the trader **hourly at HH:05 in dry-run** (it logs intended
-actions, places nothing). Default config: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1`
-(one slot, min size). Watch it: `journalctl -u btc-autotrader.service -f`.
+actions, places nothing). Dry-run config: `AUTO_BOOKS=combo_dp_ver:BTC_JPY,
+density_pullback_xrp:XRP_JPY` — **both books at full slots** for the most samples to
+observe (multi-slot books are monitor-only, so they never place orders regardless of
+gates). Watch it: `journalctl -u btc-autotrader.service -f`. For the **first real
+trade**, switch to one slot, min size: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1`.
 
 ## Staged go-live (do NOT skip)
 
@@ -41,8 +44,10 @@ actions, places nothing). Default config: `AUTO_BOOKS=density_pullback_xrp:XRP_J
    uv run --env-file .env.prod python -m src.execution.gmo_trade close --symbol XRP_JPY --execute
    ```
    (needs `ALLOW_ORDERS=true`.)
-4. **Enable auto-execution** — two deliberate edits:
-   - `.env.prod`: set `ALLOW_ORDERS=true`.
+4. **Enable auto-execution** — deliberate edits:
+   - `.env.prod`: set `ALLOW_ORDERS=true`, and switch to the 1-slot book the executor
+     trades: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1` (the dry-run both-full-slots
+     config is monitor-only and would place nothing).
    - service: add `--execute` to the `ExecStart` line, then reload:
      ```bash
      sudo sed -i 's#auto_trader$#auto_trader --execute#' /etc/systemd/system/btc-autotrader.service
