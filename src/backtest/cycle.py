@@ -147,6 +147,8 @@ def run_cycle(
     product: str | None = None,
     size: float = 0.001,
     fee_rate: float | None = None,
+    daily_swap_rate: float = 0.0,
+    burst_cost_mult: float = 1.0,
 ) -> CycleResult:
     """Backtest one strategy and compute in-sample / OOS / benchmark metrics.
 
@@ -158,6 +160,14 @@ def run_cycle(
         fee_rate: Per-side taker cost (slippage) as a fraction of price. ``None``
             uses the simulator default (FX_BTC_JPY is commission-free; the default
             models taker half-spread slippage). Pass explicitly for cost sweeps.
+        daily_swap_rate: Daily funding/swap as a fraction of notional, charged on
+            positions held across the 00:00 JST cutoff (multi-position path only;
+            bitFlyer FX ≈ ``0.0004``). ``0.0`` (default) = no swap, the calm-cost
+            headline basis. See :class:`~src.simulator.multi_simulator.MultiSimulator`.
+        burst_cost_mult: Spread multiplier on the exit leg of ``STOP_LOSS`` exits —
+            the burst-aftermath fill. ``1.0`` (default) = no-op (calm headline). Set
+            > 1 to model the wide bitFlyer burst spread on stop-outs (the binding,
+            otherwise-unmeasurable risk for vol_expansion_ride).
 
     Returns:
         A :class:`CycleResult`.
@@ -174,8 +184,14 @@ def run_cycle(
 
     rate = DEFAULT_FEE_RATE if fee_rate is None else fee_rate
     multi = get_strategy(strategy_name).max_slots > 1
-    in_res = _simulate(strategy_name, in_bars, size, rate, multi=multi)
-    oos_res = _simulate(strategy_name, oos_bars, size, rate, multi=multi)
+    in_res = _simulate(
+        strategy_name, in_bars, size, rate, multi=multi,
+        daily_swap_rate=daily_swap_rate, burst_cost_mult=burst_cost_mult,
+    )
+    oos_res = _simulate(
+        strategy_name, oos_bars, size, rate, multi=multi,
+        daily_swap_rate=daily_swap_rate, burst_cost_mult=burst_cost_mult,
+    )
     m_in = portfolio_metrics(in_res.trades)
     m_oos = portfolio_metrics(oos_res.trades)
 
@@ -218,6 +234,12 @@ def run_cycle(
         "  consistency (quarterly non-neg, relative gate): strategy={:.0%} vs B&H={:.0%} -> {}",
         strat_cons, bench_cons, "pass" if consistent else "FAIL",
     )
+    if daily_swap_rate > 0.0 or burst_cost_mult != 1.0:
+        logger.info(
+            "  cost model: base {:.0f}bp/side | swap {:.3f}%/day | stop-out burst x{:.1f} "
+            "(= {:.0f}bp/side exit on stops)  [NON-calm headline]",
+            rate * 1e4, daily_swap_rate * 100.0, burst_cost_mult, rate * burst_cost_mult * 1e4,
+        )
     _flag_overfit(strategy_name, m_in, m_oos)
     trades = list(in_res.trades) + list(oos_res.trades)
     return CycleResult(
@@ -227,13 +249,30 @@ def run_cycle(
 
 
 def _simulate(
-    strategy_name: str, bars: list[Bar], size: float, fee_rate: float, *, multi: bool
+    strategy_name: str,
+    bars: list[Bar],
+    size: float,
+    fee_rate: float,
+    *,
+    multi: bool,
+    daily_swap_rate: float = 0.0,
+    burst_cost_mult: float = 1.0,
 ) -> SimResult:
-    """Run the appropriate simulator (multi-position routes to MultiSimulator)."""
+    """Run the appropriate simulator (multi-position routes to MultiSimulator).
+
+    ``daily_swap_rate`` is honoured only on the multi-position path (single-position
+    scalpers here use short time-stops and do not hold across the cutoff). The
+    ``burst_cost_mult`` stop-out surcharge applies on both paths.
+    """
     strat = get_strategy(strategy_name)
     if multi:
-        return MultiSimulator(strat, size=size, fee_rate=fee_rate).run(bars)
-    return Simulator(strat, size=size, fee_rate=fee_rate).run(bars)
+        return MultiSimulator(
+            strat, size=size, fee_rate=fee_rate,
+            daily_swap_rate=daily_swap_rate, burst_cost_mult=burst_cost_mult,
+        ).run(bars)
+    return Simulator(
+        strat, size=size, fee_rate=fee_rate, burst_cost_mult=burst_cost_mult
+    ).run(bars)
 
 
 def _flag_overfit(name: str, m_in: PortfolioMetrics, m_oos: PortfolioMetrics) -> None:
@@ -254,14 +293,34 @@ def main() -> None:
         "--fee", type=float, default=None,
         help="Per-side taker slippage (fraction). Default: simulator default.",
     )
+    parser.add_argument(
+        "--swap", type=float, default=0.0,
+        help="Daily swap/funding as a fraction of notional (multi-position only; "
+        "bitFlyer FX ≈ 0.0004). Default 0 (calm headline).",
+    )
+    parser.add_argument(
+        "--burst-mult", type=float, default=1.0,
+        help="Exit-leg spread multiplier on STOP_LOSS fills (burst-aftermath). "
+        "Default 1 (no-op). Try 5 for the bitFlyer burst-spread stress.",
+    )
+    parser.add_argument(
+        "--bitflyer-realistic", action="store_true",
+        help="Preset: --swap 0.0004 --burst-mult 5 (calm 2bp base + 0.04%%/day swap + "
+        "10bp/side stop-out burst spread). The non-calm bitFlyer headline.",
+    )
     args = parser.parse_args()
 
     from src.config import get_settings
 
     configure_logging(get_settings().log_level)
+    swap = 0.0004 if args.bitflyer_realistic else args.swap
+    burst = 5.0 if args.bitflyer_realistic else args.burst_mult
     names = all_strategies() if args.strategy == "all" else [args.strategy]
     for name in names:
-        run_cycle(name, Timeframe(args.timeframe), product=args.product, fee_rate=args.fee)
+        run_cycle(
+            name, Timeframe(args.timeframe), product=args.product, fee_rate=args.fee,
+            daily_swap_rate=swap, burst_cost_mult=burst,
+        )
 
 
 if __name__ == "__main__":

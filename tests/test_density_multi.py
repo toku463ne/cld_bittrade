@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 
 from src.core.types import Bar, ExitConfig, ExitReason, Side, Signal
 from src.exit.rules import OpenPosition
@@ -60,6 +61,85 @@ def test_multi_simulator_two_bar_fill() -> None:
     res = MultiSimulator(_EveryBarLong(), size=0.001).run(bars)
     # The earliest entry is bar index 1 (filled at the open after the bar-0 fire).
     assert min(t.entry_time for t in res.trades) == _T0 + timedelta(hours=1)
+
+
+def test_multi_simulator_daily_swap() -> None:
+    # 30 flat hourly bars from 2024-01-01 00:00 UTC cross exactly one calendar-day
+    # boundary (2024-01-02 00:00). With max_slots=3 all three positions are open
+    # before the boundary and held to end, so each is charged swap once.
+    n = 30
+    bars = _bars([100.0] * n, [100.5] * n, [99.5] * n)
+    rate, size = 0.01, 1.0  # swap = rate * size * close = 0.01 * 1 * 100 = 1.0 / boundary
+
+    base = MultiSimulator(_EveryBarLong(), size=size, fee_rate=0.0).run(bars)
+    swapped = MultiSimulator(
+        _EveryBarLong(), size=size, fee_rate=0.0, daily_swap_rate=rate
+    ).run(bars)
+
+    assert sum(t.cost for t in base.trades) == 0.0  # fee-free, no swap
+    # 3 positions held across 1 boundary -> 3 * 1.0 folded into trade cost.
+    assert sum(t.cost for t in swapped.trades) == pytest.approx(3.0)
+    # Flat price -> realised PnL is exactly minus the swap; it shows in the equity path.
+    assert swapped.equity_curve[-1] == pytest.approx(-3.0)
+    # daily_swap_rate=0.0 must be a no-op vs the default constructor.
+    assert base.equity_curve[-1] == pytest.approx(0.0)
+
+
+class _OneLongTightStop(Strategy):
+    """Fires LONG once (bar 0); a tight stop is hit on the down-bar -> STOP_LOSS exit."""
+
+    name = "_one_long_tight_stop"
+    max_slots = 1
+
+    def precompute(self, bars: list[Bar]) -> dict[object, Signal] | None:  # type: ignore[override]
+        cfg = ExitConfig(sl_abs=1.0)  # stop 1.0 below entry
+        b0 = bars[0]
+        return {
+            b0.timestamp: Signal(side=Side.LONG, timestamp=b0.timestamp, price=b0.close, exit_config=cfg)
+        }
+
+    def on_bar(self, bar: Bar) -> Signal | None:
+        return None
+
+    def get_exit_rules(self) -> ExitConfig:
+        return ExitConfig()
+
+
+def test_multi_simulator_burst_cost_on_stop_only() -> None:
+    # Entry fills at bar-1 open (100); bar-2 low (97) breaches the stop at 99 -> STOP_LOSS.
+    closes = [100.0, 100.0, 100.0, 100.0]
+    highs = [100.5, 100.5, 100.5, 100.5]
+    lows = [99.5, 99.5, 97.0, 99.5]
+    bars = _bars(closes, highs, lows)
+    fee, size, mult = 0.0002, 1.0, 5.0
+
+    base = MultiSimulator(_OneLongTightStop(), size=size, fee_rate=fee).run(bars)
+    burst = MultiSimulator(
+        _OneLongTightStop(), size=size, fee_rate=fee, burst_cost_mult=mult
+    ).run(bars)
+
+    assert len(base.trades) == 1
+    t_base, t_burst = base.trades[0], burst.trades[0]
+    assert t_base.exit_reason is ExitReason.STOP_LOSS
+    # Base round-trip = entry*size*fee*2; burst adds exit_price*size*fee*(mult-1) on the stop.
+    assert t_base.cost == pytest.approx(100.0 * size * fee * 2.0)
+    surcharge = t_burst.exit_price * size * fee * (mult - 1.0)
+    assert t_burst.cost == pytest.approx(t_base.cost + surcharge)
+    # burst_cost_mult=1.0 must be an exact no-op.
+    noop = MultiSimulator(
+        _OneLongTightStop(), size=size, fee_rate=fee, burst_cost_mult=1.0
+    ).run(bars)
+    assert noop.trades[0].cost == pytest.approx(t_base.cost)
+
+
+def test_burst_cost_no_surcharge_off_stop_exits() -> None:
+    # _EveryBarLong never stops out (huge sl) -> burst_cost_mult must not change cost.
+    bars = _bars([100.0] * 8, [100.5] * 8, [99.5] * 8)
+    base = MultiSimulator(_EveryBarLong(), size=1.0, fee_rate=0.0002).run(bars)
+    burst = MultiSimulator(
+        _EveryBarLong(), size=1.0, fee_rate=0.0002, burst_cost_mult=5.0
+    ).run(bars)
+    assert sum(t.cost for t in base.trades) == pytest.approx(sum(t.cost for t in burst.trades))
 
 
 def test_multi_strategy_is_registered_and_multi() -> None:

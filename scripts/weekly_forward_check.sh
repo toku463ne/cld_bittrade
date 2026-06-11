@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Weekly forward/lockbox confirmation for the shipped strategies (density_pullback,
-# vol_expansion_ride).
+# vol_expansion_ride) and the combined live book (combo_dp_ver).
 #
 # Each run: (1) imports the latest ~2 weeks of GMO 1h BTC_JPY klines (idempotent —
 # skip_existing dedupes, so re-runs only fetch new days), then (2) runs the
@@ -17,7 +17,7 @@ PROJECT_DIR="/home/ubuntu/cld_bittrade"
 UV="/home/ubuntu/.local/bin/uv"
 PRODUCT="${FORWARD_PRODUCT:-GMO_BTC_JPY}"
 # Space-separated list of shipped strategies to forward-check (override via env).
-STRATEGIES="${FORWARD_STRATEGIES:-density_pullback vol_expansion_ride}"
+STRATEGIES="${FORWARD_STRATEGIES:-density_pullback vol_expansion_ride combo_dp_ver}"
 LOG_DIR="${PROJECT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/forward.log"
 LOCK_FILE="${LOG_DIR}/forward.lock"
@@ -44,6 +44,16 @@ TO="$(date +%F)"
     "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
       --strategy "${STRATEGY}" --timeframe 1h --product "${PRODUCT}"
   done
+  # density_pullback_eth on ETH (transfer promotion + C'' invalidation exit, 2026-06-11).
+  "${UV}" run --env-file .env.bt python -m src.data.import_gmo \
+    --from "${FROM}" --to "${TO}" --timeframe 1h --symbol ETH_JPY --product GMO_ETH_JPY
+  "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
+    --strategy density_pullback_eth --timeframe 1h --product GMO_ETH_JPY
+  # density_pullback_xrp on XRP (transfer + XRP-only invalidation_depth=0.35, 2026-06-11).
+  "${UV}" run --env-file .env.bt python -m src.data.import_gmo \
+    --from "${FROM}" --to "${TO}" --timeframe 1h --symbol XRP_JPY --product GMO_XRP_JPY
+  "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
+    --strategy density_pullback_xrp --timeframe 1h --product GMO_XRP_JPY
   echo "=== $(date -Is) | done ==="
 } >>"${LOG_FILE}" 2>&1
 

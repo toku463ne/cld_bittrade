@@ -39,13 +39,14 @@ def time_at_price_profile(
     n_bins: int,
     lo: float | None = None,
     hi: float | None = None,
+    weights: NDArray[np.float64] | list[float] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Build a time-at-price histogram over a set of bars.
 
-    Each bar contributes total weight ``1.0``, distributed across the bins its
-    ``[low, high]`` span overlaps in proportion to the overlap length. A
-    zero-range bar (``high == low``) deposits its full weight in the single bin
-    containing that price.
+    Each bar contributes total weight ``weights[i]`` (default ``1.0``),
+    distributed across the bins its ``[low, high]`` span overlaps in proportion
+    to the overlap length. A zero-range bar (``high == low``) deposits its full
+    weight in the single bin containing that price.
 
     Args:
         highs: Per-bar high prices.
@@ -53,6 +54,9 @@ def time_at_price_profile(
         n_bins: Number of equal-width price bins.
         lo: Lower price bound of the histogram. Defaults to ``min(lows)``.
         hi: Upper price bound of the histogram. Defaults to ``max(highs)``.
+        weights: Optional per-bar weight (length = n_bars). ``None`` (default)
+            weights every bar ``1.0`` — the time-equal profile. Used to tilt the
+            profile, e.g. a recency ramp that emphasises recent bars.
 
     Returns:
         ``(centers, weights)`` — bin centre prices and the time weight in each
@@ -70,15 +74,21 @@ def time_at_price_profile(
         raise ValueError("highs and lows must have the same length")
     if h.size == 0:
         raise ValueError("highs/lows must be non-empty")
+    if weights is None:
+        wbar = np.ones(h.shape, dtype=np.float64)
+    else:
+        wbar = np.asarray(weights, dtype=np.float64)
+        if wbar.shape != h.shape:
+            raise ValueError("weights must match highs/lows length")
 
     lo_b = float(low_arr.min()) if lo is None else float(lo)
     hi_b = float(h.max()) if hi is None else float(hi)
     if hi_b <= lo_b:
         # Degenerate (flat) window: a single price. One bin, all the weight.
         centers = np.full(n_bins, lo_b, dtype=np.float64)
-        weights = np.zeros(n_bins, dtype=np.float64)
-        weights[n_bins // 2] = float(h.size)
-        return centers, weights
+        out = np.zeros(n_bins, dtype=np.float64)
+        out[n_bins // 2] = float(wbar.sum())
+        return centers, out
 
     edges = np.linspace(lo_b, hi_b, n_bins + 1)
     left = edges[:-1]
@@ -102,16 +112,17 @@ def time_at_price_profile(
 
     ranged = span > 0.0
     if ranged.any():
-        contrib = overlap[ranged] / span[ranged][:, None]
+        # Each ranged bar deposits its weight ``wbar[i]`` spread over its span.
+        contrib = (overlap[ranged] / span[ranged][:, None]) * wbar[ranged][:, None]
         weights += contrib.sum(axis=0)
 
-    # Zero-range bars: deposit full unit weight in the containing bin.
+    # Zero-range bars: deposit the bar's full weight in the containing bin.
     if (~ranged).any():
         flat_prices = bar_lo[~ranged]
         idx = np.clip(
             np.searchsorted(edges, flat_prices, side="right") - 1, 0, n_bins - 1
         )
-        np.add.at(weights, idx, 1.0)
+        np.add.at(weights, idx, wbar[~ranged])
 
     return centers, weights
 

@@ -14,11 +14,122 @@ fill.
 | **Class** | `src/strategy/density_pullback.py` → `DensityPullbackStrategy` (subclasses `RandomHedgeStrategy`) |
 | **Simulator** | `src/simulator/multi_simulator.py` → `MultiSimulator` (resting limit orders) |
 | **Reuses** | density-breakout detection (`_rolling_bands`, `_next_dense` from `density_multi_breakout`); zs SL + ratchet exit (`random_hedge`) |
-| **Default config** | `window=168, max_band_pct=0.03, limit_window=24, pullback=True` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
+| **Default config** | `window=168, max_band_pct=0.03, limit_window=6, pullback=True, recency=1.0, max_slots=12` + tuned exit (`sl_mult=0.75, recalc_bars=48, time_stop_bars=120`) |
 | **Default timeframe** | **1h** |
-| **Status** | **`ship=True`** (passes the revised ship gate — the project's first) — tuned default (`sl_mult=0.75, recalc_bars=48`) IS eqSharpe **+1.27 / OOS +1.47** (both > B&H +0.64), quarterly consistency **80% > B&H 62%**, 6/6 walk-forward folds. Caveat: the exit was tuned on this 5y, so per eval §6.5 the honest final confirmation is forward/lockbox data — paper-trade before live. |
+| **Status** | **`ship=True`** (passes the revised ship gate — the project's first). After the 2026-06-08 refinements (see below) the lockbox row is IS eqSharpe **+1.81 / OOS +1.26** (both > their own B&H), OOS@10bp **+1.07**, 6/6 walk-forward folds, lift-over-null **IS +1.04** (leads the candidate table). Caveat: the exit and these knobs were tuned on this 5y, so per eval §6.5 the honest final confirmation is forward/lockbox data — paper-trade before live. |
 
 ---
+
+## Update — post-ship refinements (2026-06-08)
+
+Three default changes after the original ship decision. Each was swept on the
+**lockbox** (`split_lockbox`, 1h GMO); regenerate the row with
+`python -m src.backtest.analysis.benchmark_table_row --strategy density_pullback`.
+The §2–§4 analysis below is the **original shipping record** (80/20 split,
+comparison-era exit) and predates these knobs.
+
+1. **`recency=1.0` — log recency-weighted value-area box** (now default). The box is
+   built with a per-bar weight that keeps the oldest bar at baseline `1.0` and the
+   newest at `1+recency`, with the lift decaying as `log1p(age)` so 3–5-day-old bars
+   keep most of their weight (`_recency_weights`; `time_at_price_profile` gained a
+   per-bar `weights` arg). Walk-forward-robust: +ve in all 6 folds, beats B&H 5/6 vs
+   4/6. `recency=0.0` recovers the old time-equal box (the control).
+2. **`limit_window` 24 → 6** — keep the retest *prompt*. At ~1 day the limit caught
+   delayed reversals crashing back through the edge (falling-knife fills, not breakout
+   retests — e.g. the 2026-05-15 22:00 long filled 23 bars after the breakout into a
+   1-bar −2% crash). Swept 3/6/12/18/24/36; **6 is the balance** (best IS Sharpe,
+   6/6 folds, OOS held). Longer windows lift OOS slightly but at lower IS and admit the
+   stale knife-catches.
+3. **`max_slots` 50 → 12** — concurrency cap for live risk control. The observed peak
+   overlap is **10** and `max_slots ≥ 10` are **identical on every metric** (the
+   overlapping entries are *additive* edge, not redundancy — a single-position cap
+   halves OOS). 12 leaves headroom over the peak while making a budget a hard
+   guarantee: peak exposure = `max_slots × per-slot lot`. Backtest unchanged vs 50.
+
+**Cumulative lockbox effect** (recency + limit_window vs the prior baseline):
+IS eqSharpe **1.39 → 1.81**, OOS **1.11 → 1.26**, OOS@10bp **0.90 → 1.07**, 6/6 folds,
+lift-over-null IS **+0.63 → +1.04**. Two ideas tested and **rejected** (kept as no-op
+controls): `breakout_k` (extent gate — non-monotonic, no edge) and `accept_band`
+(causal acceptance-band confirmation entry — strictly worse than the passive limit; a
+look-ahead first cut had looked good — see the knob-history note in the source).
+
+**2026-06-10 — `invalidation_depth` (failed-breakout invalidation exit) tested and
+REJECTED** (kept as a no-op control, default `None`). The hypothesis: 58% of trades
+exit `stop_loss` (sum_r −3.95 vs the trail winners' +5.27), the zs stop is generic
+and takes a median 9 bars to fire, while the strategy has a structural invalidation —
+a bar **closing** back inside the value area beyond `depth × box-height` from the
+broken edge means the breakout is dead; exit at that close. Swept depth
+0.25/0.5/0.75/1.0/1.25 + 6-fold fixed-config WF
+(`src/backtest/analysis/density_pullback_invalidation_ab.py`):
+
+| arm | WF folds +ve | WF mean | IS trail winners | IS stop bleed |
+|---|---|---|---|---|
+| baseline | **6/6** | **+1.18** | 143 | −3.28 |
+| depth=0.25 | 5/6 | +1.05 | 95 | −2.61 |
+| depth=0.5 | 5/6 | +0.92 | 117 | −3.30 |
+| depth=0.75 | 6/6 | +1.14 | 138 | −3.28 |
+| depth=1.0 / 1.25 | 6/6 | +1.18 | ≈143 | −3.28 |
+
+At `depth ≥ 1.0` the knob is a **literal no-op** — the zs `0.75`-band stop always
+fires first. Everywhere it acts (`< 1.0`) it is neutral-to-worse: fold f2 (the 2022
+bear) flips negative, and the mechanism evidence contradicts the hypothesis — the
+stop *bleed barely moves* while trail winners get converted into stops (143→95 at
+0.25). **The dip-then-run winners are the trades that close back inside the box**;
+re-acceptance is not a reliable death signal at this timeframe. depth=0.5's 80/20-OOS
+bump (+0.95→+1.13) is a single-split artifact contradicted by its worst-of-sweep WF
+mean — the standing lesson about selecting on one OOS peek.
+
+> **2026-06-11 REVERSAL — `max_base_bars=64` ADOPTED as default.** The rejection above was
+> the right call on the evidence at the time; it is reversed by **independent-asset
+> replication**. GMO_ETH_JPY (imported 2026-06-11, dp transfers untuned — see
+> `study_plan_new_strategies.md` §C): the per-trade 64+ stale tail replicates **cleaner**
+> than BTC's (mean_r −0.0065, DR 0.12, free of the BTC read's OOS-peek flag), and the
+> BTC-chosen 64 cell — tested *untuned* on ETH, nothing fitted — improves the ETH equity
+> path (lockbox-IS WF mean +0.45→+0.58, **4/6 folds improve, none worsen**, IS eqSh
+> +1.01→+1.13). On BTC it keeps 6/6 folds and nudges every metric up. The ≤48 region
+> remains harmful — **do not deepen the gate**. Forward clocks for density_pullback,
+> combo_dp_ver and dp-on-ETH were reset at adoption (records were only days old — the
+> cheapest moment to change shipped logic).
+
+**2026-06-10 — `max_base_bars` (stale-box gate) tested and NOT ADOPTED** (no-op control,
+default `None`) — but the diagnostic behind it is a keeper. Base length = consecutive prior
+closes accepted inside their own rolling value-area band. The classical "longer base →
+stronger breakout" prior is **inverted** at 1h: per-trade mean_r declines monotonically with
+base length (0–1 bars +0.0064 → 32–63 +0.0018 → 64+ −0.0011 with DR 0.18) — good breakouts
+leave *young* pause-in-trend boxes; breakouts from mature, long-defended value areas get
+faded. So the candidate gate was a **max** (skip stale boxes), not the classical min. Swept
+16/24/32/48/64/96/128 + 6-fold WF (`density_pullback_baselen_ab.py`): thresholds ≤ 48 flip
+fold f6 negative — the per-trade-weak 32–63 trades still contribute at the equity level
+(the recurring gradient-doesn't-transfer lesson) — and the only safe cell (64: 6/6 folds,
+WF mean 1.18→1.22, IS 1.504→1.545) gains +0.04 on 15 trades: within winner's-curse range of
+a 7-cell sweep, and the 64+ "negative tail" read leaned on the OOS bucket column (IS-only it
+is weakly positive) — a partial OOS-peek, so not adoptable under the project's hygiene rule.
+Net: no adoptable region; structural finding logged.
+
+**2026-06-10 — swap-aware exit tuning: hypothesis refuted, ratchet verified cost-robust**
+(no change shipped). Under `--bitflyer-realistic` (swap 0.04%/day + 5× burst spread on stop
+exits) density_pullback's total cost is 3.4× calm (1846 → 6345 JPY: base 1846 / burst 2053 /
+swap 2445) and the 80/20 gate drops IS 1.50→1.31, OOS 0.95→0.58 (still ships). The worry was
+a *swap leak on the 50-bar trail rides* → re-tune the ratchet. The decomposition refutes it:
+the 48–96h trail winners pay the most swap (1339 JPY) but it is only **3.4% of their PnL**
+(+41.0k→+39.6k; 22/158 flip negative) — the rides absorb swap easily. The realistic-cost
+damage concentrates on the **stops via the burst surcharge** (stop bucket −2660 JPY; the two
+flipped IS quarters are 2023Q2 ≈ 0 noise and 2023Q3, a stop-heavy −0.10 swing). The
+pre-registered verification sweep (`density_pullback_recalc_cost_ab.py`, recalc_bars
+24/36/48/72/96 × calm/realistic, 6-fold WF) shows **the optimum does not move**: 48 is the
+argmax on both bases (calm WF mean 1.18 vs 1.01–1.06; realistic 0.92 vs 0.76–0.79; best OOS
+on both), and the realistic basis subtracts ~0.25–0.3 WF mean *uniformly* across all recalc
+values rather than reshaping the curve. The exit was not tuned to the wrong cost model. The
+residual realistic-cost exposure is the burst surcharge on the 58% stop exits — an entry/
+stop-frequency property, not an exit-knob one (and the invalidation/base-length attempts on
+that side both failed; the live-forward remains the calibrator of the 5× burst assumption).
+
+**Sizing note.** With `max_slots=12` and a **0.10 BTC budget**, per-slot lot ≈ `0.0083`
+BTC bounds peak exposure to 0.10 BTC. Earnings (and drawdown) scale **linearly** with
+lot: the 0.001-lot backtest ×10 (≈ `max_slots=10`, lot 0.01) ≈ **+304k JPY over 5.1y,
+~59k/yr average — but very lumpy** (2024–25 carried ~90%). As an overlay on a held BTC
+core it pads up-years and can erase mild down-years (2025), but is too small to offset
+a real BTC crash (2022/2026).
 
 ## 1. Idea
 

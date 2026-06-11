@@ -38,8 +38,10 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         *,
         atr_period: int = 14,
         squeeze_rank_max: float = 0.25,
-        expand_mult: float = 2.0,
+        expand_mult: float = 2.5,
         rank_window: int = 500,
+        skip_contra_extreme: int | None = 1,
+        confirm_bars: int | None = None,
         **kwargs: object,
     ) -> None:
         """Initialise.
@@ -48,8 +50,26 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
             atr_period: ATR lookback for squeeze/expansion.
             squeeze_rank_max: squeeze if the prior-bar ATR trailing-percentile rank
                 is <= this (low-vol regime).
-            expand_mult: expansion if the bar's true range >= this × the prior ATR.
+            expand_mult: expansion if the bar's true range >= this × the prior ATR. Default
+                ``2.5`` (raised from 2.0): a smooth structural choice from the squeeze×expand
+                sweep — the whole ex=2.5 column is 5/6 WF folds (vs 2.0's jittery 4/6),
+                rescuing the early-2021 fold at every squeeze value, for ~35% less turnover and
+                ~0.2 IS-Sharpe giveback. See docs/strategy/vol_expansion_ride.md §7.
             rank_window: trailing window for the ATR percentile rank.
+            skip_contra_extreme: if set (lookback in bars), skip an entry whose trigger
+                bar made an extreme AGAINST the ride direction over the prior N bars — a
+                LONG burst that undercut the prior-N low, or a SHORT burst that printed a
+                higher high than the prior-N high (a "two-sided / directionless"
+                expansion). None disables the filter; the default ``1`` is the
+                WF-validated contra-1bar definition (lifts WF-mean equity Sharpe
+                +0.93→+1.24, beat-B&H 3/6→4/6, quarter-consistency 65%→76%, while
+                cutting ~27% of trades; see docs/strategy/vol_expansion_ride.md §5).
+            confirm_bars: if set (N bars), require the burst to FOLLOW THROUGH before
+                entering — the close N bars after the burst bar must be beyond the burst
+                bar's close in the ride direction; the entry is then delayed to that
+                confirm bar (fill N+1 bars after the burst). None = enter on the burst bar
+                itself (shipped). Causal: uses only closes up to the confirm bar. Aimed at
+                the regimes ver fails in (4/6 folds), where bursts mostly reverse.
             **kwargs: forwarded to RandomHedgeStrategy (the tuned ride exit + gates).
         """
         kwargs.setdefault("recalc_bars", 48)  # tuned ride exit
@@ -67,6 +87,8 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
         self.squeeze_rank_max = squeeze_rank_max
         self.expand_mult = expand_mult
         self.rank_window = rank_window
+        self.skip_contra_extreme = skip_contra_extreme
+        self.confirm_bars = confirm_bars
         self.warmup = max(self.warmup, rank_window + 2)
         self.max_buffer = self.warmup + 2
 
@@ -106,17 +128,41 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
             if tr[t] < self.expand_mult * a_prev:
                 continue
             side = Side.LONG if closes[t] >= opens[t] else Side.SHORT
+            # Two-sided/directionless expansion filter: skip if the burst bar made an
+            # extreme AGAINST the ride direction over the prior N bars. Causal (bar t is
+            # closed; decision uses [t-lb, t)). See docs/strategy/vol_expansion_ride.md.
+            if self.skip_contra_extreme is not None:
+                lb = self.skip_contra_extreme
+                if t - lb >= 0:
+                    if side == Side.LONG and lows[t] < min(lows[t - lb : t]):
+                        continue
+                    if side == Side.SHORT and highs[t] > max(highs[t - lb : t]):
+                        continue
             if not self._gate_ok(t, None, None):
                 continue
             if not self._trend_ok(side, t):  # optional: skip counter-trend bursts
                 continue
-            entry = closes[t]
-            legs = self._legs(peak_idx, peak_price, t)
+            # Optional follow-through confirmation: require the close N bars after the burst
+            # to be beyond the burst-bar close in the ride direction, then DELAY entry to
+            # that confirm bar (fill N+1 bars after the burst). Filters reversal-bursts.
+            # Causal — only uses closes up to the confirm bar. entry_t == t when disabled.
+            entry_t = t
+            if self.confirm_bars is not None:
+                ct = t + self.confirm_bars
+                if ct >= len(bars):
+                    continue
+                if side == Side.LONG and not closes[ct] > closes[t]:
+                    continue
+                if side == Side.SHORT and not closes[ct] < closes[t]:
+                    continue
+                entry_t = ct
+            entry = closes[entry_t]
+            legs = self._legs(peak_idx, peak_price, entry_t)
             ctx = ExitContext(side=side, entry_price=entry, zs_history=legs)
             band = self._zs.band(ctx)
             sl_abs = self._zs.exit_config(ctx).sl_abs
             target = _next_dense(
-                highs, lows, t, entry, side,
+                highs, lows, entry_t, entry, side,
                 target_window=self.target_window, n_bins=self.n_bins,
                 min_frac=self.target_min_frac, min_dist=self.target_min_dist_frac * band,
             )
@@ -125,7 +171,7 @@ class VolExpansionRideStrategy(RandomHedgeStrategy):
                 tp_abs=abs(target - entry) if target is not None else None,
                 time_stop_bars=self.time_stop_bars,
             )
-            ts = bars[t].timestamp
+            ts = bars[entry_t].timestamp
             out[ts] = [
                 Signal(
                     side=side, timestamp=ts, price=entry, score=1.0, reason=self.name,

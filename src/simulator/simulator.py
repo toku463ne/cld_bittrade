@@ -61,6 +61,9 @@ class Simulator:
         atr_period: ATR period used to size ATR-based exits at entry.
         fee_rate: Per-side taker fee rate. The round-trip cost deducted from each
             trade is ``entry_price × size × fee_rate × 2``.
+        burst_cost_mult: Spread multiplier on the exit leg of a ``STOP_LOSS`` exit
+            only (the wide-spread adverse-momentum fill); ``1.0`` (default) = no-op.
+            See :class:`~src.simulator.multi_simulator.MultiSimulator` for the model.
     """
 
     def __init__(
@@ -70,11 +73,15 @@ class Simulator:
         size: float = 0.001,
         atr_period: int = 14,
         fee_rate: float = DEFAULT_FEE_RATE,
+        burst_cost_mult: float = 1.0,
     ) -> None:
+        if burst_cost_mult < 1.0:
+            raise ValueError("burst_cost_mult must be >= 1")
         self.strategy = strategy
         self.size = size
         self.atr_period = atr_period
         self.fee_rate = fee_rate
+        self.burst_cost_mult = burst_cost_mult
 
     def run(self, bars: list[Bar]) -> SimResult:
         """Run the simulation over ``bars``.
@@ -202,6 +209,9 @@ class Simulator:
         assert isinstance(entry_time, datetime)
         # Round-trip trading cost: entry and exit are each charged fee_rate.
         cost = pos.entry_price * self.size * self.fee_rate * 2.0
+        # Burst-aftermath surcharge on stop-out exits (no-op when burst_cost_mult==1).
+        if reason is ExitReason.STOP_LOSS and self.burst_cost_mult != 1.0:
+            cost += exit_price * self.size * self.fee_rate * (self.burst_cost_mult - 1.0)
         return Trade(
             side=pos.side,
             entry_time=entry_time,

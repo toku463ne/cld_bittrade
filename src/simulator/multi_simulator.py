@@ -37,6 +37,7 @@ class _Slot:
     entry_idx: int
     entry_time: datetime
     cfg: ExitConfig
+    swap: float = 0.0  # accrued daily-swap/funding cost (JPY) while held
 
 
 @dataclass(slots=True)
@@ -49,6 +50,29 @@ class _Working:
     expiry_idx: int
 
 
+@dataclass(slots=True)
+class DesiredPosition:
+    """One position the strategy currently wants open (for live reconciliation)."""
+
+    side: Side
+    entry_time: datetime
+    entry_price: float
+    current_stop: float | None  # ratchet-tightened stop as of the last bar
+    target: float | None
+    bars_held: int
+    time_stop_bars: int | None
+
+
+@dataclass(slots=True)
+class LiveBookState:
+    """The strategy's desired live state as of the last closed bar (no end-close)."""
+
+    positions: list[DesiredPosition]
+    pending_entries: list[Signal]  # market entries to fill at the next bar's open
+    working_orders: list[tuple[Signal, float, int]]  # (signal, limit_price, expiry_idx)
+    last_bar_time: datetime | None
+
+
 class MultiSimulator:
     """Bar simulator holding up to ``strategy.max_slots`` concurrent positions.
 
@@ -57,6 +81,23 @@ class MultiSimulator:
         size: Per-slot position size in BTC (minimum lot by default).
         atr_period: ATR period for entry sizing (parity with the single sim).
         fee_rate: Per-side taker cost; round-trip = ``entry × size × rate × 2``.
+        daily_swap_rate: Daily funding/swap as a fraction of position notional,
+            charged once per calendar day on every position **held across the
+            day boundary** (e.g. bitFlyer Lightning FX_BTC_JPY = ``0.0004`` =
+            0.04%/day at the 00:00 JST cutoff). ``0.0`` (default) = no swap, so
+            commission-free spot/GMO backtests are unchanged. The accrued swap is
+            folded into each trade's ``cost`` (so it flows into per-trade PnL and
+            returns) and debited from the mark-to-market equity path as it accrues.
+        burst_cost_mult: Spread multiplier applied to the **exit leg** of a
+            ``STOP_LOSS`` exit only — the burst-aftermath fill, the widest-spread
+            moment on bitFlyer FX. The stop's exit half-spread becomes
+            ``fee_rate × burst_cost_mult`` (entry leg and all non-stop exits stay at
+            ``fee_rate``). ``1.0`` (default) = exact no-op, preserving the
+            deterministic benchmark snapshot. e.g. base ``fee_rate=0.0002`` (2 bp)
+            with ``burst_cost_mult=5.0`` charges 10 bp on stop exits — the realistic
+            burst-fill cost identified as vol_expansion_ride's binding, otherwise-
+            unmeasurable risk (~79% of its exits are stops). GMO OHLC cannot observe
+            this spread, so it is modelled as a parameter rather than read from bars.
     """
 
     def __init__(
@@ -66,14 +107,60 @@ class MultiSimulator:
         size: float = 0.001,
         atr_period: int = 14,
         fee_rate: float = DEFAULT_FEE_RATE,
+        daily_swap_rate: float = 0.0,
+        burst_cost_mult: float = 1.0,
     ) -> None:
+        if daily_swap_rate < 0.0:
+            raise ValueError("daily_swap_rate must be >= 0")
+        if burst_cost_mult < 1.0:
+            raise ValueError("burst_cost_mult must be >= 1")
         self.strategy = strategy
         self.size = size
         self.atr_period = atr_period
         self.fee_rate = fee_rate
+        self.daily_swap_rate = daily_swap_rate
+        self.burst_cost_mult = burst_cost_mult
 
     def run(self, bars: list[Bar]) -> SimResult:
-        """Run the multi-position simulation over ``bars``."""
+        """Run the multi-position simulation over ``bars`` (closes open book at end)."""
+        res, _book, _pending, _working = self._simulate(bars, close_at_end=True)
+        return res
+
+    def live_state(self, bars: list[Bar]) -> LiveBookState:
+        """Strategy's *current* desired book over ``bars`` (no end-of-data close).
+
+        Replays the strategy up to the last (closed) bar and returns what it would
+        be holding right now — open positions with their current ratchet stop /
+        target / time-stop deadline, plus market entries pending for the next bar
+        and resting limit orders. This is what the live auto-trader reconciles
+        against the exchange. ``bars`` should end at the last CLOSED bar.
+        """
+        _res, book, pending, working = self._simulate(bars, close_at_end=False)
+        stops: dict[tuple[int, Side], float] = getattr(self.strategy, "_stop", {})
+        positions = [
+            DesiredPosition(
+                side=s.pos.side,
+                entry_time=s.entry_time,
+                entry_price=s.pos.entry_price,
+                current_stop=stops.get((s.entry_idx, s.pos.side)) or s.pos.sl_price,
+                target=s.pos.tp_price,
+                bars_held=s.pos.bars_held,
+                time_stop_bars=s.cfg.time_stop_bars,
+            )
+            for s in book
+        ]
+        last_ts = bars[-1].timestamp if bars else None
+        return LiveBookState(
+            positions=positions,
+            pending_entries=list(pending),
+            working_orders=[(w.sig, w.limit_price, w.expiry_idx) for w in working],
+            last_bar_time=last_ts,
+        )
+
+    def _simulate(
+        self, bars: list[Bar], *, close_at_end: bool = True
+    ) -> tuple[SimResult, list[_Slot], list[Signal], list[_Working]]:
+        """Core loop. Returns the result plus the open book / pending / working."""
         self.strategy.reset()
         fallback_cfg = self.strategy.get_exit_rules()
         max_slots = max(1, self.strategy.max_slots)
@@ -101,8 +188,23 @@ class MultiSimulator:
         pending: list[Signal] = []
         pending_atr = 0.0
         working: list[_Working] = []
+        swap_open = 0.0  # accrued swap on still-open positions (debited from equity)
+        prev_date = None  # JST calendar date of the previous bar
 
         for i, bar in enumerate(bars):
+            # 0. Daily swap/funding: on each new calendar day, charge every position
+            #    carried across the boundary (per-slot, folded into its eventual cost
+            #    and debited from equity now). New entries below are not yet held
+            #    across a cutoff, so they are charged from the next boundary on.
+            if self.daily_swap_rate > 0.0:
+                d = bar.timestamp.date()
+                if prev_date is not None and d != prev_date:
+                    for slot in book:
+                        inc = self.daily_swap_rate * self.size * bar.close
+                        slot.swap += inc
+                        swap_open += inc
+                prev_date = d
+
             # 1. Exits on the current bar (static config, then the dynamic hook).
             survivors: list[_Slot] = []
             for slot in book:
@@ -117,6 +219,7 @@ class MultiSimulator:
                     trade = self._close(slot, bar, exit_price, reason, i - slot.entry_idx)
                     trades.append(trade)
                     realised += trade.pnl
+                    swap_open -= slot.swap  # now realised via trade.cost
             book = survivors
 
             # 2. Fill market pending signals at this bar's open while slots are
@@ -160,14 +263,15 @@ class MultiSimulator:
                             _Working(s, s.limit_price, atr_vals[i], i + max(1, s.limit_expiry_bars))
                         )
 
-            # Mark-to-market: realised + unrealised across the open book.
+            # Mark-to-market: realised + unrealised across the open book, less the
+            # swap accrued so far on still-open positions.
             unreal = sum(
                 s.pos.side.sign * (bar.close - s.pos.entry_price) * self.size for s in book
             )
-            equity_curve.append(realised + unreal)
+            equity_curve.append(realised + unreal - swap_open)
 
-        # Close anything still open at end of data.
-        if book and bars:
+        # Close anything still open at end of data (backtest); skip for live_state.
+        if close_at_end and book and bars:
             last = bars[-1]
             for slot in book:
                 trade = self._close(
@@ -177,6 +281,7 @@ class MultiSimulator:
                 realised += trade.pnl
             if equity_curve:
                 equity_curve[-1] = realised
+            book = []
 
         logger.info(
             "MultiSimulated {} bars for '{}': {} trades ({} slots), net PnL {:.1f}",
@@ -186,12 +291,13 @@ class MultiSimulator:
             max_slots,
             realised,
         )
-        return SimResult(
+        sim_result = SimResult(
             trades=trades,
             strategy_name=self.strategy.name,
             n_bars=len(bars),
             equity_curve=equity_curve,
         )
+        return sim_result, book, pending, working
 
     def _atr_series(self, bars: list[Bar]) -> list[float]:
         if not bars:
@@ -226,7 +332,11 @@ class MultiSimulator:
         self, slot: _Slot, bar: Bar, exit_price: float, reason: ExitReason, bars_held: int
     ) -> Trade:
         pos = slot.pos
-        cost = pos.entry_price * self.size * self.fee_rate * 2.0
+        cost = pos.entry_price * self.size * self.fee_rate * 2.0 + slot.swap
+        # Burst-aftermath surcharge: a stop-out fills at the widest-spread moment, so
+        # its exit leg pays (mult-1)x extra half-spread. No-op when burst_cost_mult==1.
+        if reason is ExitReason.STOP_LOSS and self.burst_cost_mult != 1.0:
+            cost += exit_price * self.size * self.fee_rate * (self.burst_cost_mult - 1.0)
         return Trade(
             side=pos.side,
             entry_time=slot.entry_time,

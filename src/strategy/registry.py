@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from src.strategy.base import Strategy
+from src.strategy.combo_dp_ver import ComboDpVerStrategy
 from src.strategy.density_band import DensityBandStrategy
 from src.strategy.density_breakout import DensityBreakoutStrategy
 from src.strategy.density_breakout_acc import DensityBreakoutAccStrategy
@@ -22,7 +23,11 @@ from src.strategy.density_multi_relative import DensityMultiRelativeStrategy
 from src.strategy.density_volwall_breakout import DensityVolwallBreakoutStrategy
 from src.strategy.ema_atr_breakout import EmaAtrBreakoutStrategy
 from src.strategy.random_hedge import RandomHedgeStrategy, RandomHedgeVolfilterStrategy
-from src.strategy.density_pullback import DensityPullbackStrategy
+from src.strategy.density_pullback import (
+    DensityPullbackEthStrategy,
+    DensityPullbackStrategy,
+    DensityPullbackXrpStrategy,
+)
 from src.strategy.rsi_extreme_ride import RsiExtremeRideStrategy
 from src.strategy.vol_expansion_ride import VolExpansionRideStrategy
 from src.strategy.zigzag_bounce_ride import ZigzagBounceRideStrategy
@@ -53,9 +58,12 @@ STRATEGY_REGISTRY: dict[str, Callable[[], Strategy]] = {
     RandomHedgeVolfilterStrategy.name: RandomHedgeVolfilterStrategy,
     RandomHedgeDensityStrategy.name: RandomHedgeDensityStrategy,
     DensityPullbackStrategy.name: DensityPullbackStrategy,
+    DensityPullbackEthStrategy.name: DensityPullbackEthStrategy,
+    DensityPullbackXrpStrategy.name: DensityPullbackXrpStrategy,
     ZigzagBounceRideStrategy.name: ZigzagBounceRideStrategy,
     VolExpansionRideStrategy.name: VolExpansionRideStrategy,
     RsiExtremeRideStrategy.name: RsiExtremeRideStrategy,
+    ComboDpVerStrategy.name: ComboDpVerStrategy,
 }
 
 
