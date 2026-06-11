@@ -42,7 +42,9 @@ combo is the highest-return but **lumpy** (2024-loaded); XRP is flat-and-steady.
 ## Slot size = capital weights (the second lever)
 
 Weights are **capital fractions** (achieving them needs per-asset lot sizing — XRP/ETH lots
-scale up vs BTC's 0.001 minimum to deploy equal JPY). Full-year (2022–25) stability:
+scale up vs BTC's 0.001 minimum to deploy equal JPY). Full-year (2022–25) stability
+(**`mean`** = simple arithmetic average of the four full-year return-on-capital figures —
+2022–2025, partial 2021/2026 excluded; not compounded/CAGR):
 
 | weighting (BTC/ETH/XRP) | worst yr | stdev | ySharpe | mean | note |
 |---|---|---|---|---|---|
