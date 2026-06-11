@@ -18,6 +18,7 @@ next iteration, behind the same USE_LIVE_API + ALLOW_ORDERS + --execute gates.
 
 from __future__ import annotations
 
+import argparse
 import os
 from collections import Counter
 
@@ -25,8 +26,13 @@ from loguru import logger
 
 from src.config import get_settings
 from src.core.types import Side
-from src.execution.gmo_client import LEVERAGE_MIN_SIZE, gmo_account_client_from_settings
+from src.execution.gmo_client import (
+    LEVERAGE_MIN_SIZE,
+    gmo_account_client_from_settings,
+    gmo_trading_client_from_settings,
+)
 from src.execution.live_bars import recent_bars
+from src.execution.live_executor import reconcile
 from src.logging_setup import configure_logging
 from src.simulator import MultiSimulator
 from src.simulator.multi_simulator import LiveBookState
@@ -117,15 +123,37 @@ def _report(symbol: str, state: LiveBookState, *, live: bool) -> None:
 
 
 def main() -> None:
-    """Compute + log the desired book and reconcile actions for all books (dry-run)."""
+    """Reconcile each book to the exchange (dry-run unless --execute + ALLOW_ORDERS)."""
+    ap = argparse.ArgumentParser(description="Auto-trader: reconcile desired book to GMO.")
+    ap.add_argument("--execute", action="store_true",
+                    help="Actually place/cancel/close orders (needs USE_LIVE_API + ALLOW_ORDERS). "
+                         "1-slot books only; default and multi-slot books are dry-run.")
+    args = ap.parse_args()
+
     settings = get_settings()
     configure_logging(settings.log_level)
-    logger.warning("AUTO-TRADER DRY-RUN — computes intended actions, places NO orders.")
-    live = settings.use_live_api
+    want_exec = args.execute and settings.allow_orders
+    if args.execute and not settings.allow_orders:
+        logger.warning("--execute given but ALLOW_ORDERS=false -> DRY-RUN reconcile (no orders).")
+    logger.warning("AUTO-TRADER ({}) — live_read={}", "EXECUTE" if want_exec else "DRY-RUN", settings.use_live_api)
+
     for name, symbol, slots in _books():
         try:
             state = _desired(name, symbol, slots)
-            _report(symbol, state, live=live)
+            if not settings.use_live_api:
+                _report(symbol, state, live=False)  # no exchange read possible
+                continue
+            if slots == 1:
+                # The live executor handles the single-slot case (entry/stop/close).
+                exec_here = want_exec
+                client = gmo_trading_client_from_settings() if exec_here else gmo_account_client_from_settings()
+                reconcile(symbol, state, client, execute=exec_here)
+            else:
+                # Multi-slot books are monitor-only (the executor is 1-slot).
+                if want_exec:
+                    logger.warning("{} [{}]: {}-slot book — executor is 1-slot, MONITOR-ONLY here",
+                                   name, symbol, slots)
+                _report(symbol, state, live=True)
         except Exception as e:  # noqa: BLE001 — one book failing must not kill the rest
             logger.error("{} [{}] failed: {}", name, symbol, e)
 
