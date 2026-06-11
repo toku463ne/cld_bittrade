@@ -59,6 +59,31 @@ slot count.** Positive every full year (worst +0.08 return-on-capital), mean ~+0
 ySharpe 1.68. Tilting further to XRP (inverse-vol) raises ySharpe to ~1.96 but concentrates
 in one asset.
 
+## JPY view (2026-06-11) — concrete yen, and two confirmations
+
+Re-run in **absolute JPY** at a fixed **10,000 JPY notional per slot** (= BTC's 0.001 min lot at
+~10M; each asset's lot set to match), efficient slots. This confirms the return-on-capital story
+in real money and settles two practical questions:
+
+| portfolio | capital | worst yr | stdev | ySharpe | mean/yr | 5.1yr PnL |
+|---|---|---|---|---|---|---|
+| **combo_dp_ver(6) + xrp(6)** | 120k | **+6.6%** | 15.0% | **1.46** | +21.9% | **+133k** |
+| dp(6)+ver(4)+xrp(6) *separate* | 160k | +5.2% | 11.2% | 1.46 | +16.4% | +133k |
+| combo(6) + **eth(4)** + xrp(6) | 160k | +4.7% | 14.8% | 1.31 | +19.3% | +155k |
+
+1. **Hold dp+ver as `combo_dp_ver` (shared BTC slots), NOT as separate books.** The separate
+   trio produces the *identical* +133k JPY but on 160k capital vs the combo's 120k — sharing
+   slots saves 25% of capital for zero return (the slot-sharing efficiency, in yen).
+2. **Adding `density_pullback_eth` does not help yearly stability.** It adds +22k absolute PnL
+   but needs +40k capital (return-on-capital 21.9%→19.3%), and **lowers risk-adjusted
+   stability** (ySharpe 1.46→1.31, worst year +6.6%→+4.7%). ETH's yearly return is **+0.90
+   correlated** with the combo+xrp book — a near-duplicate of the BTC exposure, so it dilutes
+   rather than diversifies. Confirms the corr-+0.98 redundancy finding above, in JPY.
+
+Net: the JPY-optimal book is **`combo_dp_ver` + `density_pullback_xrp`** (the 2-book BTC/XRP
+above), tilted toward XRP for stability. (Lot caveat: at 10k/slot the BTC lot came to ~0.00156,
+above the 0.001 minimum — in live trading BTC's JPY/slot floats with price.)
+
 ## Caveats (do not over-trust the weights)
 
 - **~4 full yearly observations** — the *fitted* maximin/max-ySharpe weights (which pile into
