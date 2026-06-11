@@ -33,6 +33,7 @@ from src.execution.gmo_client import (
 )
 from src.execution.live_bars import recent_bars
 from src.execution.live_executor import reconcile
+from src.execution.order_log import snapshot
 from src.logging_setup import configure_logging
 from src.simulator import MultiSimulator
 from src.simulator.multi_simulator import LiveBookState
@@ -75,6 +76,23 @@ def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookStat
     logger.info("{} [{}]: {} bars to {}; desired book = {} open, {} pending, {} resting",
                 strategy_name, symbol, len(bars), bars[-1].timestamp,
                 len(state.positions), len(state.pending_entries), len(state.working_orders))
+    # Per-run heartbeat — the desired book even when flat, for dense offline analysis.
+    snapshot({
+        "strategy": strategy_name,
+        "symbol": symbol,
+        "slots": slots,
+        "bar_time": str(state.last_bar_time),
+        "close": bars[-1].close,
+        "n_open": len(state.positions),
+        "n_pending": len(state.pending_entries),
+        "n_resting": len(state.working_orders),
+        "positions": [
+            {"side": p.side.name, "entry": p.entry_price, "stop": p.current_stop,
+             "target": p.target, "held": p.bars_held}
+            for p in state.positions
+        ],
+        "resting": [{"side": s.side.name, "price": pr} for s, pr, _ in state.working_orders],
+    })
     return state
 
 

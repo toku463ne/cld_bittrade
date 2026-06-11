@@ -73,11 +73,16 @@ sudo systemctl stop btc-autotrader.timer
   bar-evaluated exits like a box stall) act at the hourly reconcile via market close;
   those are inherently 1h-granular, so hourly is correct. The hourly loop just
   maintains the resting orders (ratchet stop updates, OCO leftover cleanup).
-- **Order log.** Every action (entry/stop/TP/close/cancel) is appended to
-  `logs/orders.jsonl` (one JSON line: `ts, symbol, execute, action, result`), in both
-  dry-run and live — the bot's intent/audit trail. Tail it: `tail -f logs/orders.jsonl`.
-  The authoritative *fill* record is GMO's own execution history (`get_latest_executions`);
-  reconciling fills into the `trade`/`position` tables is a follow-up.
+- **Logs for analysis.** Two JSONL files in `logs/`:
+  - `orders.jsonl` — every *action* (entry/stop/TP/close/cancel): `ts, symbol, execute,
+    action, result`. Low-frequency (only when something fires).
+  - `heartbeat.jsonl` — a per-run *snapshot* of each book even when flat: `ts, strategy,
+    symbol, bar_time, close, n_open/pending/resting, positions[], resting[]`. Dense
+    hourly time series of price vs. the desired book.
+
+  Send both (with the date range) for offline analysis — I cross-check the live action
+  stream against the backtest. The authoritative *fill* record is GMO's execution
+  history (`get_latest_executions`); reconciling fills into the DB is a follow-up.
 - **First `--execute` confirms the live order schema** — the order-request shapes are
   GMO-spec + mocked-tested but were not live-tested (no funded account). Do the manual
   round-trip (step 3) first.

@@ -25,19 +25,32 @@ def log_path() -> Path:
     return Path(os.environ.get("ORDER_LOG") or _DEFAULT)
 
 
+def heartbeat_path() -> Path:
+    """Per-run desired-book snapshots — sibling of the order log."""
+    return log_path().parent / "heartbeat.jsonl"
+
+
+def _append(path: Path, obj: dict[str, Any]) -> None:
+    """Append one JSON line. Never raises into the caller (logging != trading)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, default=str) + "\n")
+    except OSError as e:
+        logger.warning("log write failed ({}): {}", path.name, e)
+
+
 def record(symbol: str, action: str, *, execute: bool, result: Any = None) -> None:
-    """Append one order action as a JSON line. Never raises into the caller."""
-    entry = {
+    """Append one order action (entry/stop/TP/close/cancel) as a JSON line."""
+    _append(log_path(), {
         "ts": datetime.now(timezone.utc).isoformat(),
         "symbol": symbol,
         "execute": execute,
         "action": action,
         "result": result,
-    }
-    try:
-        path = log_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
-    except OSError as e:  # logging must never break trading
-        logger.warning("order_log write failed: {}", e)
+    })
+
+
+def snapshot(fields: dict[str, Any]) -> None:
+    """Append one per-run heartbeat (desired book state) as a JSON line."""
+    _append(heartbeat_path(), {"ts": datetime.now(timezone.utc).isoformat(), **fields})
