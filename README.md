@@ -43,7 +43,7 @@ uv run --env-file .env.bt python -m src.backtest.cycle --strategy ema_atr_breako
 # 3. Full rebenchmark (run on every sign/strategy logic change)
 scripts/rebenchmark_sign.sh ema_atr_breakout
 
-# 4. Launch the viz app
+# 4. Launch the viz app (Chart / Backtest / Live trading / Maintenance tabs)
 uv run --env-file .env.dev python -m src.viz.app   # http://localhost:8050
 
 # 5. Trades are executed MANUALLY by the human (minimum 0.001 BTC)
@@ -103,6 +103,37 @@ DB_PASSWORD='strong-pw' bash scripts/setup_prod.sh   # swap, postgres+db, deps, 
 # Emergency: touch ~/cld_bittrade/KILL   (next run cancels all + flattens)
 ```
 
+### Always-on viz UI (nginx)
+
+Run the Dash viz as a persistent service behind nginx, so it is always up (no
+hand-starting) and reachable from a browser. One idempotent installer:
+
+```bash
+bash scripts/setup_viz_service.sh      # systemd unit + nginx reverse proxy
+# then open  http://<host-ip>/
+```
+
+It installs a `btc-viz.service` (binds **127.0.0.1** only, `Restart=always`, starts
+on boot) and an nginx site that proxies **:80 → 127.0.0.1:8050**. The env file is
+auto-picked (`.env.prod` if present, else `.env.dev`; override with `ENV_FILE=`).
+
+- The **Live trading** tab is DB-free — it pulls hourly bars straight from GMO (the
+  same source the bot uses), shows the last 14 days with per-strategy signal colours,
+  and the live book state. It works on any host (incl. the t3.micro).
+- The **Chart/Backtest** tabs read the local DB, so they are populated only where the
+  `.env` DB has OHLCV.
+
+nginx listens on `0.0.0.0:80` (internet-facing); the app stays on loopback behind it.
+Plain HTTP with **no auth** — restrict source IPs in the AWS security group (/ ufw),
+or add TLS + basic-auth, before exposing it. Details + management commands:
+**`deploy/README.md`**.
+
+```bash
+systemctl status btc-viz      # service health
+journalctl -u btc-viz -f      # app logs
+systemctl restart btc-viz     # after a code change / git pull
+```
+
 ## Layout
 
 | Path              | Purpose                                              |
@@ -116,7 +147,7 @@ DB_PASSWORD='strong-pw' bash scripts/setup_prod.sh   # swap, postgres+db, deps, 
 | `src/simulator/`  | Two-bar-fill bar simulator (NOT backtrader)         |
 | `src/backtest/`   | Metrics, benchmark pipeline, A/B, cycle runner      |
 | `src/portfolio/`  | Position tracking + manual registration             |
-| `src/viz/`        | Dash app (Chart / Backtest / Maintenance tabs)      |
+| `src/viz/`        | Dash app (Chart / Backtest / Live trading / Maintenance tabs); `deploy/` + `scripts/setup_viz_service.sh` run it always-on behind nginx |
 | `src/execution/`  | Live clients (GMO + bitFlyer), manual trade CLIs, auto-trader |
 
 The live execution layer (`src/execution/`) is built: read-only account clients,
