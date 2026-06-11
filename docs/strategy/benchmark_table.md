@@ -209,7 +209,15 @@ table (BTC-calibrated null). **Forward accruing** since the 2026-06-11 05:00 bou
   ratchet was adopted on ETH then **reverted** when XRP's held-out lockbox confirmed the ETH
   lockbox's disagreement (both prefer 48) — an IS-WF mirage the WF couldn't catch but the lockbox
   did. ETH band re-tuning, limit offset, and recalc all failed; shorts CARRY both alt books (keep
-  both sides). vol_expansion_ride did not transfer cleanly to either.
+  both sides). **vol_expansion_ride does not transfer to the alts** — failed untuned on ETH/XRP,
+  and ETH-tuning is futile (its ETH IS is healthy 6/6, the failure is held-out-only → untunable).
+- **Multi-asset combination** — see `docs/strategy/portfolio.md`. The three asset books combine
+  for yearly stability, but **ETH is yearly-redundant with BTC** (corr +0.98 — both dp on
+  co-moving crypto), while **XRP is the only diversifier** (corr ~0.4) and the steadiest book.
+  Recommended robust split: **BTC 45% / XRP 55%, ETH dropped or ≤15% satellite**, each at its
+  capital-efficient slot count (combo 6 / eth 4 / xrp 6 — PnL saturates there, ~2–3× more
+  capital-efficient than 12). Positive every full year, ySharpe 1.68 — but all books are still
+  forward-ACCRUING, so this is a backtest construction, not a sizing decision.
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below
@@ -222,9 +230,10 @@ A lockbox snapshot, not a final verdict — the lockbox has been reused across i
 so real capital waits on the **live-forwards now running** (`paper_forward`, weekly Monday cron
 via `scripts/weekly_forward_check.sh`): `density_pullback`, `vol_expansion_ride` and
 `combo_dp_ver` (all boundary 2026-06-07 22:00, re-frozen 2026-06-11 at the max_base adoption;
-the combo is the BTC book that would actually trade) and `density_pullback_eth` @ GMO_ETH_JPY
-(per-product boundary 2026-06-10 23:00). Verdicts are withheld until ≥20 forward trades AND
-≥60 days per strategy (~mid-Aug 2026 earliest). Headline costs are the calm basis (4 bp round-trip); stress with
+the combo is the BTC book that would actually trade), `density_pullback_eth` @ GMO_ETH_JPY
+(per-product boundary 2026-06-10 23:00) and `density_pullback_xrp` @ GMO_XRP_JPY (boundary
+2026-06-11 05:00). Verdicts are withheld until ≥20 forward trades AND ≥60 days per strategy
+(~mid-Aug 2026 earliest). Headline costs are the calm basis (4 bp round-trip); stress with
 `python -m src.backtest.cycle --strategy <name> --bitflyer-realistic` (swap + burst spread on
 stops) — both shipped components and hence the combo survive it. Single IS/OOS split + 6 coarse
 folds; ride-exit candidates share the same exit (correlations in `cDP`). Regenerate any row with
