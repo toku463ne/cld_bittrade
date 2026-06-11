@@ -43,6 +43,11 @@ LEVERAGE_MIN_SIZE: dict[str, float] = {
 }
 
 
+def _fmt(x: float) -> str:
+    """Format a size/price for GMO (strings, no trailing zeros): 0.01, 10, 0.1."""
+    return f"{x:.8f}".rstrip("0").rstrip(".")
+
+
 class GmoApiError(RuntimeError):
     """Raised when GMO returns a non-zero ``status``."""
 
@@ -150,21 +155,115 @@ class GmoClient:
         data = self._get("/v1/latestExecutions", {"symbol": symbol, "count": count})
         return list(data.get("list", [])) if isinstance(data, dict) else []
 
-    # ---- order placement — deliberately disabled (read-only phase) -----------
+    # ---- order placement — guarded, minimum-lot only ------------------------
 
-    def send_order(self, *_args: Any, **_kwargs: Any) -> None:
-        """Refuses while read-only — order placement arrives in the order phase.
+    def _guard_orders(self, symbol: str, size: float) -> None:
+        """Enforce the hard guards before any order leaves this client."""
+        if not self.allow_orders:
+            raise PermissionError(
+                "Order placement disabled (allow_orders=False). Use "
+                "gmo_trading_client_from_settings() with USE_LIVE_API=true and "
+                "ALLOW_ORDERS=true."
+            )
+        cap = LEVERAGE_MIN_SIZE.get(symbol)
+        if cap is None:
+            raise ValueError(
+                f"{symbol} is not in the permitted leverage set {list(LEVERAGE_MIN_SIZE)}."
+            )
+        if size > cap + 1e-9:
+            raise ValueError(
+                f"size {size} exceeds the min-lot cap {cap} for {symbol}. Lot increases "
+                "are forbidden until the benchmark passes (CLAUDE.md)."
+            )
+
+    def send_order(
+        self,
+        symbol: str,
+        side: str,
+        *,
+        size: float | None = None,
+        execution_type: str = "MARKET",
+        price: float | None = None,
+        time_in_force: str | None = None,
+    ) -> str:
+        """Open a leverage position (``POST /v1/order``). Minimum-lot only.
+
+        Args:
+            symbol: ``BTC_JPY`` / ``ETH_JPY`` / ``XRP_JPY``.
+            side: ``"BUY"`` (long) or ``"SELL"`` (short).
+            size: Defaults to the symbol's minimum lot; hard-capped at it.
+            execution_type: ``"MARKET"`` / ``"LIMIT"`` / ``"STOP"``.
+            price: Required for non-MARKET; sent as a string.
+            time_in_force: Optional override (``FAK`` / ``FAS`` / ``FOK``); GMO
+                defaults FAK for MARKET, FAS for LIMIT.
+
+        Returns:
+            The GMO ``orderId`` (string).
 
         Raises:
-            NotImplementedError: Always, in this read-only build. GMO leverage
-                orders (``POST /v1/order``, side BUY/SELL to open; close via
-                ``/v1/closeOrder``) will be added behind the same allow_orders +
-                min-lot guards as the bitFlyer client, in a separate reviewed change.
+            PermissionError / ValueError: On a closed guard or an out-of-cap size.
         """
-        raise NotImplementedError(
-            "GMO order placement not enabled in the read-only build. Verify reads "
-            "first (python -m src.execution.gmo_account), then add orders behind guards."
-        )
+        sz = (LEVERAGE_MIN_SIZE.get(symbol, 0.0) if size is None else size)
+        self._guard_orders(symbol, sz)  # raises cleanly if symbol unknown / size over cap
+        s = side.upper()
+        if s not in {"BUY", "SELL"}:
+            raise ValueError(f"side must be BUY or SELL, got {side!r}")
+        et = execution_type.upper()
+        body: dict[str, Any] = {"symbol": symbol, "side": s, "executionType": et, "size": _fmt(sz)}
+        if et != "MARKET":
+            if price is None:
+                raise ValueError(f"{et} order requires a price")
+            body["price"] = _fmt(price)
+        if time_in_force:
+            body["timeInForce"] = time_in_force
+        logger.warning("LIVE GMO OPEN -> {} {} {} {} @ {}", symbol, s, et, _fmt(sz), price)
+        return str(self._post("/v1/order", body))
+
+    def close_position(
+        self,
+        symbol: str,
+        position_id: int,
+        side: str,
+        size: float,
+        *,
+        execution_type: str = "MARKET",
+        price: float | None = None,
+    ) -> str:
+        """Settle one open 建玉 by id (``POST /v1/closeOrder``).
+
+        Args:
+            symbol: The position's symbol.
+            position_id: The ``positionId`` from :meth:`get_open_positions`.
+            side: The CLOSING order side — opposite of the position
+                (``SELL`` to close a long, ``BUY`` to close a short).
+            size: Size to settle (the position's size; min-lot capped).
+            execution_type: ``"MARKET"`` (default) / ``"LIMIT"``.
+            price: Required for non-MARKET.
+
+        Returns:
+            The GMO ``orderId`` (string).
+        """
+        self._guard_orders(symbol, size)
+        s = side.upper()
+        et = execution_type.upper()
+        body: dict[str, Any] = {
+            "symbol": symbol,
+            "side": s,
+            "executionType": et,
+            "settlePosition": [{"positionId": int(position_id), "size": _fmt(size)}],
+        }
+        if et != "MARKET":
+            if price is None:
+                raise ValueError(f"{et} close requires a price")
+            body["price"] = _fmt(price)
+        logger.warning("LIVE GMO CLOSE -> {} pos={} {} {} {}", symbol, position_id, s, et, _fmt(size))
+        return str(self._post("/v1/closeOrder", body))
+
+    def cancel_bulk(self, symbol: str) -> None:
+        """Cancel all active orders for ``symbol`` (``POST /v1/cancelBulkOrder``)."""
+        if not self.allow_orders:
+            raise PermissionError("Order cancel disabled (allow_orders=False).")
+        self._post("/v1/cancelBulkOrder", {"symbols": [symbol]})
 
 
 def gmo_account_client_from_settings(settings: Settings | None = None) -> GmoClient:
@@ -182,3 +281,25 @@ def gmo_account_client_from_settings(settings: Settings | None = None) -> GmoCli
         )
     logger.warning("LIVE GMO account client enabled (read-only)")
     return GmoClient(s.gmo_api_key, s.gmo_api_secret)
+
+
+def gmo_trading_client_from_settings(settings: Settings | None = None) -> GmoClient:
+    """Build an order-capable GMO client — requires ``USE_LIVE_API`` AND ``ALLOW_ORDERS``.
+
+    The trade CLI additionally requires ``--execute``, and size is hard-capped at the
+    per-symbol minimum lot inside the client.
+
+    Raises:
+        RuntimeError: If ``USE_LIVE_API`` or ``ALLOW_ORDERS`` is not true.
+        ValueError: If the GMO key/secret are unset.
+    """
+    s = settings or get_settings()
+    if not s.use_live_api:
+        raise RuntimeError("USE_LIVE_API is false — cannot place GMO orders.")
+    if not s.allow_orders:
+        raise RuntimeError(
+            "ALLOW_ORDERS is false — order placement is gated. Set ALLOW_ORDERS=true "
+            "in .env.dev (the trade CLI still needs --execute)."
+        )
+    logger.warning("LIVE GMO TRADING client enabled (orders ALLOWED)")
+    return GmoClient(s.gmo_api_key, s.gmo_api_secret, allow_orders=True)
