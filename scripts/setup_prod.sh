@@ -62,12 +62,12 @@ if [ ! -f "${REPO_DIR}/.env.prod" ]; then
   sed -i "s#DATABASE_URL=.*#DATABASE_URL=postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}#" "${REPO_DIR}/.env.prod"
   chmod 600 "${REPO_DIR}/.env.prod"
   echo "wrote .env.prod (GMO keys still BLANK — fill them in)"
-  # apply the schema now that DATABASE_URL is set
-  "${UV_BIN}" run --env-file .env.prod alembic upgrade head
 else
-  echo ".env.prod already exists — left untouched. Run migrations yourself if needed:"
-  echo "  ${UV_BIN} run --env-file .env.prod alembic upgrade head"
+  echo ".env.prod already exists — left untouched (DATABASE_URL not changed)."
 fi
+# Always apply the schema (idempotent — no-op if already at head). Uses whatever
+# DATABASE_URL is in .env.prod, so it works whether or not the file pre-existed.
+"${UV_BIN}" run --env-file .env.prod alembic upgrade head
 
 log "7/7 hourly systemd timer (auto-trader, runs at HH:05)"
 sudo tee /etc/systemd/system/btc-autotrader.service >/dev/null <<UNIT
