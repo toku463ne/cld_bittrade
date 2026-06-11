@@ -81,6 +81,18 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 > not promoted. The value-area-retest mechanism now holds untuned on **3 assets**
 > (BTC/ETH/XRP); the squeeze→burst ride does not transfer cleanly. See
 > `study_plan_new_strategies.md` §F. Families A/B/D/E (orthogonal hunts) all dead.
+>
+> **2026-06-11 (later still) — XRP tuning + a recalc REVERSAL.** Applied the ETH C″/C‴ suite
+> to XRP → **`density_pullback_xrp`** registered with **one** XRP-only knob,
+> `invalidation_depth=0.35` (its IS-WF plateau peaks deeper than ETH's 0.25; lockbox IS +1.36 /
+> OOS +2.68 / @10bp +2.58 / 6/6 — a clean win over the untuned base). The slower-ratchet
+> `recalc_bars=72` looked good on the XRP IS-WF too, **but the held-out lockbox rejected it**
+> (OOS +2.68 at 48 vs +1.58 at 72) — the SAME direction the ETH lockbox had disagreed. Two
+> assets agreeing settled it: the slower ratchet was IS-WF overfitting, so it was **NOT adopted
+> on XRP and REVERTED on ETH** (density_pullback_eth → the C″ config, recalc=48: IS +1.31 /
+> OOS +1.33, its row restored below). `limit_offset` rejected on XRP (edge is the local max).
+> The invalidation exit is now a held-out-validated edge on two assets; the recalc tuning was
+> the mirage the lockbox caught.
 
 - **Split:** the fixed **lockbox** (`split_lockbox`) — IS = pre-2025-04-01, OOS =
   2025-04-01 → 2026-04-01.
@@ -98,8 +110,8 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **combo_dp_ver** | 651 | **+2.23** | 0.31 | 0.38 | +0.0062 | **+1.66** | 0.18 | **+1.41** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
 | **density_pullback** | 415 | **+1.84** | 0.36 | 0.32 | +0.0061 | **+1.35** | 0.18 | **+1.16** | **6/6** | +0.06 | +1.00 | **ship✓** |
-| **density_pullback_eth**\*\*\* | 252 | **+1.43** | 0.25 | 0.30 | +0.0049 | +0.84 | 0.08 | +0.75 | **6/6** | −0.00 | — | **candidate (fwd accruing)** |
-| **density_pullback (XRP)**† | 342 | +1.06 | 0.36 | 0.53 | +0.0053 | **+2.59** | 0.18 | **+2.50** | **6/6** | −0.03 | — | **candidate (fwd accruing)** |
+| **density_pullback_eth**\*\*\* | 252 | **+1.31** | 0.26 | 0.29 | +0.0040 | **+1.33** | 0.07 | **+1.21** | 5/6 | −0.01 | — | **candidate (fwd accruing)** |
+| **density_pullback_xrp**† | 342 | **+1.36** | 0.31 | 0.39 | +0.0063 | **+2.68** | 0.12 | **+2.58** | **6/6** | −0.02 | — | **candidate (fwd accruing)** |
 | **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
 | rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
 | random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
@@ -153,30 +165,24 @@ consistency on the 80/20 basis. This is the book the live-forward tracks. **Slot
 at ≤3. `max_slots` stays **12** in code (a budget guarantee, not a tuned knob — changing it
 would re-select on the lockbox), but **6 lots is the capital-planning number**.
 
-\*\*\* `density_pullback_eth` runs on **GMO_ETH_JPY**: the shared dp defaults + two
-ETH-only knobs — the `invalidation_depth=0.25` failed-breakout exit (C″: on ETH it cuts the
-stop bleed, NOT the BTC-rejected geometry) and the `recalc_bars=72` slower ratchet (C‴: the
-IS-WF argmax moved off BTC's 48 on *both* cost bases, a smooth 64–72 plateau). Its IS/OOS
-columns are vs **ETH's own B&H (IS +0.40 / OOS +0.59)**, not BTC's — all columns clear it.
-⚠ The lockbox OOS column is the WEAK spot of this config: the spent lockbox preferred the
-C″ recalc=48 config (OOS +1.33 vs +0.84 here) while the IS-WF preferred 72 (full-series WF
-6/6) — three ETH IS-WF selections have now disagreed with the spent lockbox, so read the
-row's OOS as *unconfirmed*, not failed. cDP vs the BTC book is not yet measured on a common
-basis (equity-path cBTC −0.00). Not in the lift-over-null table (the null floor was
-calibrated on BTC). **Forward accruing** since the 2026-06-10 23:00 per-(strategy, product)
-boundary via the weekly cron — the recalc=72 cell's *first* out-of-selection test (the
-lockbox is spent ×3); fallback on a weak forward = the C″ config (recalc=48). ETH knob
-budget is exhausted until the forward reads; no capital before it confirms.
+\*\*\* `density_pullback_eth` runs on **GMO_ETH_JPY**: the shared dp defaults + **one**
+ETH-only knob, the `invalidation_depth=0.25` failed-breakout exit (on ETH it cuts the stop
+bleed, NOT the BTC-rejected geometry; lockbox look IS +1.31 / OOS +1.33). The C‴ `recalc_bars=72`
+slower ratchet was adopted then **REVERTED 2026-06-11** — the held-out lockbox preferred 48 on
+ETH (OOS +1.33 vs +0.84) *and* XRP (+2.68 vs +1.58), so it was IS-WF overfitting. This row is the
+recalc=48 config. IS/OOS are vs **ETH's own B&H (IS +0.40 / OOS +0.59)**, all clear, 15 bp/side
+OOS +0.82. Not in the lift-over-null table (BTC-calibrated null). **Forward accruing** since the
+2026-06-10 23:00 boundary; no capital before it confirms.
 
-† `density_pullback (XRP)` runs on **GMO_XRP_JPY** with **untuned global defaults** (Strategy
-F transfer, 2026-06-11; *not* the ETH-tuned variant). Its IS/OOS columns are vs **XRP's own
-B&H (IS +0.60 / OOS −0.24)**, not BTC's. The eye-popping OOS +2.59 is partly displaced capital
-(beating a −34% market), but it is a **real, regime-robust** transfer: 6/6 folds paying in both
-bull (f3/f5) and bear (f6) folds, IS +1.06 clearing its own bar, cost-robust to 10 bp/side. ⚠
-**IS_DD 0.53** is the highest of the three assets (XRP is gappier — a development target).
-`vol_expansion_ride` was tested too and **not promoted** (clears the gate only on XRP's falling
-OOS; recent fold negative). Not in the lift-over-null table (BTC-calibrated null). **Forward
-accruing** since the 2026-06-11 05:00 per-(strategy, product) boundary.
+† `density_pullback_xrp` runs on **GMO_XRP_JPY**: the shared dp defaults + **one** XRP-only knob,
+`invalidation_depth=0.35` (the XRP IS-WF plateau peaks deeper than ETH's 0.25). The untuned
+default transferred first (IS +1.06 / OOS +2.59, 6/6); the invalidation exit then lifted it to
+IS +1.36 / OOS +2.68 / @10bp +2.58 (one lockbox look, all up). IS/OOS are vs **XRP's own B&H
+(IS +0.60 / OOS −0.24)** — the high OOS is partly displaced capital (beating a −34% market) but
+regime-robust (pays in bull f3/f5 AND bear f6). `recalc_bars=72` and `limit_offset` were tested
+and rejected (the lockbox rejected the slower ratchet on both assets; the edge is the offset
+local max). `vol_expansion_ride` was not promoted (weak transfer). Not in the lift-over-null
+table (BTC-calibrated null). **Forward accruing** since the 2026-06-11 05:00 boundary.
 
 ## Read at a glance
 
@@ -196,13 +202,14 @@ accruing** since the 2026-06-11 05:00 per-(strategy, product) boundary.
   **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
   most diversifying (cDP +0.10), now **5/6 folds**. The IS-Sharpe giveback (to +1.51) bought DD,
   consistency (82% quarters) and the early-2021 regime; only the 2023 raging bull stays negative.
-- **density_pullback_eth** — the dp edge on a second asset, plus two ETH-only knobs
-  (invalidation exit 0.25, recalc 72): IS +1.43, **6/6 full-series folds**, OOS_DD 0.08,
-  cBTC −0.00 — but its lockbox-OOS column (+0.84) is *unconfirmed* (see the \*\*\* note;
-  the spent lockbox preferred recalc=48's +1.33). ETH **reversed** two BTC knob verdicts
-  (max_base, invalidation) and **moved** the ratchet optimum; ETH band re-tuning and the
-  limit offset failed (the tightness gate is absolute-%; the edge is the natural limit
-  level); shorts CARRY the ETH book — keep both sides. vol_expansion_ride did not transfer.
+- **density_pullback_eth / density_pullback_xrp** — the dp edge tuned per asset, each with
+  **one** held-out-validated knob, the `invalidation_depth` failed-breakout exit (ETH 0.25 → IS
+  +1.31 / OOS +1.33; XRP 0.35 → IS +1.36 / OOS +2.68, both 6/6 or 5/6). The exit replicates as a
+  real edge on both assets (BTC rejected it — geometry-specific). The `recalc_bars=72` slower
+  ratchet was adopted on ETH then **reverted** when XRP's held-out lockbox confirmed the ETH
+  lockbox's disagreement (both prefer 48) — an IS-WF mirage the WF couldn't catch but the lockbox
+  did. ETH band re-tuning, limit offset, and recalc all failed; shorts CARRY both alt books (keep
+  both sides). vol_expansion_ride did not transfer cleanly to either.
 - **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
   OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
 - **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below

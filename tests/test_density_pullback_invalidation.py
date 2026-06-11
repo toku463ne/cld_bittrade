@@ -74,11 +74,22 @@ def test_density_pullback_eth_variant_registered() -> None:
     s = get_strategy("density_pullback_eth")
     assert isinstance(s, DensityPullbackEthStrategy)
     assert s.invalidation_depth == 0.25  # the ETH-only adoption (C'')
-    assert s.recalc_bars == 72  # ETH-only slower ratchet (C''')
+    assert s.recalc_bars == 48  # C''' recalc=72 REVERTED — lockbox rejected it on ETH+XRP
     # The BTC defaults must remain — those verdicts stand.
     assert DensityPullbackStrategy().invalidation_depth is None
     assert DensityPullbackStrategy().recalc_bars == 48
     assert DensityPullbackStrategy().limit_offset == 0.0  # offset rejected (C''')
+
+
+def test_density_pullback_xrp_variant_registered() -> None:
+    from src.strategy.density_pullback import DensityPullbackXrpStrategy
+    from src.strategy.registry import get_strategy
+
+    s = get_strategy("density_pullback_xrp")
+    assert isinstance(s, DensityPullbackXrpStrategy)
+    assert s.invalidation_depth == 0.35  # XRP-only depth (plateau peaks deeper than ETH)
+    assert s.recalc_bars == 48  # recalc=72 rejected: held-out lockbox prefers 48 (ETH+XRP)
+    assert s.limit_offset == 0.0  # offset rejected on XRP too
 
 
 def test_combo_dp_ver_registered_and_multi() -> None:

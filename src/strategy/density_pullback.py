@@ -453,15 +453,47 @@ class DensityPullbackEthStrategy(DensityPullbackStrategy):
     )
 
     def __init__(self, **kwargs: object) -> None:
-        """Initialise with the ETH-adopted invalidation depth + slower ratchet."""
+        """Initialise with the ETH-adopted invalidation depth (recalc stays 48)."""
         kwargs.setdefault("invalidation_depth", 0.25)
-        # ETH-only ratchet speed (C‴, 2026-06-11): the BTC-tuned 48 cuts ETH rides
-        # short — the IS-WF argmax sits on a 64–72 plateau IDENTICAL under both the
-        # calm and bitFlyer-realistic cost bases (mean +0.95→+1.08 calm, +0.73→+0.86
-        # realistic; realistic folds 3/6→4/6). NO lockbox confirmation exists for
-        # this cell (the C″ look was at 48; lockbox spent) — the live-forward is its
-        # first out-of-selection test.
-        kwargs.setdefault("recalc_bars", 72)
+        # recalc_bars stays the global 48. C‴ (2026-06-11) adopted 72 on an IS-WF
+        # plateau, but it was REVERTED 2026-06-11 when the XRP variant replicated the
+        # held-out signal: the ETH lockbox preferred 48 (OOS +1.33 vs 72's +0.84) AND
+        # the XRP lockbox preferred 48 (+2.68 vs +1.58) — two assets agree the slower
+        # ratchet is in-sample overfitting that the lockbox rejects. This config = the
+        # C″ config (invalidation only), whose lockbox look passed cleanly (IS +1.31 /
+        # OOS +1.33).
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+
+
+class DensityPullbackXrpStrategy(DensityPullbackStrategy):
+    """density_pullback for GMO_XRP_JPY: + failed-breakout invalidation exit.
+
+    The XRP version of the ETH-style asset tuning (Strategy F, 2026-06-11). Two
+    XRP-specific knobs, both selected on the XRP lockbox-IS walk-forward:
+
+    * ``invalidation_depth=0.35`` — the XRP IS-WF plateau peaks DEEPER than ETH's
+      0.25 (band 0.2–0.45 all beat baseline, WF mean +0.60 → +0.91 at 0.35, IS
+      eqSharpe +1.06 → +1.37, folds 3/6 → 4/6, stop bleed −3.40 → −2.64).
+    ``recalc_bars`` stays the global **48** — the variant IS-WF *preferred* a slower
+    72 (48 dips to 4/6/+0.91, 72 is 5/6/+1.07), but the **held-out lockbox rejected
+    it**: OOS +2.68 at recalc=48 vs +1.58 at 72. That is the SAME direction the ETH
+    lockbox disagreed (48→+1.33 vs 72→+0.84), so two assets agree the slower-ratchet
+    IS-WF signal is in-sample overfitting — recalc=72 was reverted on ETH too.
+    ``limit_offset`` stays 0 (the edge is the local max, rejected like on ETH). The
+    one XRP-specific knob that survives held-out validation is ``invalidation_depth``.
+    The untuned global default already transferred strongly (IS +1.06 / OOS +2.59,
+    6/6 full-series), so this is a refinement, not a rescue.
+    """
+
+    name = "density_pullback_xrp"
+    description = (
+        "density_pullback tuned for GMO_XRP_JPY: failed-breakout invalidation "
+        "exit (depth=0.35) on the shared defaults; XRP-only adoption."
+    )
+
+    def __init__(self, **kwargs: object) -> None:
+        """Initialise with the XRP-adopted invalidation depth (recalc stays 48)."""
+        kwargs.setdefault("invalidation_depth", 0.35)
         super().__init__(**kwargs)  # type: ignore[arg-type]
 
 
@@ -471,15 +503,14 @@ class DensityPullbackEthStrategy(DensityPullbackStrategy):
 #     +0.79/4-6, 0.0 +0.95/5-6, +0.1 +0.37/3-6). REJECTED; the broken edge is the
 #     natural level. Knob stays (no-op at 0.0). Harness:
 #     src/backtest/analysis/density_pullback_eth_offset_sweep.py.
-#   * recalc_bars=72 ADOPTED ETH-ONLY (DensityPullbackEthStrategy; BTC stays 48 —
-#     verified argmax there under both cost bases). ETH IS-WF: smooth 64-72 plateau
-#     IDENTICAL under calm AND bitflyer-realistic (mean +0.95->+1.08 / +0.73->+0.86,
-#     realistic folds 3/6->4/6); 80+ falls away. ETH vol wants a slower ratchet.
-#     HONEST CAVEATS: no lockbox confirmation exists for this cell (spent; the C''
-#     +1.33 OOS look was at 48; post-adoption reporting row shows lockbox OOS +0.84
-#     at 72 — the spent lockbox keeps disagreeing with IS-WF selections on ETH);
-#     full-series WF 6/6. The live-forward is this config's first out-of-selection
-#     test; fallback on a weak forward = the C'' config (recalc=48).
+#   * recalc_bars=72 was ADOPTED ETH-only on the IS-WF plateau (mean +0.95->+1.08),
+#     then REVERTED to 48 on 2026-06-11 when XRP replicated the HELD-OUT signal: the
+#     slower ratchet's IS-WF preference is in-sample overfitting that BOTH lockboxes
+#     reject — ETH lockbox OOS +1.33 at 48 vs +0.84 at 72; XRP lockbox OOS +2.68 at
+#     48 vs +1.58 at 72. Two independent held-out windows agreeing settled it: keep
+#     the global 48 everywhere (the ETH variant is back to the C'' config). The
+#     standing "IS-WF disagrees with the spent lockbox on recalc" caveat resolved in
+#     the lockbox's favour.
 #   * swap-leak on ETH: REFUTED again (real cost 3.3x calm = burst-on-stops; trail
 #     rides eat only 2%). Short-side per-fold: ETH shorts CARRY the book (IS sum_r
 #     +0.79 vs longs +0.27, pay in rising f3 too) — keep both sides, no build.

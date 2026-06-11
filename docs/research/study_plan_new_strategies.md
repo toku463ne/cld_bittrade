@@ -344,6 +344,34 @@ XRP import + check. No new strategy class (untuned = the global default); XRP-sp
 is a separate later exercise. The mechanism now holds untuned on **3 assets** — strong
 structural evidence it is not BTC-curve-fit.
 
+**XRP-specific tuning (the ETH C″/C‴ suite applied to XRP, 2026-06-11).** Diagnostics: (5)
+shorts CARRY XRP even more than ETH (every fold's edge is the short leg — keep both sides);
+(3a) swap refuted again (trail rides eat ~2%, the rest is burst-on-stops); (2) the base-length
+gradient replicates (mean_r +0.0082 → −0.0033 at 64+, DR 0.41→0.18 — the global `max_base=64`
+is right for XRP). Adopted into **`density_pullback_xrp`** (registered, XRP-only):
+
+- **`invalidation_depth=0.35`** — a genuine IS-WF plateau (0.2–0.45 all beat baseline +0.60;
+  peak +0.91 at 0.35, IS eqSharpe +1.06→+1.37, folds 3/6→4/6, bleed −3.40→−2.64). XRP's
+  plateau peaks **deeper** than ETH's 0.25 — asset-specific, the point of the exercise.
+- **`recalc_bars=72` TESTED, then REJECTED — and it forced reverting ETH's C‴ recalc too.**
+  On the variant IS-WF, 48 dips (4/6, +0.91) and 72 is 5/6 / best realistic mean (+0.92) — the
+  apparent replication of ETH's slower-ratchet finding. But the **held-out lockbox rejected it**:
+  recalc=48 → OOS **+2.68**, recalc=72 → **+1.58**. That is the SAME direction the ETH lockbox
+  disagreed (48 → +1.33, 72 → +0.84), so two independent held-out windows now agree the
+  slower-ratchet IS-WF signal is **in-sample overfitting**. Consequence: recalc=72 NOT adopted on
+  XRP, and **reverted on ETH** (density_pullback_eth → the C″ config, invalidation only). The
+  recurring "IS-WF disagrees with the spent lockbox on recalc" finally resolved — the lockbox was
+  right both times. Keep the global 48 everywhere.
+- **`limit_offset` REJECTED** (the edge 0.0 is the local max: −0.1 +0.62, +0.1 +0.49, and IS
+  eqSharpe favours 0.0) — same verdict as ETH.
+
+So `density_pullback_xrp` = **one** XRP-specific knob (`invalidation_depth=0.35`), held-out
+validated (one lockbox look: IS +1.36 / OOS +2.68 / @10bp +2.58 / 6/6 — a clean win over the
+untuned base IS +1.06 / OOS +2.59). `vol_expansion_ride` was already not promoted (weak
+transfer), so no XRP tuning on it. **Lesson:** the invalidation exit replicates as a real,
+held-out-validated edge on both ETH and XRP; the slower ratchet was an IS-WF mirage that only
+the lockbox (not the WF) caught — the XRP replication is what made it safe to revert ETH.
+
 ## Strategy E — JST calendar/flow family (pre-registered 2026-06-11)
 
 **Hypothesis:** GMO BTC_JPY has venue/leverage-specific recurring flows — the 00:00 JST swap

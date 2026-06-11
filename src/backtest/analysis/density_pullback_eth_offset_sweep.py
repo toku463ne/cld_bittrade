@@ -29,7 +29,8 @@ from src.core.types import Bar, Timeframe, Trade
 from src.data.cache import load_cache
 from src.simulator import MultiSimulator
 from src.simulator.simulator import DEFAULT_FEE_RATE
-from src.strategy.density_pullback import DensityPullbackEthStrategy
+from src.strategy.density_pullback import DensityPullbackEthStrategy, DensityPullbackStrategy
+from src.strategy.registry import get_strategy
 
 
 def _fold_bounds(n: int, k: int) -> list[int]:
@@ -38,8 +39,16 @@ def _fold_bounds(n: int, k: int) -> list[int]:
 
 
 def _run(bars: list[Bar], off: float) -> tuple[list[float], list[Trade]]:
-    """Run one arm on a bar segment. Returns ``(equity_curve, trades)``."""
-    strat = DensityPullbackEthStrategy(limit_offset=off)
+    """Run one arm on a bar segment. Returns ``(equity_curve, trades)``.
+
+    ``DP_STRATEGY`` (default the ETH variant) picks the asset-tuned base config the
+    offset is layered on; ``limit_offset`` is set post-init (it is only read in
+    ``precompute_multi``, so this is equivalent to a ctor arg).
+    """
+    name = os.environ.get("DP_STRATEGY", DensityPullbackEthStrategy.name)
+    strat = get_strategy(name)
+    assert isinstance(strat, DensityPullbackStrategy)
+    strat.limit_offset = off
     res = MultiSimulator(strat, size=0.001, fee_rate=DEFAULT_FEE_RATE).run(bars)
     return res.equity_curve, res.trades
 

@@ -65,10 +65,11 @@ LOCKBOX_BOUNDARIES: dict[str | tuple[str, str], tuple[pd.Timestamp, str]] = {
     # (incl. its one lockbox look) all consumed ETH data through the 2026-06-10 23:00 ETH
     # cache end, so the variant's forward clock starts there.
     ("density_pullback_eth", "GMO_ETH_JPY"): (pd.Timestamp("2026-06-10 23:00:00+09:00"), "2026-06-11"),
-    # density_pullback on GMO_XRP_JPY (Strategy F transfer, 2026-06-11): UNTUNED global default
-    # transfers strongly (6/6 folds, pays in bull+bear folds); promote decision consumed XRP
-    # data through the 2026-06-11 05:00 cache end, so its forward clock starts there.
-    ("density_pullback", "GMO_XRP_JPY"): (pd.Timestamp("2026-06-11 05:00:00+09:00"), "2026-06-11"),
+    # density_pullback_xrp on GMO_XRP_JPY (Strategy F + XRP tuning, 2026-06-11): the UNTUNED
+    # default transferred strongly, then invalidation_depth=0.35 was adopted XRP-only (its IS-WF
+    # plateau peaks deeper than ETH's). All selection consumed XRP data through 2026-06-11 05:00,
+    # so the variant's forward clock starts there. (The untuned-default key is superseded.)
+    ("density_pullback_xrp", "GMO_XRP_JPY"): (pd.Timestamp("2026-06-11 05:00:00+09:00"), "2026-06-11"),
 }
 # Fallback for any strategy without an explicit entry (the original density boundary).
 DEFAULT_LOCKBOX: tuple[pd.Timestamp, str] = (pd.Timestamp("2026-06-02 05:00:00+09:00"), "2026-06-07")
