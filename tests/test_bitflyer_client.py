@@ -123,6 +123,8 @@ def _settings(*, use_live: bool, allow_orders: bool = False, key: str = "k", sec
         product_code="FX_BTC_JPY",
         bitflyer_api_key=key,
         bitflyer_api_secret=secret,
+        gmo_api_key="",
+        gmo_api_secret="",
         log_level="INFO",
     )
 

@@ -41,8 +41,10 @@ class Settings:
             send/cancel orders, and the trade CLIs still require an explicit
             ``--execute`` flag. Defaults to ``False``.
         product_code: The only traded instrument (``FX_BTC_JPY``).
-        bitflyer_api_key: API key (only meaningful when ``use_live_api``).
-        bitflyer_api_secret: API secret (only meaningful when ``use_live_api``).
+        bitflyer_api_key: bitFlyer API key (only meaningful when ``use_live_api``).
+        bitflyer_api_secret: bitFlyer API secret (only meaningful when ``use_live_api``).
+        gmo_api_key: GMO Coin API key (leverage venue; long/short on all three assets).
+        gmo_api_secret: GMO Coin API secret.
         log_level: loguru log level.
     """
 
@@ -53,6 +55,8 @@ class Settings:
     product_code: str
     bitflyer_api_key: str
     bitflyer_api_secret: str
+    gmo_api_key: str
+    gmo_api_secret: str
     log_level: str
 
     @property
@@ -85,5 +89,7 @@ def get_settings() -> Settings:
         product_code=os.getenv("PRODUCT_CODE", "FX_BTC_JPY"),
         bitflyer_api_key=os.getenv("BITFLYER_API_KEY", ""),
         bitflyer_api_secret=os.getenv("BITFLYER_API_SECRET", ""),
+        gmo_api_key=os.getenv("GMO_API_KEY", ""),
+        gmo_api_secret=os.getenv("GMO_API_SECRET", ""),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
