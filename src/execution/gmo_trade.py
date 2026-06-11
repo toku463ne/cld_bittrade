@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import argparse
 
+import requests
 from loguru import logger
 
 from src.config import get_settings
 from src.execution.gmo_client import (
     LEVERAGE_MIN_SIZE,
+    GmoApiError,
     GmoClient,
     gmo_account_client_from_settings,
     gmo_trading_client_from_settings,
@@ -115,7 +117,15 @@ def main() -> None:
 
     args = ap.parse_args()
     configure_logging(get_settings().log_level)
-    args.fn(args)
+    try:
+        args.fn(args)
+    except (RuntimeError, PermissionError, ValueError) as e:  # gates + GmoApiError
+        logger.error("blocked: {}", e)
+        raise SystemExit(1) from None
+    except requests.HTTPError as e:
+        body = getattr(e.response, "text", "")
+        logger.error("GMO HTTP error: {} {}", e, body)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
