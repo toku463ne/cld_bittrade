@@ -109,27 +109,29 @@ def _cmd_cancel_all(args: argparse.Namespace) -> None:
 
 def main() -> None:
     """CLI entrypoint."""
-    configure_logging(get_settings().log_level)
     ap = argparse.ArgumentParser(description="Manual bitFlyer trade tools (min-lot, dry-run default).")
-    ap.add_argument("--product", default=None, help="Product code (default: configured).")
+    # --product on a parent parser so it is accepted AFTER the subcommand.
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument("--product", default=None, help="Product code (default: configured).")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("markets", help="List products + shortable flag.").set_defaults(fn=_cmd_markets)
-    sub.add_parser("status", help="Show positions + active orders.").set_defaults(fn=_cmd_status)
+    sub.add_parser("markets", parents=[parent], help="List products + shortable flag.").set_defaults(fn=_cmd_markets)
+    sub.add_parser("status", parents=[parent], help="Show positions + active orders.").set_defaults(fn=_cmd_status)
     for name, side in (("buy", "BUY"), ("sell", "SELL")):
-        p = sub.add_parser(name, help=f"Place a 0.001 {side} order.")
+        p = sub.add_parser(name, parents=[parent], help=f"Place a 0.001 {side} order.")
         p.add_argument("--type", choices=["market", "limit"], default="market")
         p.add_argument("--price", type=float, default=None, help="Limit price (LIMIT only).")
         p.add_argument("--execute", action="store_true", help="Actually send (else dry-run).")
         p.set_defaults(fn=lambda a, s=side: _order(a, s))
-    pc = sub.add_parser("close", help="Flatten open position(s) (opposite market order).")
+    pc = sub.add_parser("close", parents=[parent], help="Flatten open position(s) (opposite market order).")
     pc.add_argument("--execute", action="store_true")
     pc.set_defaults(fn=_cmd_close)
-    pca = sub.add_parser("cancel-all", help="Cancel all resting orders.")
+    pca = sub.add_parser("cancel-all", parents=[parent], help="Cancel all resting orders.")
     pca.add_argument("--execute", action="store_true")
     pca.set_defaults(fn=_cmd_cancel_all)
 
     args = ap.parse_args()
+    configure_logging(get_settings().log_level)
     args.fn(args)
 
 
