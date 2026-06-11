@@ -36,6 +36,10 @@ class Settings:
         database_url: SQLAlchemy database URL.
         use_live_api: When ``True``, real bitFlyer endpoints are used instead of
             the mock layer. Defaults to ``False`` for safety.
+        allow_orders: Second, independent gate for *order placement* (beyond
+            ``use_live_api``, which only enables live reads). BOTH must be true to
+            send/cancel orders, and the trade CLIs still require an explicit
+            ``--execute`` flag. Defaults to ``False``.
         product_code: The only traded instrument (``FX_BTC_JPY``).
         bitflyer_api_key: API key (only meaningful when ``use_live_api``).
         bitflyer_api_secret: API secret (only meaningful when ``use_live_api``).
@@ -45,6 +49,7 @@ class Settings:
     env_name: str
     database_url: str
     use_live_api: bool
+    allow_orders: bool
     product_code: str
     bitflyer_api_key: str
     bitflyer_api_secret: str
@@ -76,6 +81,7 @@ def get_settings() -> Settings:
         env_name=os.getenv("ENV_NAME", "dev"),
         database_url=database_url,
         use_live_api=_get_bool("USE_LIVE_API", default=False),
+        allow_orders=_get_bool("ALLOW_ORDERS", default=False),
         product_code=os.getenv("PRODUCT_CODE", "FX_BTC_JPY"),
         bitflyer_api_key=os.getenv("BITFLYER_API_KEY", ""),
         bitflyer_api_secret=os.getenv("BITFLYER_API_SECRET", ""),

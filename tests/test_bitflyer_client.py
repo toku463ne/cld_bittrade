@@ -13,6 +13,7 @@ from src.execution.bitflyer_client import (
     API_ROOT,
     BitflyerClient,
     account_client_from_settings,
+    trading_client_from_settings,
 )
 
 
@@ -38,6 +39,12 @@ class _CapturingSession:
     def get(self, url: str, *, headers: dict[str, str], timeout: float) -> _FakeResp:
         self.url = url
         self.headers = headers
+        return _FakeResp(self.payload)
+
+    def post(self, url: str, *, headers: dict[str, str], data: str, timeout: float) -> _FakeResp:
+        self.url = url
+        self.headers = headers
+        self.body = data
         return _FakeResp(self.payload)
 
 
@@ -81,17 +88,38 @@ def test_is_read_only_false_with_send_perm() -> None:
     assert c.is_read_only() is False
 
 
-def test_send_child_order_refuses() -> None:
+def test_send_child_order_refuses_when_read_only() -> None:
+    # Default client is read-only (allow_orders=False) -> any order is blocked.
     c, _ = _client(None)
-    with pytest.raises(NotImplementedError):
-        c.send_child_order()
+    with pytest.raises(PermissionError):
+        c.send_child_order("BUY")
+    with pytest.raises(PermissionError):
+        c.cancel_all_orders()
 
 
-def _settings(*, use_live: bool, key: str = "k", secret: str = "s") -> Settings:
+def test_order_size_hard_capped() -> None:
+    c = BitflyerClient("k", "s", allow_orders=True)
+    c._session = _CapturingSession({"child_order_acceptance_id": "X"})  # type: ignore[assignment]
+    with pytest.raises(ValueError):
+        c.send_child_order("BUY", size=0.01)  # 10x the 0.001 cap
+    # at the cap it is allowed and signs a POST
+    res = c.send_child_order("BUY", size=0.001, order_type="MARKET")
+    assert res["child_order_acceptance_id"] == "X"
+
+
+def test_limit_requires_price() -> None:
+    c = BitflyerClient("k", "s", allow_orders=True)
+    c._session = _CapturingSession({})  # type: ignore[assignment]
+    with pytest.raises(ValueError):
+        c.send_child_order("SELL", order_type="LIMIT", price=None)
+
+
+def _settings(*, use_live: bool, allow_orders: bool = False, key: str = "k", secret: str = "s") -> Settings:
     return Settings(
         env_name="dev",
         database_url="postgresql+psycopg2://x/y",
         use_live_api=use_live,
+        allow_orders=allow_orders,
         product_code="FX_BTC_JPY",
         bitflyer_api_key=key,
         bitflyer_api_secret=secret,
@@ -99,12 +127,21 @@ def _settings(*, use_live: bool, key: str = "k", secret: str = "s") -> Settings:
     )
 
 
-def test_factory_refuses_when_not_live() -> None:
+def test_account_factory_refuses_when_not_live() -> None:
     with pytest.raises(RuntimeError):
         account_client_from_settings(_settings(use_live=False))
 
 
-def test_factory_builds_when_live() -> None:
+def test_account_factory_builds_read_only_when_live() -> None:
     c = account_client_from_settings(_settings(use_live=True))
     assert isinstance(c, BitflyerClient)
-    assert c.product_code == "FX_BTC_JPY"
+    assert c.allow_orders is False  # read client cannot order even when live
+
+
+def test_trading_factory_needs_both_gates() -> None:
+    with pytest.raises(RuntimeError):  # live but ALLOW_ORDERS false
+        trading_client_from_settings(_settings(use_live=True, allow_orders=False))
+    with pytest.raises(RuntimeError):  # ALLOW_ORDERS true but not live
+        trading_client_from_settings(_settings(use_live=False, allow_orders=True))
+    c = trading_client_from_settings(_settings(use_live=True, allow_orders=True))
+    assert c.allow_orders is True
