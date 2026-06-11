@@ -2,6 +2,7 @@
 .env
 .env.dev
 .env.bt
+.env.prod
 .env.*.local
 
 # Python

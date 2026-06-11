@@ -18,6 +18,7 @@ next iteration, behind the same USE_LIVE_API + ALLOW_ORDERS + --execute gates.
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 
 from loguru import logger
@@ -31,20 +32,39 @@ from src.simulator import MultiSimulator
 from src.simulator.multi_simulator import LiveBookState
 from src.strategy.registry import get_strategy
 
-# (strategy name, GMO leverage symbol). combo_dp_ver = dp+ver shared BTC book;
-# density_pullback_xrp = the XRP variant. (ETH dropped: redundant — see portfolio.md.)
-BOOKS: list[tuple[str, str]] = [
-    ("combo_dp_ver", "BTC_JPY"),
-    ("density_pullback_xrp", "XRP_JPY"),
+# Default books (PC/full): combo_dp_ver = dp+ver shared BTC book; density_pullback_xrp
+# = the XRP variant. (ETH dropped: redundant — see portfolio.md.) Override per-deploy
+# with the AUTO_BOOKS env var, "name:symbol[:slots],...". e.g. prod first trade:
+#   AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1   (one slot, min size).
+DEFAULT_BOOKS: list[tuple[str, str, int | None]] = [
+    ("combo_dp_ver", "BTC_JPY", None),
+    ("density_pullback_xrp", "XRP_JPY", None),
 ]
 
 
-def _desired(strategy_name: str, symbol: str) -> LiveBookState:
+def _books() -> list[tuple[str, str, int | None]]:
+    """Parse AUTO_BOOKS (``name:symbol[:slots],...``), else the defaults."""
+    raw = os.environ.get("AUTO_BOOKS", "").strip()
+    if not raw:
+        return DEFAULT_BOOKS
+    out: list[tuple[str, str, int | None]] = []
+    for item in raw.split(","):
+        parts = item.split(":")
+        if len(parts) < 2:
+            raise ValueError(f"bad AUTO_BOOKS entry {item!r} (need name:symbol[:slots])")
+        slots = int(parts[2]) if len(parts) > 2 and parts[2] else None
+        out.append((parts[0], parts[1], slots))
+    return out
+
+
+def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookState:
     """Replay the strategy on recent closed bars -> its current desired book."""
     bars = recent_bars(symbol)
     if not bars:
         raise RuntimeError(f"no bars fetched for {symbol}")
     strat = get_strategy(strategy_name)
+    if slots is not None:
+        strat.max_slots = slots  # per-deploy concurrency cap (e.g. 1 for the first trade)
     state = MultiSimulator(strat, size=LEVERAGE_MIN_SIZE.get(symbol, 0.001)).live_state(bars)
     logger.info("{} [{}]: {} bars to {}; desired book = {} open, {} pending, {} resting",
                 strategy_name, symbol, len(bars), bars[-1].timestamp,
@@ -102,9 +122,9 @@ def main() -> None:
     configure_logging(settings.log_level)
     logger.warning("AUTO-TRADER DRY-RUN — computes intended actions, places NO orders.")
     live = settings.use_live_api
-    for name, symbol in BOOKS:
+    for name, symbol, slots in _books():
         try:
-            state = _desired(name, symbol)
+            state = _desired(name, symbol, slots)
             _report(symbol, state, live=live)
         except Exception as e:  # noqa: BLE001 — one book failing must not kill the rest
             logger.error("{} [{}] failed: {}", name, symbol, e)
