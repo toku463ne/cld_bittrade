@@ -34,6 +34,7 @@ from loguru import logger
 
 from src.core.types import Side
 from src.execution.gmo_client import LEVERAGE_MIN_SIZE, GmoClient
+from src.execution.order_log import record
 from src.simulator.multi_simulator import LiveBookState
 
 _STOP_MOVE_FRAC = 0.001  # re-place the protective stop only if it moved > 0.1%
@@ -71,8 +72,8 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
         tag = "EXEC" if execute else "DRY-RUN"
         logger.info("  [{}] {}", tag, desc)
         actions.append(desc)
-        if execute:
-            fn()
+        result = fn() if execute else None  # GMO orderId for sends, None for cancels
+        record(symbol, desc, execute=execute, result=result)  # durable audit trail
 
     positions = client.get_open_positions(symbol)
     orders = client.get_active_orders(symbol)

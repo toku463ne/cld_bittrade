@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from src.core.types import Side, Signal
 from src.execution.live_executor import reconcile
 from src.simulator.multi_simulator import DesiredPosition, LiveBookState
 
 _T = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_order_log(tmp_path: Path, monkeypatch: Any) -> None:
+    """Point the order log at a tmp file so tests don't touch the real logs/."""
+    monkeypatch.setenv("ORDER_LOG", str(tmp_path / "orders.jsonl"))
 
 
 class _FakeClient:
