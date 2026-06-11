@@ -22,6 +22,13 @@ UV_BIN="${HOME}/.local/bin/uv"
 
 log() { echo -e "\n=== $* ==="; }
 
+if [ "$(id -u)" = "0" ]; then
+  echo "WARNING: running as root. Recommended: run as the 'ubuntu' user (it uses sudo"
+  echo "         where needed). As root, uv/.venv and the systemd service end up"
+  echo "         root-owned and the trader runs as root. Continuing in 5s (Ctrl-C to abort)..."
+  sleep 5
+fi
+
 log "1/7 system packages (postgresql, git, curl)"
 sudo apt-get update -y
 sudo apt-get install -y postgresql postgresql-contrib git curl ca-certificates
@@ -45,6 +52,15 @@ export PATH="${HOME}/.local/bin:${PATH}"
 
 log "4/7 PostgreSQL role + database (${DB_USER} / ${DB_NAME})"
 sudo systemctl enable --now postgresql
+# If .env.prod already has a real password, SYNC the role to it (so re-runs don't
+# clobber the role password out of step with the file). Else use DB_PASSWORD.
+if [ -f "${REPO_DIR}/.env.prod" ]; then
+  existing_pw="$(sed -n 's#.*://'"${DB_USER}"':\([^@]*\)@.*#\1#p' "${REPO_DIR}/.env.prod" | head -1)"
+  if [ -n "${existing_pw}" ] && [ "${existing_pw}" != "CHANGE_ME" ]; then
+    DB_PASSWORD="${existing_pw}"
+    echo "synced DB_PASSWORD from existing .env.prod"
+  fi
+fi
 # create role (idempotent) and set the password; create the DB if absent
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1 \
   || sudo -u postgres psql -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}';"
@@ -57,13 +73,18 @@ cd "${REPO_DIR}"
 "${UV_BIN}" sync
 
 log "6/7 .env.prod (created from example if absent; DATABASE_URL filled in)"
+DB_URL="postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}"
 if [ ! -f "${REPO_DIR}/.env.prod" ]; then
   cp "${REPO_DIR}/.env.prod.example" "${REPO_DIR}/.env.prod"
-  sed -i "s#DATABASE_URL=.*#DATABASE_URL=postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}#" "${REPO_DIR}/.env.prod"
+  sed -i "s#DATABASE_URL=.*#DATABASE_URL=${DB_URL}#" "${REPO_DIR}/.env.prod"
   chmod 600 "${REPO_DIR}/.env.prod"
   echo "wrote .env.prod (GMO keys still BLANK — fill them in)"
+elif grep -q "CHANGE_ME" "${REPO_DIR}/.env.prod"; then
+  # existing file still on the placeholder password -> point it at the real DB_URL
+  sed -i "s#DATABASE_URL=.*#DATABASE_URL=${DB_URL}#" "${REPO_DIR}/.env.prod"
+  echo "fixed placeholder DATABASE_URL in existing .env.prod"
 else
-  echo ".env.prod already exists — left untouched (DATABASE_URL not changed)."
+  echo ".env.prod already exists with a real DATABASE_URL — role synced to it."
 fi
 # Always apply the schema (idempotent — no-op if already at head). Uses whatever
 # DATABASE_URL is in .env.prod, so it works whether or not the file pre-existed.
