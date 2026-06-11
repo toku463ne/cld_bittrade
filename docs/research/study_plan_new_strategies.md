@@ -238,6 +238,17 @@ BTC's coverage), 2 low-coverage days. ETH's own B&H lockbox Sharpe: **IS +0.40 /
   ETH, and the edge is fully dead at the alt cost bar (10 bp/side → −0.03). Recorded;
   no re-tuning rescue per the registration. The squeeze→burst edge appears
   venue/asset-specific (or BTC's burst microstructure is special).
+  - **ETH-tuning attempt (2026-06-11) — confirmed untunable, no variant built.** Diagnostic:
+    the ETH failure is **OOS-side only** — the lockbox-IS is *healthy* (IS +1.17, **6/6
+    IS-internal folds** +1.33…+0.38, cost-robust on IS to 10 bp/side +0.82). So unlike
+    density_pullback (which passed untuned and could be refined), ver has no IS weakness to
+    tune; IS-WF tuning would optimise the part that already works and cannot reach the
+    held-out OOS that fails (the lesson the recalc reversal just drove home). Verified anyway:
+    the `expand_mult` robustness lever on ETH IS-WF gives nothing — 2.5 (shipped) is already
+    the best on fold uniformity (6/6); 3.0 is jaggier (4/6, f3/f6 flip); 3.5/4.0 collapse.
+    Per discipline (tuning is only for strategies that pass untuned), **ver gets no ETH
+    variant.** Its OOS failure is signal absence, not a knob mis-set — the value-area retest
+    generalises to ETH, the squeeze→burst ride does not.
 - Next for dp-on-ETH (promotion path): its forward clock must start at **2026-06-10
   23:00** (today's cache end — the promote *decision* consumed ETH data through then,
   even though no parameter was tuned), which needs per-(strategy, product) boundaries in
