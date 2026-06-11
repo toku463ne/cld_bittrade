@@ -37,6 +37,9 @@ class _FakeClient:
     def cancel_bulk(self, symbol: str) -> None:
         self.calls.append("cancel_bulk")
 
+    def cancel_order(self, order_id: int) -> None:
+        self.calls.append(f"cancel_order {order_id}")
+
 
 def _state(positions: list[DesiredPosition], working: list[Any] = [], pending: list[Signal] = []) -> LiveBookState:
     return LiveBookState(positions=positions, pending_entries=pending, working_orders=working, last_bar_time=_T)
@@ -80,7 +83,39 @@ def test_holding_with_current_stop_no_dup() -> None:
     orders = [{"orderId": 1, "settleType": "CLOSE", "executionType": "STOP", "price": "185.0", "side": "BUY"}]
     c = _FakeClient(positions=live, orders=orders)
     reconcile("XRP_JPY", state, c, execute=True)
-    assert c.calls == []  # stop already at the right level
+    assert c.calls == []  # stop already at the right level, no TP target
+
+
+def test_holding_places_stop_and_tp() -> None:
+    pos = DesiredPosition(side=Side.SHORT, entry_time=_T, entry_price=180.0,
+                          current_stop=185.0, target=170.0, bars_held=3, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "SELL", "size": "10"}]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("XRP_JPY", _state([pos]), c, execute=True)
+    # SELL position -> BUY stop + BUY take-profit limit (both resting close orders)
+    assert c.calls == ["close 7 BUY STOP", "close 7 BUY LIMIT"]
+
+
+def test_ratchet_uses_surgical_cancel_keeps_tp() -> None:
+    pos = DesiredPosition(side=Side.SHORT, entry_time=_T, entry_price=180.0,
+                          current_stop=182.0, target=170.0, bars_held=9, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "SELL", "size": "10"}]
+    orders = [
+        {"orderId": 11, "settleType": "CLOSE", "executionType": "STOP", "price": "185.0", "side": "BUY"},
+        {"orderId": 12, "settleType": "CLOSE", "executionType": "LIMIT", "price": "170.0", "side": "BUY"},
+    ]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("XRP_JPY", _state([pos]), c, execute=True)
+    # stop moved 185 -> 182: surgical cancel of the stop only (not bulk), re-place; TP untouched
+    assert c.calls == ["cancel_order 11", "close 7 BUY STOP"]
+
+
+def test_flat_cancels_leftover_close_order() -> None:
+    # position closed intrabar via a resting stop/TP; its OCO partner dangles -> cancel
+    orders = [{"orderId": 9, "settleType": "CLOSE", "executionType": "LIMIT", "price": "170.0", "side": "BUY"}]
+    c = _FakeClient(positions=[], orders=orders)
+    reconcile("XRP_JPY", _state([]), c, execute=True)
+    assert c.calls == ["cancel_bulk"]
 
 
 def test_strategy_exit_closes_position() -> None:

@@ -259,6 +259,12 @@ class GmoClient:
         logger.warning("LIVE GMO CLOSE -> {} pos={} {} {} {}", symbol, position_id, s, et, _fmt(size))
         return str(self._post("/v1/closeOrder", body))
 
+    def cancel_order(self, order_id: int) -> None:
+        """Cancel ONE order by id (``POST /v1/cancelOrder``) — surgical, leaves others."""
+        if not self.allow_orders:
+            raise PermissionError("Order cancel disabled (allow_orders=False).")
+        self._post("/v1/cancelOrder", {"orderId": int(order_id)})
+
     def cancel_bulk(self, symbol: str) -> None:
         """Cancel all active orders for ``symbol`` (``POST /v1/cancelBulkOrder``)."""
         if not self.allow_orders:

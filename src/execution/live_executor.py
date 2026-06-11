@@ -13,8 +13,11 @@ Safety:
   (something this bot would never create), it logs CRITICAL and takes NO actions.
 - **Kill switch**: a ``KILL`` file in the repo root (or ``KILL_SWITCH=1``) →
   cancel everything and flatten, then stop.
-- Protective **STOP close-order** is maintained at the strategy's current ratchet
-  stop for intrabar protection; the hourly reconcile also closes on a strategy exit.
+- Resting **exit orders** make price-based fills exchange-handled INTRABAR at the
+  exact strategy levels (OCO-style): a STOP close-order at the ratchet stop and a
+  LIMIT close-order at the take-profit target. The hourly reconcile maintains them
+  (surgical stop update keeps the TP), cancels the leftover after one fills, and
+  handles the non-price exits (time-stop / strategy-flat) by market close.
 
 The order-request shapes are GMO-spec + mocked-tested; the FIRST live ``execute``
 run confirms them (same as the manual round-trip).
@@ -101,28 +104,37 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
         live_side = Side.LONG if str(live["side"]).upper() == "BUY" else Side.SHORT
         pid, psize = int(live["positionId"]), float(live["size"])
         if desired is not None and desired.side == live_side:
-            # Holding the desired position — maintain the protective STOP.
+            # Holding — maintain resting exits so price-based fills are exchange-handled
+            # INTRABAR at the exact strategy levels (an OCO-style stop + TP pair).
+            close_s = _close_side(live["side"])
+            # 1. protective STOP at the ratchet stop (surgical update keeps the TP).
             want = desired.current_stop
             if want is not None:
                 stop_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "STOP"), None)
-                close_s = _close_side(live["side"])
                 if stop_o is None:
                     def _place_stop(want: float = want) -> None:
-                        client.close_position(symbol, pid, close_s, psize,
-                                              execution_type="STOP", price=want)
+                        client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
 
                     do(f"place protective STOP close {symbol} {close_s} @ {want:.6g}", _place_stop)
                 elif abs(float(stop_o["price"]) - want) / want > _STOP_MOVE_FRAC:
-                    oid = str(stop_o["orderId"])
+                    sid = int(stop_o["orderId"])
 
-                    def _replace_stop(want: float = want) -> None:
-                        client.cancel_bulk(symbol)
-                        client.close_position(symbol, pid, close_s, psize,
-                                              execution_type="STOP", price=want)
+                    def _replace_stop(want: float = want, sid: int = sid) -> None:
+                        client.cancel_order(sid)  # surgical: leaves the TP in place
+                        client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
 
-                    do(f"ratchet STOP -> {want:.6g} (cancel {oid} + replace)", _replace_stop)
-                else:
-                    logger.info("  HOLD {} {} pos {} — stop already ~{:.6g}", symbol, live_side.name, pid, want)
+                    do(f"ratchet STOP -> {want:.6g} (cancel {sid} + replace)", _replace_stop)
+            # 2. take-profit LIMIT at the target (fixed at entry — place once, no update).
+            if desired.target is not None:
+                tp = desired.target
+                tp_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "LIMIT"), None)
+                if tp_o is None:
+                    def _place_tp(tp: float = tp) -> None:
+                        client.close_position(symbol, pid, close_s, psize, execution_type="LIMIT", price=tp)
+
+                    do(f"place TP LIMIT close {symbol} {close_s} @ {tp:.6g}", _place_tp)
+            if want is None and desired.target is None:
+                logger.info("  HOLD {} {} pos {} — no stop/TP from strategy", symbol, live_side.name, pid)
         else:
             # Strategy has exited (or flipped) — cancel orders + market-close.
             if orders:
@@ -130,7 +142,12 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
             do(f"CLOSE pos {pid} {live_side.name} (strategy exit)",
                lambda: client.close_position(symbol, pid, _close_side(live["side"]), psize, execution_type="MARKET"))
     else:
-        # Flat — place the desired entry if any, else clean up stray entry orders.
+        # Flat. First clean up any leftover CLOSE order — after a resting stop or TP
+        # filled intrabar (position gone), its OCO partner is left dangling.
+        if close_orders:
+            do(f"cancel leftover close order(s) {symbol} (position already closed)",
+               lambda: client.cancel_bulk(symbol))
+        # Then place the desired entry if any, else clean up stray entry orders.
         entry: tuple[Side, str, float | None] | None = None
         if state.working_orders:
             sig, price, _ = state.working_orders[0]

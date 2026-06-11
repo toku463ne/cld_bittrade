@@ -67,10 +67,12 @@ sudo systemctl stop btc-autotrader.timer
 
 - **1 slot only.** The executor handles `density_pullback_xrp:XRP_JPY:1`. Multi-slot
   books (e.g. `combo_dp_ver`) run monitor-only.
-- **Bar-close cadence.** Exits driven by the strategy (time-stop/TP) act at the hourly
-  reconcile; the resting STOP order gives intrabar protection in between. A fill that
-  the backtest assumed at the stop level may fill slightly worse live (the GMO→nothing
-  venue gap is now zero, but order-timing slippage remains) — small at min size.
+- **Execution fidelity.** Entry (resting LIMIT), stop (resting STOP) and take-profit
+  (resting LIMIT) all fill INTRABAR at the exact strategy levels — exchange-handled,
+  no polling needed, matching the backtest. Only the non-price exits (time-stop, and
+  bar-evaluated exits like a box stall) act at the hourly reconcile via market close;
+  those are inherently 1h-granular, so hourly is correct. The hourly loop just
+  maintains the resting orders (ratchet stop updates, OCO leftover cleanup).
 - **No DB trade logging yet.** GMO's own execution history is the record for now;
   wiring fills into the `trade`/`position` tables is a follow-up.
 - **First `--execute` confirms the live order schema** — the order-request shapes are
