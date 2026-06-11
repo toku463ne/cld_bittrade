@@ -21,6 +21,34 @@ function _btNaiveMs(s) {
     return Date.parse(s.replace(" ", "T") + "Z");
 }
 
+/* Decode a Plotly array that may be base64 typed-array encoded ({dtype, bdata}).
+ * Plotly/Dash serialise numeric trace arrays (candlestick OHLC, line y, …) this
+ * way for compactness, so figure.data[*].open is an OBJECT, not a JS array, and
+ * indexing it returns undefined. Return a real indexable array. */
+function _btArr(a) {
+    if (a == null || Array.isArray(a)) return a;
+    if (a._inputArray) return a._inputArray;        // Plotly keeps a decoded copy
+    if (a.bdata !== undefined && a.dtype) {
+        const bin = atob(a.bdata), n = bin.length;
+        const buf = new Uint8Array(n);
+        for (let i = 0; i < n; i++) buf[i] = bin.charCodeAt(i);
+        const TA = { f8: Float64Array, f4: Float32Array, i4: Int32Array,
+                     i2: Int16Array, i1: Int8Array, u1: Uint8Array,
+                     u2: Uint16Array, u4: Uint32Array }[a.dtype] || Float64Array;
+        return new TA(buf.buffer);
+    }
+    return a;
+}
+
+/* Magnitude-aware price formatter: BTC (~1e7) as a thousands-separated integer,
+ * XRP/ETH (~1e2) keeping decimals so a 181.462 price isn't rounded to "181". */
+function _btFmtNum(v) {
+    v = Number(v);
+    if (isNaN(v)) return String(v);
+    const d = Math.abs(v) >= 10000 ? 0 : Math.abs(v) >= 1 ? 3 : 5;
+    return v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
 window.dash_clientside.bt = {
     /* Rescale each panel's y-axis to the visible x-window on zoom/pan. */
     autoscale: function (relayout, figure) {
@@ -61,12 +89,12 @@ window.dash_clientside.bt = {
             const ax = axOf[tr.yaxis || "y"];
             if (!ax || !tr.x) continue;
             const isCandle = tr.type === "candlestick";
-            const loArr = isCandle ? tr.low : tr.y;
-            const hiArr = isCandle ? tr.high : tr.y;
+            const loArr = _btArr(isCandle ? tr.low : tr.y);
+            const hiArr = _btArr(isCandle ? tr.high : tr.y);
             if (!loArr || !hiArr) continue;
             let lo = acc[ax] ? acc[ax][0] : Infinity;
             let hi = acc[ax] ? acc[ax][1] : -Infinity;
-            const xs = tr.x;
+            const xs = _btArr(tr.x);
             for (let i = 0; i < xs.length; i++) {
                 const tx = _btNaiveMs(xs[i]);
                 if (tx < t0 || tx > t1) continue;
@@ -164,22 +192,30 @@ window.dash_clientside.bt = {
     },
 
     /* OHLC readout for the hovered bar — read straight from the candlestick
-     * trace in the browser (price-panel traces share the bar index, so
-     * pointNumber aligns). Markers carry customdata, so skip those. */
+     * trace in the browser (price-panel traces share the bar index). Markers
+     * carry customdata, so skip those. */
     ohlc: function (hoverData, figure) {
         const no = window.dash_clientside.no_update;
         const pts = (hoverData && hoverData.points) || [];
         if (!pts.length || !figure || !figure.data) return no;
         const p = pts[0];
         if (p.customdata) return no; // a trade marker, not a bar
-        const i = p.pointNumber;
-        if (i == null) return no;
         const candle = figure.data.find((t) => t.type === "candlestick");
         if (!candle || !candle.open) return no;
-        const o = candle.open[i], h = candle.high[i], l = candle.low[i], c = candle.close[i];
+        // OHLC arrays may be base64 typed-arrays — decode to real arrays first.
+        const xs = _btArr(candle.x);
+        const op = _btArr(candle.open), hi = _btArr(candle.high),
+              lo = _btArr(candle.low), cl = _btArr(candle.close);
+        // Candlestick hover emits pointIndex but NOT pointNumber, so fall back:
+        // pointNumber -> pointIndex -> match the hovered x against the bar axis.
+        let i = p.pointNumber;
+        if (i == null) i = p.pointIndex;
+        if (i == null && p.x != null && xs && xs.indexOf) i = xs.indexOf(p.x);
+        if (i == null || i < 0) return no;
+        const o = op[i], h = hi[i], l = lo[i], c = cl[i];
         if (o == null) return no;
-        const fmt = (v) => Math.round(v).toLocaleString();
-        const ts = String(candle.x[i]).replace("T", "  ").replace(/(\+|-)\d{2}:?\d{2}$/, "");
-        return ts + "\nO " + fmt(o) + "   H " + fmt(h) + "\nL " + fmt(l) + "   C " + fmt(c);
+        const ts = String(xs[i]).replace("T", "  ").replace(/(\+|-)\d{2}:?\d{2}$/, "");
+        return ts + "\nO " + _btFmtNum(o) + "   H " + _btFmtNum(h) +
+               "\nL " + _btFmtNum(l) + "   C " + _btFmtNum(c);
     },
 };

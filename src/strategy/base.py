@@ -59,6 +59,16 @@ class Strategy(ABC):
         """Clear the internal bar buffer (call between independent runs)."""
         self._bars = []
 
+    @property
+    def components(self) -> list["Strategy"]:
+        """Sub-strategies whose signals this book is composed of.
+
+        A plain strategy is its own only component. Composite books (e.g.
+        :class:`~src.strategy.combo_dp_ver.ComboDpVerStrategy`) override this to
+        expose their parts, so a viewer can attribute/colour signals per source.
+        """
+        return [self]
+
     def push(self, bar: Bar) -> Signal | None:
         """Append a bar to the buffer and evaluate the strategy.
 

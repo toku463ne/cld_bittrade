@@ -27,7 +27,10 @@
 
   function fmtPrice(v) {
     var n = Number(v);
-    return isNaN(n) ? String(v) : Math.round(n).toLocaleString();
+    if (isNaN(n)) return String(v);
+    // Magnitude-aware: BTC (~1e7) as integer, XRP/ETH (~1e2) keep decimals.
+    var d = Math.abs(n) >= 10000 ? 0 : Math.abs(n) >= 1 ? 2 : 4;
+    return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
   }
 
   function makeTag(extra) {

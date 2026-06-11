@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,14 @@ from sqlalchemy import select
 
 from src.backtest.cycle import CycleResult, run_cycle
 from src.config import get_settings
-from src.core.types import Timeframe
+from src.core.types import Bar, Timeframe
 from src.data.cache import load_cache
 from src.db import get_session
+from src.execution.gmo_client import LEVERAGE_MIN_SIZE
 from src.logging_setup import configure_logging
 from src.models import OHLCV
-from src.strategy.registry import all_strategies
+from src.simulator.multi_simulator import MultiSimulator
+from src.strategy.registry import all_strategies, get_strategy
 from src.viz import tasks
 from src.viz.charts import build_chart, window_yranges
 
@@ -187,6 +190,137 @@ def _strategy_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
         clearable=False,
         style={"width": "260px"},
     )
+
+
+# --- Live trading tab --------------------------------------------------------
+# Bars come straight from GMO (the same source the live bot uses via
+# src.execution.live_bars.recent_bars), so this tab needs no DB and reflects
+# exactly what btc-autotrader sees. A short TTL cache avoids re-pulling ~25 days
+# of klines on every toggle; the Refresh button forces a refetch.
+_LIVE_BARS_TTL = 90.0  # seconds
+_LIVE_BARS: dict[str, tuple[float, list[Bar]]] = {}
+_LIVE_DISPLAY_DAYS = 14
+# Per-component signal colours (cycled if a book has more components than colours).
+_COMPONENT_COLORS = ["#2ca02c", "#1f77b4", "#9467bd", "#ff7f0e"]
+
+
+def _live_books() -> list[tuple[str, str, str, int | None]]:
+    """Return ``(label, strategy, symbol, slots)`` for each deployed live book.
+
+    Mirrors what ``btc-autotrader`` runs (the ``AUTO_BOOKS`` env var or its
+    defaults), so the selector always matches the live books.
+    """
+    from src.execution.auto_trader import _books
+
+    out: list[tuple[str, str, str, int | None]] = []
+    for name, symbol, slots in _books():
+        out.append((f"{symbol.replace('_', '/')} — {name}", name, symbol, slots))
+    return out
+
+
+def _live_book_dropdown(id_: str) -> dcc.Dropdown:
+    """Book selector; value encodes ``strategy|symbol|slots`` for the callback."""
+    books = _live_books()
+    opts = [
+        {"label": label, "value": f"{name}|{symbol}|{'' if slots is None else slots}"}
+        for label, name, symbol, slots in books
+    ]
+    return dcc.Dropdown(
+        id=id_, options=opts, value=opts[0]["value"] if opts else None,
+        clearable=False, style={"width": "100%"},
+    )
+
+
+def _live_bars_cached(symbol: str, *, force: bool) -> list[Bar]:
+    """Return recent CLOSED 1h bars for ``symbol`` from GMO (TTL-cached)."""
+    from src.execution.live_bars import recent_bars
+
+    now = time.monotonic()
+    hit = _LIVE_BARS.get(symbol)
+    if not force and hit is not None and (now - hit[0]) < _LIVE_BARS_TTL:
+        return hit[1]
+    bars = recent_bars(symbol, days=25)
+    _LIVE_BARS[symbol] = (now, bars)
+    return bars
+
+
+def _bars_frame(bars: list[Bar]) -> pd.DataFrame:
+    """Bars -> time-indexed OHLCV frame in the shape :func:`build_chart` expects."""
+    cols = ["open", "high", "low", "close", "volume"]
+    if not bars:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(
+        {c: [getattr(b, c) for b in bars] for c in cols},
+        index=pd.DatetimeIndex([b.timestamp for b in bars], name="timestamp"),
+    )
+
+
+def _live_tab() -> html.Div:
+    _pre = {"background": "#f7f7f7", "padding": "10px", "fontSize": "12px",
+            "whiteSpace": "pre-wrap", "overflowY": "auto"}
+    return html.Div(
+        [
+            # Left control pane.
+            html.Div(
+                [
+                    html.Label("Live book"),
+                    _live_book_dropdown("live-book"),
+                    dcc.Checklist(
+                        id="live-toggles",
+                        options=[{"label": "Bollinger", "value": "bb"},
+                                 {"label": "RSI", "value": "rsi"}],
+                        value=["rsi"], inline=True, style={"marginTop": "8px"},
+                    ),
+                    html.Button("Refresh", id="live-refresh", n_clicks=0,
+                                style={"marginTop": "8px", "width": "100%"}),
+                    html.Div(
+                        f"Hourly bars pulled live from GMO (last {_LIVE_DISPLAY_DAYS} "
+                        "days). Combo signals are coloured per component strategy.",
+                        style={"fontSize": "11px", "color": "#888", "margin": "8px 0"},
+                    ),
+                    html.Pre(id="live-status", children="(loading…)",
+                             style={**_pre, "maxHeight": "360px"}),
+                    html.Pre(id="live-ohlc", children="hover a bar for OHLC",
+                             style={**_pre, "background": "#eef"}),
+                ],
+                style={"flex": "0 0 300px", "display": "flex",
+                       "flexDirection": "column", "gap": "6px"},
+            ),
+            # Right chart pane.
+            dcc.Loading(
+                dcc.Graph(id="live-graph", style={"height": "820px", "width": "100%"}),
+                type="default", parent_style={"flex": "1", "minWidth": "0"},
+            ),
+        ],
+        style={"display": "flex", "gap": "12px", "marginTop": "8px"},
+    )
+
+
+def _format_live_status(
+    name: str, symbol: str, slots: int | None, bars: list[Bar], state: Any,
+) -> str:
+    """One-screen readout of the authoritative live book state (mirrors heartbeat)."""
+    last = state.last_bar_time
+    close = bars[-1].close if bars else float("nan")
+    lines = [
+        f"Book : {name}",
+        f"Pair : {symbol}   slots: {slots if slots is not None else 'default'}",
+        f"Last bar : {last}",
+        f"Close    : {close:,.4f}".rstrip("0").rstrip("."),
+        "",
+        f"open {len(state.positions)} · pending {len(state.pending_entries)} · "
+        f"resting {len(state.working_orders)}",
+    ]
+    for p in state.positions:
+        stop = f"{p.current_stop:,.2f}" if p.current_stop is not None else "—"
+        tgt = f"{p.target:,.2f}" if p.target is not None else "—"
+        lines.append(
+            f"  {p.side.name:<5} @ {p.entry_price:,.2f}  stop {stop}  tp {tgt}  "
+            f"{p.bars_held}b"
+        )
+    if not state.positions:
+        lines.append("  (flat)")
+    return "\n".join(lines)
 
 
 def _chart_tab() -> html.Div:
@@ -466,6 +600,7 @@ def create_app() -> dash.Dash:
                 children=[
                     dcc.Tab(label="Chart", value="chart", children=_chart_tab()),
                     dcc.Tab(label="Backtest", value="backtest", children=_backtest_tab()),
+                    dcc.Tab(label="Live trading", value="live", children=_live_tab()),
                     dcc.Tab(label="Maintenance", value="maintenance", children=_maintenance_tab()),
                 ],
             ),
@@ -614,6 +749,79 @@ def _register_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True,
     )
 
+    # --- Live trading tab ----------------------------------------------------
+    @app.callback(
+        Output("live-graph", "figure"),
+        Output("live-status", "children"),
+        Input("tabs", "value"),
+        Input("live-refresh", "n_clicks"),
+        Input("live-book", "value"),
+        Input("live-toggles", "value"),
+    )
+    def _live_tab_cb(active_tab, _clicks, book_val, toggles):  # type: ignore[no-untyped-def]
+        if active_tab != "live" or not book_val:
+            raise PreventUpdate
+        toggles = toggles or []
+        show_bb, show_rsi = "bb" in toggles, "rsi" in toggles
+        name, symbol, slots_s = book_val.split("|")
+        slots = int(slots_s) if slots_s else None
+
+        trig = {t["prop_id"] for t in (dash.ctx.triggered or [])}
+        force = "live-refresh.n_clicks" in trig
+        bars = _live_bars_cached(symbol, force=force)
+        df = _bars_frame(bars)
+        if df.empty:
+            return build_chart(df), f"No bars fetched for {symbol}. Check GMO connectivity."
+
+        size = LEVERAGE_MIN_SIZE.get(symbol, 0.001)
+        cutoff = df.index[-1] - pd.Timedelta(days=_LIVE_DISPLAY_DAYS)
+        win = df[df.index >= cutoff]
+        lo, hi = win.index[0], win.index[-1]
+
+        # Per-component standalone simulations -> one coloured overlay each. The
+        # combo's components peak below its 12-slot budget with zero historical
+        # contention, so standalone ≈ the shared book (whose authoritative state is
+        # shown in the status panel via live_state()).
+        book_strat = get_strategy(name)
+        if slots is not None:
+            book_strat.max_slots = slots
+        groups: list[tuple[str, str, list[Any]]] = []
+        for i, comp in enumerate(book_strat.components):
+            comp.reset()
+            trades = MultiSimulator(comp, size=size).run(bars).trades
+            wtrades = _trades_in_window(trades, lo, hi)
+            groups.append((comp.name, _COMPONENT_COLORS[i % len(_COMPONENT_COLORS)], wtrades))
+
+        fig = build_chart(win, show_bb=show_bb, show_rsi=show_rsi, trade_groups=groups)
+
+        book_strat.reset()
+        state = MultiSimulator(book_strat, size=size).live_state(bars)
+        return fig, _format_live_status(name, symbol, slots, bars, state)
+
+    # Reuse the Backtest tab's clientside interactions verbatim (figure stays in
+    # the browser; same UX — zoom-autoscale, TP/SL hover, OHLC readout).
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="autoscale"),
+        Output("live-graph", "figure", allow_duplicate=True),
+        Input("live-graph", "relayoutData"),
+        State("live-graph", "figure"),
+        prevent_initial_call=True,
+    )
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="tpsl"),
+        Output("live-graph", "figure", allow_duplicate=True),
+        Input("live-graph", "hoverData"),
+        State("live-graph", "figure"),
+        prevent_initial_call=True,
+    )
+    app.clientside_callback(  # type: ignore[no-untyped-call]
+        ClientsideFunction(namespace="bt", function_name="ohlc"),
+        Output("live-ohlc", "children"),
+        Input("live-graph", "hoverData"),
+        State("live-graph", "figure"),
+        prevent_initial_call=True,
+    )
+
     @app.callback(
         Output("maint-status", "children"),
         Input("maint-download", "n_clicks"),
@@ -694,8 +902,11 @@ def main() -> None:
     configure_logging(get_settings().log_level)
     debug = os.getenv("VIZ_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
     port = int(os.getenv("VIZ_PORT", "8050"))
+    # Bind 0.0.0.0 by default (direct access); the systemd unit sets
+    # VIZ_HOST=127.0.0.1 so only the nginx reverse proxy can reach it.
+    host = os.getenv("VIZ_HOST", "0.0.0.0")
     app = create_app()
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug)
 
 
 if __name__ == "__main__":

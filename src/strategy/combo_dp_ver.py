@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.core.types import Bar, Signal
+from src.strategy.base import Strategy
 from src.strategy.density_pullback import DensityPullbackStrategy
 from src.strategy.random_hedge import RandomHedgeStrategy
 from src.strategy.vol_expansion_ride import VolExpansionRideStrategy
@@ -56,6 +57,11 @@ class ComboDpVerStrategy(RandomHedgeStrategy):
         self.max_slots = max_slots
         self._dp = DensityPullbackStrategy()
         self._ver = VolExpansionRideStrategy()
+
+    @property
+    def components(self) -> list[Strategy]:
+        """The two merged signal sources, for per-source attribution/colouring."""
+        return [self._dp, self._ver]
 
     def precompute_multi(self, bars: list[Bar]) -> dict[datetime, list[Signal]] | None:  # noqa: D102
         out: dict[datetime, list[Signal]] = {}

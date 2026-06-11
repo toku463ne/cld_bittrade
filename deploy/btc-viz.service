@@ -1,0 +1,22 @@
+[Unit]
+# Always-on Dash viz (Chart / Backtest / Live trading / Maintenance tabs).
+# Installed by scripts/setup_viz_service.sh, which substitutes the @PLACEHOLDERS@
+# below for this host's real paths/user/env-file. nginx (deploy/nginx-btc-viz.conf)
+# fronts it on :80; the app itself binds 127.0.0.1 only (VIZ_HOST below).
+Description=BTC scalping bot viz (Dash) — always on, behind nginx
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@REPO_DIR@
+Environment=VIZ_HOST=127.0.0.1
+Environment=VIZ_PORT=@VIZ_PORT@
+Environment=VIZ_DEBUG=false
+ExecStart=@UV_BIN@ run --env-file @ENV_FILE@ python -m src.viz.app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

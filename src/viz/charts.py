@@ -24,6 +24,7 @@ def build_chart(
     show_rsi: bool = True,
     show_zigzag: bool = False,
     trades: list[Trade] | None = None,
+    trade_groups: list[tuple[str, str, list[Trade]]] | None = None,
     height: int = 820,
 ) -> go.Figure:
     """Build the shared three-panel chart figure.
@@ -33,7 +34,12 @@ def build_chart(
         show_bb: Overlay Bollinger Bands on the price panel.
         show_rsi: Include the RSI panel.
         show_zigzag: Overlay the zigzag (connected confirmed peaks + early peaks).
-        trades: Optional trades to mark on the price panel (Backtest tab).
+        trades: Optional trades to mark on the price panel (Backtest tab) — entries
+            coloured by side (green long / red short).
+        trade_groups: Optional ``(label, colour, trades)`` groups (Live tab) — each
+            group's entries are coloured by ``colour`` and shaped by side, so signals
+            from different strategies are visually distinct. Exits are drawn once,
+            neutral. Mutually exclusive with ``trades``.
         height: Figure height in pixels (the price panel scales with it).
 
     Returns:
@@ -97,6 +103,8 @@ def build_chart(
     if trades:
         _add_trade_markers(fig, trades)
         _add_trendlines(fig, trades)
+    if trade_groups:
+        _add_trade_markers_grouped(fig, trade_groups)
 
     # --- ATR panel ---
     atr_s = atr(df).replace(0.0, pd.NA)
@@ -352,6 +360,92 @@ def _add_trade_markers(fig: go.Figure, trades: list[Trade]) -> None:
     _entry_group(Side.SHORT, "Short entry ▼", "#d62728", "triangle-down")
     _exit_group("Exit — TP", "circle", True)
     _exit_group("Exit — SL/stop", "circle-open", False)
+
+
+def _entry_customdata(t: Trade) -> list[object]:
+    """Per-entry customdata the clientside hover (``bt.tpsl``) reads.
+
+    Layout: ``[tp, sl, entry_iso, exit_iso, exit_price, ref_iso, ref_price]`` — kept
+    identical across the Backtest and Live marker builders so the same JS works.
+    """
+    return [
+        t.tp_price, t.sl_price, t.entry_time.isoformat(),
+        t.exit_time.isoformat(), t.exit_price,
+        t.ref_time.isoformat() if t.ref_time else None, t.ref_price,
+    ]
+
+
+def _add_trade_markers_grouped(
+    fig: go.Figure, groups: list[tuple[str, str, list[Trade]]]
+) -> None:
+    """Add per-strategy-coloured entry markers + neutral exit markers.
+
+    Unlike :func:`_add_trade_markers` (colour = side), here colour encodes the
+    *source strategy* and the marker *shape* encodes the side (triangle-up long,
+    triangle-down short), so overlaid signal streams from different strategies stay
+    distinguishable. Each entry keeps the same ``customdata`` as the Backtest tab,
+    so the shared clientside TP/SL hover works unchanged.
+
+    Args:
+        fig: The figure to draw on.
+        groups: ``(label, colour, trades)`` tuples — one per source strategy.
+    """
+    from src.core.types import ExitReason, Side
+
+    def _entry_hover(t: Trade, label: str) -> str:
+        parts = [f"{label} · {t.side.value} entry @ {t.entry_price:,.0f}"]
+        if t.tp_price is not None:
+            parts.append(f"TP {t.tp_price:,.0f}")
+        if t.sl_price is not None:
+            parts.append(f"SL {t.sl_price:,.0f}")
+        return "<br>".join(parts)
+
+    all_trades: list[Trade] = []
+    for label, color, trades in groups:
+        if not trades:
+            continue
+        all_trades.extend(trades)
+        fig.add_trace(
+            go.Scatter(
+                x=[t.entry_time for t in trades],
+                y=[t.entry_price for t in trades],
+                mode="markers",
+                marker=dict(
+                    symbol=["triangle-up" if t.side is Side.LONG else "triangle-down"
+                            for t in trades],
+                    color=color, size=13, line=dict(width=1.2, color="black"),
+                ),
+                name=label,
+                customdata=[_entry_customdata(t) for t in trades],
+                hovertext=[_entry_hover(t, label) for t in trades],
+                hoverinfo="text",
+            ),
+            row=1, col=1,
+        )
+
+    # Exits drawn once, neutral, across every group (TP filled / SL open circle).
+    for name, symbol, keep in (("Exit — TP", "circle", True),
+                               ("Exit — SL/stop", "circle-open", False)):
+        pts = [t for t in all_trades if (t.exit_reason is ExitReason.TAKE_PROFIT) is keep]
+        if not pts:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[t.exit_time for t in pts],
+                y=[t.exit_price for t in pts],
+                mode="markers",
+                marker=dict(symbol=symbol, color="#222", size=9,
+                            line=dict(width=1.2, color="#222")),
+                name=name,
+                hovertext=[
+                    f"exit @ {t.exit_price:,.0f} | PnL {t.pnl:+,.1f} JPY | "
+                    f"{t.bars_held} bars | {t.exit_reason.value}"
+                    for t in pts
+                ],
+                hoverinfo="text",
+            ),
+            row=1, col=1,
+        )
 
 
 def _add_trendlines(fig: go.Figure, trades: list[Trade]) -> None:
