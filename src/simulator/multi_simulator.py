@@ -50,6 +50,29 @@ class _Working:
     expiry_idx: int
 
 
+@dataclass(slots=True)
+class DesiredPosition:
+    """One position the strategy currently wants open (for live reconciliation)."""
+
+    side: Side
+    entry_time: datetime
+    entry_price: float
+    current_stop: float | None  # ratchet-tightened stop as of the last bar
+    target: float | None
+    bars_held: int
+    time_stop_bars: int | None
+
+
+@dataclass(slots=True)
+class LiveBookState:
+    """The strategy's desired live state as of the last closed bar (no end-close)."""
+
+    positions: list[DesiredPosition]
+    pending_entries: list[Signal]  # market entries to fill at the next bar's open
+    working_orders: list[tuple[Signal, float, int]]  # (signal, limit_price, expiry_idx)
+    last_bar_time: datetime | None
+
+
 class MultiSimulator:
     """Bar simulator holding up to ``strategy.max_slots`` concurrent positions.
 
@@ -99,7 +122,45 @@ class MultiSimulator:
         self.burst_cost_mult = burst_cost_mult
 
     def run(self, bars: list[Bar]) -> SimResult:
-        """Run the multi-position simulation over ``bars``."""
+        """Run the multi-position simulation over ``bars`` (closes open book at end)."""
+        res, _book, _pending, _working = self._simulate(bars, close_at_end=True)
+        return res
+
+    def live_state(self, bars: list[Bar]) -> LiveBookState:
+        """Strategy's *current* desired book over ``bars`` (no end-of-data close).
+
+        Replays the strategy up to the last (closed) bar and returns what it would
+        be holding right now — open positions with their current ratchet stop /
+        target / time-stop deadline, plus market entries pending for the next bar
+        and resting limit orders. This is what the live auto-trader reconciles
+        against the exchange. ``bars`` should end at the last CLOSED bar.
+        """
+        _res, book, pending, working = self._simulate(bars, close_at_end=False)
+        stops: dict[tuple[int, Side], float] = getattr(self.strategy, "_stop", {})
+        positions = [
+            DesiredPosition(
+                side=s.pos.side,
+                entry_time=s.entry_time,
+                entry_price=s.pos.entry_price,
+                current_stop=stops.get((s.entry_idx, s.pos.side)) or s.pos.sl_price,
+                target=s.pos.tp_price,
+                bars_held=s.pos.bars_held,
+                time_stop_bars=s.cfg.time_stop_bars,
+            )
+            for s in book
+        ]
+        last_ts = bars[-1].timestamp if bars else None
+        return LiveBookState(
+            positions=positions,
+            pending_entries=list(pending),
+            working_orders=[(w.sig, w.limit_price, w.expiry_idx) for w in working],
+            last_bar_time=last_ts,
+        )
+
+    def _simulate(
+        self, bars: list[Bar], *, close_at_end: bool = True
+    ) -> tuple[SimResult, list[_Slot], list[Signal], list[_Working]]:
+        """Core loop. Returns the result plus the open book / pending / working."""
         self.strategy.reset()
         fallback_cfg = self.strategy.get_exit_rules()
         max_slots = max(1, self.strategy.max_slots)
@@ -209,8 +270,8 @@ class MultiSimulator:
             )
             equity_curve.append(realised + unreal - swap_open)
 
-        # Close anything still open at end of data.
-        if book and bars:
+        # Close anything still open at end of data (backtest); skip for live_state.
+        if close_at_end and book and bars:
             last = bars[-1]
             for slot in book:
                 trade = self._close(
@@ -220,6 +281,7 @@ class MultiSimulator:
                 realised += trade.pnl
             if equity_curve:
                 equity_curve[-1] = realised
+            book = []
 
         logger.info(
             "MultiSimulated {} bars for '{}': {} trades ({} slots), net PnL {:.1f}",
@@ -229,12 +291,13 @@ class MultiSimulator:
             max_slots,
             realised,
         )
-        return SimResult(
+        sim_result = SimResult(
             trades=trades,
             strategy_name=self.strategy.name,
             n_bars=len(bars),
             equity_curve=equity_curve,
         )
+        return sim_result, book, pending, working
 
     def _atr_series(self, bars: list[Bar]) -> list[float]:
         if not bars:
