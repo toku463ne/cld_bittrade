@@ -107,7 +107,9 @@ Remaining steps (you do these):
   2. Verify the read path:   ${UV_BIN} run --env-file .env.prod python -m src.execution.gmo_account
   3. Watch a few dry-run cycles:   journalctl -u btc-autotrader.service -f
   4. When the dry-run log looks right AND your leverage account is funded/approved,
-     set ALLOW_ORDERS=true in .env.prod to allow live orders (the trader still needs
-     its live-execution mode — see the deploy notes).
+     do the staged go-live in docs/deploy.md: manual round-trip, then set
+     ALLOW_ORDERS=true and add --execute to the service ExecStart.
+Emergency: touch ${REPO_DIR}/KILL  (next run flattens)  |  systemctl stop btc-autotrader.timer
 Manage:  systemctl status btc-autotrader.timer   |   systemctl start btc-autotrader.service (run now)
+Runbook: docs/deploy.md
 DONE
