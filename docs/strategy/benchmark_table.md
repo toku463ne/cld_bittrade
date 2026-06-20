@@ -6,6 +6,20 @@ dp / combo / dp-ETH rows re-regenerated **2026-06-11** after the `max_base_bars=
 adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 `python -m src.backtest.analysis.benchmark_table_row --strategy <name>`.
 
+> **2026-06-20 — regenerated on HONEST FILLS (trail phantom-fill fix, commit 9bdbcd4).**
+> The ride ratchet had been booking exits at a stale stop level the bar never traded at
+> (the recalc-jump phantom fill, surfaced by the live dry-run). The fix cut every ride
+> row's equity Sharpe 25–50%. **The main table below is now the honest basis** (deterministic
+> rows re-run; seeded `random_hedge*` rows re-run at seed-0). Headline moves: combo_dp_ver
+> OOS +1.66→**+0.91** (WF 6/6→**4/6**), density_pullback OOS +1.35→**+0.78**,
+> density_pullback_xrp OOS +2.68→**+2.23** (6/6 held), vol_expansion_ride OOS +1.28→**+0.58**,
+> rsi_extreme_ride OOS +0.97→**−0.63** (now negative). **The live BTC book was switched
+> `combo_dp_ver` → `density_pullback`** (head-to-head in `portfolio.md`): combo's only lift
+> over plain dp was the now-OOS-dead `vol_expansion_ride` leg. The ⚠ null-floor /
+> lift-over-null section further down is still on the **pre-fix** seeded 20-seed basis (a
+> reseed is pending) — its absolute lifts will shrink on honest fills, though the ranking is
+> approximately preserved.
+
 > **2026-06-08:** `density_pullback` retuned — (1) **log recency-weighted** value-area
 > box (`recency=1.0`, walk-forward-robust: +ve in all 6 folds, beats B&H 5/6 vs 4/6);
 > (2) **`limit_window` 24→6** — at ~1 day the retest limit caught delayed reversals
@@ -108,21 +122,27 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 
 | candidate | n | IS_sh | DR | IS_DD | mean_r | OOS_sh | OOS_DD | OOS@10bp | WF | cBTC | cDP | status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **combo_dp_ver** | 651 | **+2.23** | 0.31 | 0.38 | +0.0062 | **+1.66** | 0.18 | **+1.41** | **6/6** | +0.03 | +0.91\*\* | **ship✓ (portfolio)** |
-| **density_pullback** | 415 | **+1.84** | 0.36 | 0.32 | +0.0061 | **+1.35** | 0.18 | **+1.16** | **6/6** | +0.06 | +1.00 | **ship✓** |
-| **density_pullback_eth**\*\*\* | 252 | **+1.31** | 0.26 | 0.29 | +0.0040 | **+1.33** | 0.07 | **+1.21** | 5/6 | −0.01 | — | **candidate (fwd accruing)** |
-| **density_pullback_xrp**† | 342 | **+1.36** | 0.31 | 0.39 | +0.0063 | **+2.68** | 0.12 | **+2.58** | **6/6** | −0.02 | — | **candidate (fwd accruing)** |
-| **vol_expansion_ride** | 236 | **+1.51** | 0.25 | 0.17 | +0.0063 | +1.28 | 0.05 | +1.03 | 5/6 | −0.06 | +0.10 | **ship✓** |
-| rsi_extreme_ride | 914 | +1.27 | 0.34 | 0.61 | +0.0042 | +0.97 | 0.45 | +0.71 | 5/6 | −0.11 | +0.21 | **demoted** (≈ null OOS) |
-| random_hedge_volfilter | 518 | +0.98 | 0.36 | 0.27 | +0.0028 | +1.69 | 0.09 | +1.34 | 6/6 | −0.09 | +0.15 | **NULL floor** (seed0; ⚠ below) |
-| **zigzag_bounce_ride** | 564 | +0.32 | 0.39 | 0.71 | +0.0029 | +1.05 | 0.38 | +0.86 | 5/6 | +0.00 | +0.13 | candidate |
-| **density_multi_breakout** | 439 | +1.03 | 0.40 | 0.56 | +0.0063 | +0.32 | 0.42 | +0.20 | 5/6 | +0.03 | +0.68 | weak (cost) |
-| random_hedge (null) | 684 | −0.15 | 0.37 | 0.70 | −0.0006 | +0.55 | 0.12 | +0.08 | 4/6 | +0.03 | +0.14 | null baseline |
+| **density_pullback** | 415 | **+1.52** | 0.35 | 0.41 | +0.0047 | **+0.78** | 0.19 | **+0.59** | 5/6 | +0.06 | +1.00 | **ship✓ — LIVE BTC book** |
+| **combo_dp_ver** | 651 | **+1.62** | 0.31 | 0.50 | +0.0040 | **+0.91** | 0.22 | **+0.66** | 4/6 | +0.03 | +0.92\*\* | ship✓ — **superseded as BTC book** |
+| **density_pullback_xrp**† | 342 | **+0.65** | 0.30 | 0.41 | +0.0025 | **+2.23** | 0.12 | **+2.13** | **6/6** | −0.03 | +0.96 | **candidate (fwd) — LIVE XRP book** |
+| **density_pullback_eth**\*\*\* | 252 | **+0.93** | 0.25 | 0.34 | +0.0024 | **+1.03** | 0.07 | **+0.91** | 5/6 | −0.01 | +0.88 | candidate (fwd) — **dropped from portfolio** |
+| **vol_expansion_ride** | 236 | **+0.82** | 0.24 | 0.22 | +0.0030 | +0.58 | 0.05 | +0.32 | 5/6 | −0.07 | +0.11 | **demoted** (OOS-weak post-fix) |
+| **density_multi_breakout** | 439 | +1.03 | 0.40 | 0.56 | +0.0063 | +0.32 | 0.42 | +0.20 | 5/6 | +0.03 | +0.68 | weak (cost; ratchet-independent) |
+| **zigzag_bounce_ride** | 564 | −0.04 | 0.36 | 0.87 | +0.0012 | +0.58 | 0.52 | +0.39 | 5/6 | +0.00 | +0.13 | below null (IS) |
+| rsi_extreme_ride | 914 | +0.44 | 0.32 | 1.01 | +0.0008 | −0.63 | 0.53 | −0.90 | 4/6 | −0.11 | +0.21 | **rejected** (OOS < 0) |
+| random_hedge_volfilter | 518 | +0.26 | 0.33 | 0.36 | +0.0008 | +1.02 | 0.09 | +0.65 | 5/6 | −0.10 | +0.17 | **NULL floor** (seed0; ⚠ below) |
+| random_hedge (null) | 684 | −0.58 | 0.36 | 1.05 | −0.0013 | +0.40 | 0.12 | −0.08 | 2/6 | −0.06 | +0.13 | null baseline (seed0) |
 
 ## ⚠ Null-floor correction — the lockbox OOS is directional, so B&H is the wrong floor
 
+> **Pre-fix basis (2026-06-20).** The 20-seed null means and the lift-over-null table below
+> were computed *before* the trail phantom-fill fix and are **not yet reseeded**. On honest
+> fills both the candidates *and* the random-hedge null drop (seed-0 volfilter OOS fell
+> +1.69→+1.02), so the absolute lifts shrink but the *ranking* is approximately preserved.
+> Read the magnitudes as indicative until the 20-seed sweep is re-run.
+
 `random_hedge_volfilter` is a **random-entry** control, yet it posts a huge lockbox OOS
-(seed-0 +1.69). Diagnosis (20-seed × 3-window sweep): **(a)** seed-0 is a lucky draw — the
+(seed-0 +1.69, pre-fix; +1.02 honest). Diagnosis (20-seed × 3-window sweep): **(a)** seed-0 is a lucky draw — the
 20-seed mean is **+0.91**, not +1.69; and **(b)** even that +0.91 is *not* skill — a hedged
 pair + ride exit lets the trend-aligned leg run, so it beats B&H **85–100% of the time in
 *bear* windows but only 30% when B&H rises**. The recent OOS windows are directional/down.
@@ -149,10 +169,10 @@ density_multi_breakout are at or below it**. The plain `OOS_sh` column above is 
 the window's directionality — read the **lift-over-null** before trusting any OOS Sharpe here.
 
 \* `random_hedge_volfilter` (and the `random_hedge` null) are **seeded** (seed=0); their
-single-seed lockbox numbers are rosier than the 8-seed mean — treat as indicative, not final.
-All others are deterministic and were regenerated in the 2026-06-10 uniform snapshot; the two
-seeded rows are **not** reproduced by `benchmark_table_row`, so their values (incl. `cBTC`/`cDP`)
-carry over from the prior snapshot — the only non-uniform rows in the table.
+single-seed lockbox numbers are rosier than the multi-seed mean — treat as indicative, not
+final. Their rows are now regenerated at seed-0 on the honest-fill basis (2026-06-20); the
+20-seed null mean used in the ⚠ lift table is still pre-fix (pending a reseed). All other rows
+are deterministic.
 
 \*\* `combo_dp_ver` is the **shared 12-slot book** of density_pullback + vol_expansion_ride
 (2026-06-10, `docs/strategy/combo_dp_ver.md`) — a portfolio composition, not a new edge; its
@@ -161,13 +181,15 @@ occupancy peaks at 11/12, **zero** historical slot contention); the components' 
 are complementary (dp's 2022-bear ↔ ver's 2023-bull), giving 6/6 folds and 94% quarterly
 consistency on the 80/20 basis. This is the book the live-forward tracks. **Slot sweep**
 (`combo_slots_sweep.py`, 2026-06-10): 6 slots matches the 12-slot book on every metric (IS
-+1.95/OOS +1.16/6-6 folds, PnL even +1%; occupancy p95 = 4); erosion starts at 4 and is real
++1.95/OOS +1.16/6-6 folds — *pre-fix; honest = +1.62/+0.91/4-6 in the table above*; PnL even
++1%; occupancy p95 = 4); erosion starts at 4 and is real
 at ≤3. `max_slots` stays **12** in code (a budget guarantee, not a tuned knob — changing it
 would re-select on the lockbox), but **6 lots is the capital-planning number**.
 
 \*\*\* `density_pullback_eth` runs on **GMO_ETH_JPY**: the shared dp defaults + **one**
 ETH-only knob, the `invalidation_depth=0.25` failed-breakout exit (on ETH it cuts the stop
-bleed, NOT the BTC-rejected geometry; lockbox look IS +1.31 / OOS +1.33). The C‴ `recalc_bars=72`
+bleed, NOT the BTC-rejected geometry; lockbox look IS +1.31 / OOS +1.33 — *pre-fix; honest =
++0.93 / +1.03 in the table above*). The C‴ `recalc_bars=72`
 slower ratchet was adopted then **REVERTED 2026-06-11** — the held-out lockbox preferred 48 on
 ETH (OOS +1.33 vs +0.84) *and* XRP (+2.68 vs +1.58), so it was IS-WF overfitting. This row is the
 recalc=48 config. IS/OOS are vs **ETH's own B&H (IS +0.40 / OOS +0.59)**, all clear, 15 bp/side
@@ -177,7 +199,8 @@ OOS +0.82. Not in the lift-over-null table (BTC-calibrated null). **Forward accr
 † `density_pullback_xrp` runs on **GMO_XRP_JPY**: the shared dp defaults + **one** XRP-only knob,
 `invalidation_depth=0.35` (the XRP IS-WF plateau peaks deeper than ETH's 0.25). The untuned
 default transferred first (IS +1.06 / OOS +2.59, 6/6); the invalidation exit then lifted it to
-IS +1.36 / OOS +2.68 / @10bp +2.58 (one lockbox look, all up). IS/OOS are vs **XRP's own B&H
+IS +1.36 / OOS +2.68 / @10bp +2.58 (one lockbox look, all up) — *pre-fix; honest = IS +0.65 /
+OOS +2.23 / @10bp +2.13 in the table above*. IS/OOS are vs **XRP's own B&H
 (IS +0.60 / OOS −0.24)** — the high OOS is partly displaced capital (beating a −34% market) but
 regime-robust (pays in bull f3/f5 AND bear f6). `recalc_bars=72` and `limit_offset` were tested
 and rejected (the lockbox rejected the slower ratchet on both assets; the edge is the offset
@@ -187,41 +210,38 @@ table (BTC-calibrated null). **Forward accruing** since the 2026-06-11 05:00 bou
 ## Read at a glance
 
 - **Read OOS as lift-over-null, not vs B&H** (the ⚠ section): the directional window gives a
-  random hedge OOS +0.91, so several "candidates" barely clear it.
-- **combo_dp_ver** — the shared-book portfolio of the two shipped strategies — is the
-  strongest row on every headline (IS +2.23, OOS +1.66, OOS@10bp +1.41, lift-over-null
-  IS +1.46 / OOS +0.75, 6/6) at density_pullback's existing peak-capital budget.
-- **density_pullback** (recency=1.0 box, limit_window=6, **max_base_bars=64** since
-  2026-06-11) is the strongest single strategy on entry edge (lift over null **IS +1.07 /
-  OOS +0.44**) and the most balanced: highest single-strategy IS (+1.84), **6/6** folds,
-  cost-robust (OOS@10bp +1.16, survives `--bitflyer-realistic`, exit verified argmax under
-  both cost bases). The stale-box gate was the one 2026-06-10 rejection later reversed by
-  ETH replication; the other attempts stay rejected.
-- **vol_expansion_ride** (entry-edge lift **IS +0.74 / OOS +0.37**) after the two-sided-burst
-  filter (`skip_contra_extreme=1`) + **`expand_mult=2.5`**: low-turnover (236 trades), the
-  **lowest DD of any candidate** (IS 0.17 / OOS 0.05), most cost-robust (OOS@10bp +1.03) and
-  most diversifying (cDP +0.10), now **5/6 folds**. The IS-Sharpe giveback (to +1.51) bought DD,
-  consistency (82% quarters) and the early-2021 regime; only the 2023 raging bull stays negative.
-- **density_pullback_eth / density_pullback_xrp** — the dp edge tuned per asset, each with
-  **one** held-out-validated knob, the `invalidation_depth` failed-breakout exit (ETH 0.25 → IS
-  +1.31 / OOS +1.33; XRP 0.35 → IS +1.36 / OOS +2.68, both 6/6 or 5/6). The exit replicates as a
-  real edge on both assets (BTC rejected it — geometry-specific). The `recalc_bars=72` slower
-  ratchet was adopted on ETH then **reverted** when XRP's held-out lockbox confirmed the ETH
-  lockbox's disagreement (both prefer 48) — an IS-WF mirage the WF couldn't catch but the lockbox
-  did. ETH band re-tuning, limit offset, and recalc all failed; shorts CARRY both alt books (keep
-  both sides). **vol_expansion_ride does not transfer to the alts** — failed untuned on ETH/XRP,
-  and ETH-tuning is futile (its ETH IS is healthy 6/6, the failure is held-out-only → untunable).
-- **Multi-asset combination** — see `docs/strategy/portfolio.md`. The three asset books combine
-  for yearly stability, but **ETH is yearly-redundant with BTC** (corr +0.98 — both dp on
-  co-moving crypto), while **XRP is the only diversifier** (corr ~0.4) and the steadiest book.
-  Recommended robust split: **BTC 45% / XRP 55%, ETH dropped or ≤15% satellite**, each at its
-  capital-efficient slot count (combo 6 / eth 4 / xrp 6 — PnL saturates there, ~2–3× more
-  capital-efficient than 12). Positive every full year, ySharpe 1.68 — but all books are still
-  forward-ACCRUING, so this is a backtest construction, not a sizing decision.
-- **rsi_extreme_ride** is **≈ the null on OOS** (lift +0.06) despite a nice headline +0.97 — its
-  OOS edge mostly evaporates against the right floor (DD developed via `max_slots=3`).
-- **zigzag_bounce_ride** is **below the null on IS** (−0.45); **density_multi_breakout** is **below
-  the null on OOS** (−0.60) and not cost-robust — both effectively no entry edge here.
+  random hedge OOS ~+0.9 (pre-fix), so several "candidates" barely clear it.
+- **density_pullback** (recency=1.0 box, limit_window=6, **max_base_bars=64**) is the **live
+  BTC book** (swapped in 2026-06-20) and the strongest *single-mechanism* strategy on honest
+  fills: IS **+1.52**, OOS **+0.78**, OOS@10bp **+0.59**, **5/6** folds, cDP +1.00. It clears
+  its own B&H in both lockbox splits and is one mechanism — preferred over `combo_dp_ver` for
+  the BTC slot (head-to-head in `portfolio.md`).
+- **combo_dp_ver** (shared dp + vol_expansion book) still posts the highest BTC OOS (**+0.91**)
+  but **only because the dp leg carries it** — its lift over plain dp is the `vol_expansion_ride`
+  leg, now OOS-dead. WF dropped to **4/6** and IS_DD rose to 0.50 (the lumpy 2024-loaded path).
+  **Superseded as the BTC book**; kept here as the composition reference.
+- **vol_expansion_ride** is **demoted** on honest fills: IS +0.82, OOS **+0.58**, OOS@10bp
+  **+0.32** (was +1.03), and in the 80/20 cycle its OOS equity Sharpe collapses to ~0 with an
+  OVERFIT flag. It keeps the lowest DD (IS 0.22 / OOS 0.05) and best diversification (cDP +0.11),
+  but its standalone forward edge is no longer credible.
+- **density_pullback_xrp** (LIVE XRP book; `invalidation_depth=0.35`) is the **standout OOS** —
+  IS +0.65 / OOS **+2.23** / @10bp +2.13 / **6/6**, vs XRP's own B&H (IS +0.60 / OOS −0.24); the
+  high OOS is partly displaced capital (beating a falling market) but regime-robust (pays bull
+  and bear folds). **density_pullback_eth** (`invalidation_depth=0.25`) holds IS +0.93 / OOS
+  +1.03 / 5/6 vs ETH B&H, but is **dropped from the portfolio** (yearly-redundant with BTC and
+  fails the 80/20 quarterly-consistency gate post-fix). `vol_expansion_ride` does not transfer
+  to either alt.
+- **Multi-asset combination** — see `docs/strategy/portfolio.md`. **ETH is yearly-redundant with
+  BTC** (corr **+0.99**), while **XRP is the only diversifier** (corr ~0.5) and the steadiest
+  book. Recommended robust split on honest fills: **BTC 45% `density_pullback` / XRP 55%
+  `density_pullback_xrp`, ETH dropped**, each at its capital-efficient slot count (dp 6 / xrp 6 —
+  PnL saturates there). Positive every full year, **ySharpe 1.29** (was 1.68 pre-fix) — and all
+  books are still forward-ACCRUING, so this is a backtest construction, not a sizing decision.
+- **rsi_extreme_ride** is **rejected** — OOS goes **negative** on honest fills (OOS −0.63,
+  @10bp −0.90); the headline OOS was phantom-fill.
+- **zigzag_bounce_ride** is **below the null on IS** (now IS −0.04); **density_multi_breakout**
+  (ratchet-independent, unchanged) is weak on OOS (+0.32) and not cost-robust — neither carries
+  entry edge here.
 - **DR is sub-0.5 for all** (trend-ride payoff). Per CLAUDE.md, DR/mean_r are diagnostics only.
 
 ## Caveats & regeneration
@@ -230,7 +250,8 @@ A lockbox snapshot, not a final verdict — the lockbox has been reused across i
 so real capital waits on the **live-forwards now running** (`paper_forward`, weekly Monday cron
 via `scripts/weekly_forward_check.sh`): `density_pullback`, `vol_expansion_ride` and
 `combo_dp_ver` (all boundary 2026-06-07 22:00, re-frozen 2026-06-11 at the max_base adoption;
-the combo is the BTC book that would actually trade), `density_pullback_eth` @ GMO_ETH_JPY
+since 2026-06-20 **`density_pullback` — not `combo_dp_ver` — is the BTC book that would actually
+trade**), `density_pullback_eth` @ GMO_ETH_JPY
 (per-product boundary 2026-06-10 23:00) and `density_pullback_xrp` @ GMO_XRP_JPY (boundary
 2026-06-11 05:00). Verdicts are withheld until ≥20 forward trades AND ≥60 days per strategy
 (~mid-Aug 2026 earliest). Headline costs are the calm basis (4 bp round-trip); stress with
