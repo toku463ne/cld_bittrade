@@ -16,9 +16,9 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 > rsi_extreme_ride OOS +0.97→**−0.63** (now negative). **The live BTC book was switched
 > `combo_dp_ver` → `density_pullback`** (head-to-head in `portfolio.md`): combo's only lift
 > over plain dp was the now-OOS-dead `vol_expansion_ride` leg. The ⚠ null-floor /
-> lift-over-null section further down is still on the **pre-fix** seeded 20-seed basis (a
-> reseed is pending) — its absolute lifts will shrink on honest fills, though the ranking is
-> approximately preserved.
+> lift-over-null section further down is **also reseeded on honest fills** — the random-hedge
+> null collapsed (20-seed OOS +0.91→+0.25), which actually *raised* most candidates' lift even
+> as their absolute Sharpes fell.
 
 > **2026-06-08:** `density_pullback` retuned — (1) **log recency-weighted** value-area
 > box (`recency=1.0`, walk-forward-robust: +ve in all 6 folds, beats B&H 5/6 vs 4/6);
@@ -135,44 +135,45 @@ adoption), GMO_BTC_JPY 1h unless marked. Regenerate any row with
 
 ## ⚠ Null-floor correction — the lockbox OOS is directional, so B&H is the wrong floor
 
-> **Pre-fix basis (2026-06-20).** The 20-seed null means and the lift-over-null table below
-> were computed *before* the trail phantom-fill fix and are **not yet reseeded**. On honest
-> fills both the candidates *and* the random-hedge null drop (seed-0 volfilter OOS fell
-> +1.69→+1.02), so the absolute lifts shrink but the *ranking* is approximately preserved.
-> Read the magnitudes as indicative until the 20-seed sweep is re-run.
+> **Honest-fill basis (2026-06-20), reseeded.** The 20-seed null and the lift table below are
+> now recomputed on the realisable trail fill. The phantom fill had inflated the **null floor
+> even more than the candidates** (it relies entirely on the ride exit), so reseeding *raised*
+> most candidates' relative edge even as their absolute Sharpes fell.
 
-`random_hedge_volfilter` is a **random-entry** control, yet it posts a huge lockbox OOS
-(seed-0 +1.69, pre-fix; +1.02 honest). Diagnosis (20-seed × 3-window sweep): **(a)** seed-0 is a lucky draw — the
-20-seed mean is **+0.91**, not +1.69; and **(b)** even that +0.91 is *not* skill — a hedged
-pair + ride exit lets the trend-aligned leg run, so it beats B&H **85–100% of the time in
-*bear* windows but only 30% when B&H rises**. The recent OOS windows are directional/down.
+`random_hedge_volfilter` is a **random-entry** control, yet on the old phantom fills it posted
+a huge lockbox OOS (seed-0 +1.69). Diagnosis (20-seed sweep): **(a)** seed-0 was a lucky draw —
+the **honest 20-seed mean is IS +0.10 / OOS +0.25** (pre-fix it read +0.77 / +0.91); and
+**(b)** even that is *not* skill — a hedged pair + ride exit lets the trend-aligned leg run, so
+it beats B&H far more often in *bear* windows than when B&H rises, and the recent OOS window is
+directional/down.
 
-**Consequence: the honest null floor is the random hedge (lockbox 20-seed mean IS +0.77 /
-OOS +0.91), not B&H (−0.16).** Edge = **lift over that null**:
+**Consequence: the honest null floor is the random hedge (lockbox 20-seed mean IS +0.10 /
+OOS +0.25), not B&H (−0.16).** Edge = **lift over that null**:
 
 | candidate | IS lift / null | OOS lift / null |
 |---|---|---|
-| combo_dp_ver | **+1.46** | **+0.75** |
-| density_pullback | **+1.07** | **+0.44** |
-| vol_expansion_ride | **+0.74** | **+0.37** |
-| rsi_extreme_ride | +0.51 | **+0.06** (≈ null) |
-| zigzag_bounce_ride | **−0.45** (< null) | +0.13 |
-| density_multi_breakout | +0.26 | **−0.60** (< null) |
+| combo_dp_ver | **+1.52** | **+0.66** |
+| density_pullback | **+1.42** | **+0.53** |
+| vol_expansion_ride | **+0.72** | **+0.33** |
+| density_multi_breakout | +0.93 | +0.07 (≈ null) |
+| zigzag_bounce_ride | **−0.14** (< null) | +0.33 |
+| rsi_extreme_ride | +0.34 | **−0.88** (≪ null) |
 
-So on this window only **density_pullback** and **vol_expansion_ride** carry real OOS entry
-edge (**combo_dp_ver** is their composition, not a third edge — its lift is the two combined
-on one book). After `max_base_bars=64`, density_pullback leads on **both** lifts (IS +1.07 /
-OOS +0.44 vs ver's +0.74 / +0.37) and folds (6/6 vs 5/6); **vol_expansion_ride keeps the
-drawdown and diversification lead** (IS_DD 0.17, cDP +0.10) after `expand_mult=2.5` traded IS
-Sharpe for robustness. **rsi_extreme_ride is ≈ the null**, and **zigzag_bounce_ride /
-density_multi_breakout are at or below it**. The plain `OOS_sh` column above is inflated by
-the window's directionality — read the **lift-over-null** before trusting any OOS Sharpe here.
+So on this window **density_pullback** and **vol_expansion_ride** still carry real OOS entry
+edge (**combo_dp_ver** is their composition, not a third edge — its lift is the two combined on
+one book). density_pullback leads on **both** lifts (IS +1.42 / OOS +0.53 vs ver's +0.72 /
++0.33) and folds (5/6 vs 5/6) — and is the live BTC book. **rsi_extreme_ride is now well below
+the null on OOS** (−0.88), confirming its rejection; **density_multi_breakout** sits ≈ at the
+null (it's ratchet-independent, so the null collapsing lifted its *relative* standing without
+any real edge); **zigzag_bounce_ride** clears the null on OOS but not IS. The plain `OOS_sh`
+column above is inflated by the window's directionality — read the **lift-over-null** before
+trusting any OOS Sharpe here.
 
 \* `random_hedge_volfilter` (and the `random_hedge` null) are **seeded** (seed=0); their
 single-seed lockbox numbers are rosier than the multi-seed mean — treat as indicative, not
-final. Their rows are now regenerated at seed-0 on the honest-fill basis (2026-06-20); the
-20-seed null mean used in the ⚠ lift table is still pre-fix (pending a reseed). All other rows
-are deterministic.
+final. Their rows are regenerated at seed-0 on the honest-fill basis (2026-06-20), and the
+⚠ lift table's null floor is the honest 20-seed mean (regenerate with
+`python -m src.backtest.analysis.null_floor_sweep`). All other rows are deterministic.
 
 \*\* `combo_dp_ver` is the **shared 12-slot book** of density_pullback + vol_expansion_ride
 (2026-06-10, `docs/strategy/combo_dp_ver.md`) — a portfolio composition, not a new edge; its
@@ -210,7 +211,7 @@ table (BTC-calibrated null). **Forward accruing** since the 2026-06-11 05:00 bou
 ## Read at a glance
 
 - **Read OOS as lift-over-null, not vs B&H** (the ⚠ section): the directional window gives a
-  random hedge OOS ~+0.9 (pre-fix), so several "candidates" barely clear it.
+  random hedge 20-seed OOS ~+0.25 (honest), the floor for entry edge.
 - **density_pullback** (recency=1.0 box, limit_window=6, **max_base_bars=64**) is the **live
   BTC book** (swapped in 2026-06-20) and the strongest *single-mechanism* strategy on honest
   fills: IS **+1.52**, OOS **+0.78**, OOS@10bp **+0.59**, **5/6** folds, cDP +1.00. It clears
