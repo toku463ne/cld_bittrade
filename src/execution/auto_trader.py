@@ -39,12 +39,15 @@ from src.simulator import MultiSimulator
 from src.simulator.multi_simulator import LiveBookState
 from src.strategy.registry import get_strategy
 
-# Default books (PC/full): combo_dp_ver = dp+ver shared BTC book; density_pullback_xrp
-# = the XRP variant. (ETH dropped: redundant — see portfolio.md.) Override per-deploy
-# with the AUTO_BOOKS env var, "name:symbol[:slots],...". e.g. prod first trade:
+# Default books (PC/full): density_pullback = the BTC book; density_pullback_xrp = the
+# XRP variant. (ETH dropped: redundant — see portfolio.md. combo_dp_ver dropped as the
+# BTC book 2026-06-20: its only lift over plain density_pullback was the vol_expansion
+# leg, which is OOS-dead once the trail phantom-fill is fixed — see the head-to-head in
+# portfolio.md / trail-recalc-phantom-fill.) Override per-deploy with the AUTO_BOOKS env
+# var, "name:symbol[:slots],...". e.g. prod first trade:
 #   AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1   (one slot, min size).
 DEFAULT_BOOKS: list[tuple[str, str, int | None]] = [
-    ("combo_dp_ver", "BTC_JPY", None),
+    ("density_pullback", "BTC_JPY", None),
     ("density_pullback_xrp", "XRP_JPY", None),
 ]
 

@@ -101,6 +101,52 @@ def test_simulator_applies_round_trip_fee() -> None:
         assert abs(tr.pnl - (tr.gross_pnl - tr.cost)) < 1e-9
 
 
+def _ratchet_strat():
+    """A reset RandomHedgeStrategy with empty ratchet state, for trail-fill tests."""
+    from src.strategy.random_hedge import RandomHedgeStrategy
+
+    strat = RandomHedgeStrategy()
+    strat.reset()
+    return strat
+
+
+def test_trail_breach_fills_at_stop_within_bar() -> None:
+    # Control: a trail stop sitting inside the bar fills exactly at the stop level
+    # (price traded through it intrabar — the fill is realisable).
+    strat = _ratchet_strat()
+    pos = OpenPosition(side=Side.LONG, entry_price=100.0, entry_atr=1.0, sl_price=99.0)
+    strat._stop[(0, Side.LONG)] = 99.5
+    strat._last_recalc[(0, Side.LONG)] = 0
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    res = strat.dynamic_exit(pos, _bar(ts, 100.0, 100.5, 99.0, 99.8), 1, 0)
+    assert res == (ExitReason.TRAIL_STOP, 99.5)
+
+
+def test_trail_breach_above_bar_fills_at_open_not_stop() -> None:
+    # Regression: the ratchet recalcs only every recalc_bars, so the stop can jump
+    # (on a recalc) above the whole next bar — a level the market never trades at on
+    # exit. A live resting stop in that state triggers at the open. The fill must be
+    # the bar open (realisable), NOT the stale, better-than-market stop.
+    strat = _ratchet_strat()
+    pos = OpenPosition(side=Side.LONG, entry_price=100.0, entry_atr=1.0, sl_price=99.0)
+    strat._stop[(0, Side.LONG)] = 110.0  # jumped above the bar after a recalc
+    strat._last_recalc[(0, Side.LONG)] = 0
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    res = strat.dynamic_exit(pos, _bar(ts, 101.0, 102.0, 100.0, 101.0), 1, 0)
+    assert res == (ExitReason.TRAIL_STOP, 101.0)  # bar.open, not 110.0
+
+
+def test_trail_breach_above_bar_short_fills_at_open() -> None:
+    # Short mirror: stop jumped below the whole bar -> fill at the open, not the stop.
+    strat = _ratchet_strat()
+    pos = OpenPosition(side=Side.SHORT, entry_price=100.0, entry_atr=1.0, sl_price=101.0)
+    strat._stop[(0, Side.SHORT)] = 90.0  # jumped below the bar after a recalc
+    strat._last_recalc[(0, Side.SHORT)] = 0
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    res = strat.dynamic_exit(pos, _bar(ts, 99.0, 100.0, 98.0, 99.0), 1, 0)
+    assert res == (ExitReason.TRAIL_STOP, 99.0)  # bar.open, not 90.0
+
+
 def test_zigzag_detects_up_swing() -> None:
     closes = [100.0] + [100.0 + i for i in range(1, 20)]  # steady rise
     out = first_zigzag_peak(closes, 0, window=30, threshold=0.003)

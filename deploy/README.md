@@ -34,15 +34,15 @@ start because the **Chart** and **Backtest** tabs read OHLCV from the DB.
 ## Live trading tab
 
 Left pane: pick a live book (the selector mirrors `btc-autotrader`'s `AUTO_BOOKS` /
-defaults — `combo_dp_ver:BTC_JPY`, `density_pullback_xrp:XRP_JPY`), toggle
+defaults — `density_pullback:BTC_JPY`, `density_pullback_xrp:XRP_JPY`), toggle
 Bollinger/RSI, and **Refresh** to re-pull GMO. The status panel shows the
 authoritative live book state (last bar, close, open/pending/resting — mirrors
 `logs/heartbeat.jsonl`).
 
-Right pane: the last 14 days of hourly candles with trade signals. For the **combo**
-book the signals are coloured **per component** (`density_pullback` green,
-`vol_expansion_ride` blue); side is the triangle direction. Hover, TP/SL lines and
-zoom-autoscale behave exactly like the Backtest tab.
+Right pane: the last 14 days of hourly candles with trade signals; side is the
+triangle direction. (A multi-component book like `combo_dp_ver`, if selected, colours
+its signals **per component** — `density_pullback` green, `vol_expansion_ride` blue.)
+Hover, TP/SL lines and zoom-autoscale behave exactly like the Backtest tab.
 
 ## Manage / troubleshoot
 

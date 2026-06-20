@@ -32,7 +32,7 @@ a signal). The one thing it can't test is sending a real order (needs a funded,
 approved leverage account); prove that with one manual `gmo_trade ... --execute`
 round-trip when funded.
 After this the box runs the trader **hourly at HH:05 in dry-run** (it logs intended
-actions, places nothing). Dry-run config: `AUTO_BOOKS=combo_dp_ver:BTC_JPY,
+actions, places nothing). Dry-run config: `AUTO_BOOKS=density_pullback:BTC_JPY,
 density_pullback_xrp:XRP_JPY` — **both books at full slots** for the most samples to
 observe (multi-slot books are monitor-only, so they never place orders regardless of
 gates). Watch it: `journalctl -u btc-autotrader.service -f`. For the **first real

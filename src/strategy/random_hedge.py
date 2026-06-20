@@ -335,7 +335,16 @@ class RandomHedgeStrategy(Strategy):
         if stop is not None and (
             (long and bar.low <= stop) or (not long and bar.high >= stop)
         ):
-            return ExitReason.TRAIL_STOP, stop
+            # Realisable fill: because the stop is recomputed only every
+            # ``recalc_bars`` it can jump (on a recalc) to a level the market has
+            # already passed — i.e. the bar OPENS beyond the stop. A live resting
+            # stop in that state triggers immediately at the open, not at the
+            # (now-stale, better-than-market) stop level. Filling at the stop would
+            # book a price the bar never traded at, inflating ride winners. Clamp to
+            # the open on such a gap; a no-op for an in-bar trailing exit (open is on
+            # the favourable side of the stop, so min/max leaves the stop unchanged).
+            fill = min(stop, bar.open) if long else max(stop, bar.open)
+            return ExitReason.TRAIL_STOP, fill
 
         # 2. Periodic recompute for subsequent bars (never loosened).
         if pos.sl_price is None:
