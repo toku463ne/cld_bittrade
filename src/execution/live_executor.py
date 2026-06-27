@@ -108,34 +108,54 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
             # Holding — maintain resting exits so price-based fills are exchange-handled
             # INTRABAR at the exact strategy levels (an OCO-style stop + TP pair).
             close_s = _close_side(live["side"])
-            # 1. protective STOP at the ratchet stop (surgical update keeps the TP).
             want = desired.current_stop
-            if want is not None:
-                stop_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "STOP"), None)
-                if stop_o is None:
-                    def _place_stop(want: float = want) -> None:
-                        client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
+            # Realisable-fill clamp (mirrors the sim's min/max(stop, bar.open) in
+            # MultiSimulator/random_hedge): the ratchet stop is recomputed only every
+            # ``recalc_bars``, so on a recalc it can land on the WRONG side of the
+            # market — above market for a long's protective sell-stop, below for a
+            # short. A resting STOP there is impossible / triggers instantly, and the
+            # strategy's intent is to EXIT NOW. Translate to a market close rather than
+            # send a phantom STOP the exchange may reject. Needs a market reference;
+            # if absent (last_price=None) keep the prior behaviour.
+            last = state.last_price
+            breached = want is not None and last is not None and (
+                (live_side is Side.LONG and want >= last)
+                or (live_side is Side.SHORT and want <= last)
+            )
+            if breached:
+                if orders:
+                    do(f"cancel orders {symbol} (trail through market)",
+                       lambda: client.cancel_bulk(symbol))
+                do(f"CLOSE pos {pid} {live_side.name} (trail stop {want:.6g} through market {last:.6g})",
+                   lambda: client.close_position(symbol, pid, close_s, psize, execution_type="MARKET"))
+            else:
+                # 1. protective STOP at the ratchet stop (surgical update keeps the TP).
+                if want is not None:
+                    stop_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "STOP"), None)
+                    if stop_o is None:
+                        def _place_stop(want: float = want) -> None:
+                            client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
 
-                    do(f"place protective STOP close {symbol} {close_s} @ {want:.6g}", _place_stop)
-                elif abs(float(stop_o["price"]) - want) / want > _STOP_MOVE_FRAC:
-                    sid = int(stop_o["orderId"])
+                        do(f"place protective STOP close {symbol} {close_s} @ {want:.6g}", _place_stop)
+                    elif abs(float(stop_o["price"]) - want) / want > _STOP_MOVE_FRAC:
+                        sid = int(stop_o["orderId"])
 
-                    def _replace_stop(want: float = want, sid: int = sid) -> None:
-                        client.cancel_order(sid)  # surgical: leaves the TP in place
-                        client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
+                        def _replace_stop(want: float = want, sid: int = sid) -> None:
+                            client.cancel_order(sid)  # surgical: leaves the TP in place
+                            client.close_position(symbol, pid, close_s, psize, execution_type="STOP", price=want)
 
-                    do(f"ratchet STOP -> {want:.6g} (cancel {sid} + replace)", _replace_stop)
-            # 2. take-profit LIMIT at the target (fixed at entry — place once, no update).
-            if desired.target is not None:
-                tp = desired.target
-                tp_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "LIMIT"), None)
-                if tp_o is None:
-                    def _place_tp(tp: float = tp) -> None:
-                        client.close_position(symbol, pid, close_s, psize, execution_type="LIMIT", price=tp)
+                        do(f"ratchet STOP -> {want:.6g} (cancel {sid} + replace)", _replace_stop)
+                # 2. take-profit LIMIT at the target (fixed at entry — place once, no update).
+                if desired.target is not None:
+                    tp = desired.target
+                    tp_o = next((o for o in close_orders if str(o.get("executionType")).upper() == "LIMIT"), None)
+                    if tp_o is None:
+                        def _place_tp(tp: float = tp) -> None:
+                            client.close_position(symbol, pid, close_s, psize, execution_type="LIMIT", price=tp)
 
-                    do(f"place TP LIMIT close {symbol} {close_s} @ {tp:.6g}", _place_tp)
-            if want is None and desired.target is None:
-                logger.info("  HOLD {} {} pos {} — no stop/TP from strategy", symbol, live_side.name, pid)
+                        do(f"place TP LIMIT close {symbol} {close_s} @ {tp:.6g}", _place_tp)
+                if want is None and desired.target is None:
+                    logger.info("  HOLD {} {} pos {} — no stop/TP from strategy", symbol, live_side.name, pid)
         else:
             # Strategy has exited (or flipped) — cancel orders + market-close.
             if orders:

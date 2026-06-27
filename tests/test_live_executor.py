@@ -50,8 +50,10 @@ class _FakeClient:
         self.calls.append(f"cancel_order {order_id}")
 
 
-def _state(positions: list[DesiredPosition], working: list[Any] = [], pending: list[Signal] = []) -> LiveBookState:
-    return LiveBookState(positions=positions, pending_entries=pending, working_orders=working, last_bar_time=_T)
+def _state(positions: list[DesiredPosition], working: list[Any] = [], pending: list[Signal] = [],
+           last_price: float | None = None) -> LiveBookState:
+    return LiveBookState(positions=positions, pending_entries=pending, working_orders=working,
+                         last_bar_time=_T, last_price=last_price)
 
 
 def _pos(side: Side, stop: float | None = 170.0) -> DesiredPosition:
@@ -125,6 +127,57 @@ def test_flat_cancels_leftover_close_order() -> None:
     c = _FakeClient(positions=[], orders=orders)
     reconcile("XRP_JPY", _state([]), c, execute=True)
     assert c.calls == ["cancel_bulk"]
+
+
+def test_long_stop_through_market_clamps_to_market_close() -> None:
+    # Phantom-fill case from the live heartbeat: a long's ratchet sell-stop recalcs
+    # ABOVE market (peak - tiny band). It's impossible to rest there -> market close.
+    pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=10460115.0,
+                          current_stop=10743479.0, target=None, bars_held=49, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "BUY", "size": "0.01"}]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("BTC_JPY", _state([pos], last_price=10526968.0), c, execute=True)
+    assert c.calls == ["close 7 SELL MARKET"]  # NOT a phantom STOP above market
+
+
+def test_long_stop_through_market_cancels_resting_orders_first() -> None:
+    pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=10460115.0,
+                          current_stop=10743479.0, target=None, bars_held=49, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "BUY", "size": "0.01"}]
+    orders = [{"orderId": 11, "settleType": "CLOSE", "executionType": "STOP", "price": "10427841.0", "side": "SELL"}]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("BTC_JPY", _state([pos], last_price=10526968.0), c, execute=True)
+    assert c.calls == ["cancel_bulk", "close 7 SELL MARKET"]
+
+
+def test_short_stop_through_market_clamps_to_market_close() -> None:
+    # Mirror for a short: protective BUY-stop recalcs BELOW market -> exit now.
+    pos = DesiredPosition(side=Side.SHORT, entry_time=_T, entry_price=180.0,
+                          current_stop=175.0, target=None, bars_held=49, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "SELL", "size": "10"}]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("XRP_JPY", _state([pos], last_price=176.0), c, execute=True)
+    assert c.calls == ["close 7 BUY MARKET"]
+
+
+def test_normal_stop_below_market_still_places_stop() -> None:
+    # Clamp must NOT fire for a healthy long stop below market.
+    pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=180.0,
+                          current_stop=170.0, target=None, bars_held=3, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "BUY", "size": "10"}]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("XRP_JPY", _state([pos], last_price=181.0), c, execute=True)
+    assert c.calls == ["close 7 SELL STOP"]
+
+
+def test_no_last_price_falls_back_to_stop_placement() -> None:
+    # Without a market reference (last_price=None) keep prior behaviour: place the STOP.
+    pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=180.0,
+                          current_stop=185.0, target=None, bars_held=49, time_stop_bars=120)
+    live = [{"positionId": 7, "side": "BUY", "size": "10"}]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("XRP_JPY", _state([pos], last_price=None), c, execute=True)
+    assert c.calls == ["close 7 SELL STOP"]
 
 
 def test_strategy_exit_closes_position() -> None:

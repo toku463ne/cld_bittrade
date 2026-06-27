@@ -71,6 +71,7 @@ class LiveBookState:
     pending_entries: list[Signal]  # market entries to fill at the next bar's open
     working_orders: list[tuple[Signal, float, int]]  # (signal, limit_price, expiry_idx)
     last_bar_time: datetime | None
+    last_price: float | None = None  # last CLOSED-bar close — market ref for the live clamp
 
 
 class MultiSimulator:
@@ -150,11 +151,13 @@ class MultiSimulator:
             for s in book
         ]
         last_ts = bars[-1].timestamp if bars else None
+        last_px = bars[-1].close if bars else None
         return LiveBookState(
             positions=positions,
             pending_entries=list(pending),
             working_orders=[(w.sig, w.limit_price, w.expiry_idx) for w in working],
             last_bar_time=last_ts,
+            last_price=last_px,
         )
 
     def _simulate(
