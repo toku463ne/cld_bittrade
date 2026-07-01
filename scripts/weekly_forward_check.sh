@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Weekly forward/lockbox confirmation for the shipped strategies (density_pullback,
+# Daily forward/lockbox confirmation for the shipped strategies (density_pullback,
 # vol_expansion_ride) and the combined live book (combo_dp_ver).
+#
+# Scheduled DAILY (not weekly) on purpose: this runs on an intermittent WSL2 box that
+# is frequently off and idle-suspends the VM, and cron has no missed-job catch-up
+# (no anacron). A once-a-week fixed instant (the old `0 9 * * 1`) silently skipped
+# 3 weeks running when the box was off/suspended at Mon 09:00. The run is idempotent
+# (flock + skip_existing import + recompute), so firing daily just lands on the first
+# day the box is awake. Bump to `0 */6 * * *` if mornings keep getting missed.
 #
 # Each run: (1) imports the latest ~2 weeks of GMO 1h BTC_JPY klines (idempotent —
 # skip_existing dedupes, so re-runs only fetch new days), then (2) runs the
 # forward/lockbox paper-trade evaluator, which scores the strategy ONLY on bars after
-# the frozen lockbox boundary and prints ACCRUING / CONFIRMED / NOT CONFIRMED.
+# the frozen lockbox boundary and prints ACCRUING / CONFIRMED / NOT CONFIRMED. Then
+# (3) regenerates the live shadow-fill ledger from the dry-run monitor log
+# (logs/*.jsonl) so the real-feed sample accrues alongside the lockbox verdict.
 #
 # Local-only: reads/writes the backtest DB (.env.bt) and reads public GMO klines
 # (no exchange private/order API; this is paper — it places no orders). Drive it
@@ -54,12 +63,19 @@ TO="$(date +%F)"
     --from "${FROM}" --to "${TO}" --timeframe 1h --symbol XRP_JPY --product GMO_XRP_JPY
   "${UV}" run --env-file .env.bt python -m src.backtest.paper_forward \
     --strategy density_pullback_xrp --timeframe 1h --product GMO_XRP_JPY
+  # Live shadow-fill ledger: reconstruct the dry-run monitor trades from logs/*.jsonl
+  # so the live sample accrues next to the lockbox verdict. NOT the lockbox test —
+  # reads only the local monitor log (no DB, no network, places no orders). Diagnostic,
+  # so a missing/empty log must not abort the forward run.
+  echo "--- live shadow-fill ledger (logs/*.jsonl) ---"
+  "${UV}" run python -m src.backtest.analysis.live_shadow_ledger || \
+    echo "(shadow ledger skipped: no monitor log yet)"
   echo "=== $(date -Is) | done ==="
 } >>"${LOG_FILE}" 2>&1
 
-# Install (Mondays 09:00 local):
+# Install (daily 09:00 local):
 #   ( crontab -l 2>/dev/null | grep -v '# btc_bot forward check'; \
-#     echo '0 9 * * 1 /home/ubuntu/cld_bittrade/scripts/weekly_forward_check.sh # btc_bot forward check' ) | crontab -
+#     echo '0 9 * * * /home/ubuntu/cld_bittrade/scripts/weekly_forward_check.sh # btc_bot forward check' ) | crontab -
 # Remove:
 #   crontab -l | grep -v '# btc_bot forward check' | crontab -
 # Tail results:  tail -f /home/ubuntu/cld_bittrade/logs/forward.log
