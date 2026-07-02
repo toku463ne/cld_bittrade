@@ -201,7 +201,7 @@ _LIVE_BARS_TTL = 90.0  # seconds
 _LIVE_BARS: dict[str, tuple[float, list[Bar]]] = {}
 _LIVE_DISPLAY_DAYS = 14
 _LIVE_ACCT_TTL = 8.0  # seconds — real GMO account read (positions + orders)
-_LIVE_ACCT: dict[str, tuple[float, str]] = {}
+_LIVE_ACCT: dict[str, tuple[float, dict[str, Any]]] = {}
 # Per-component signal colours (cycled if a book has more components than colours).
 _COMPONENT_COLORS = ["#2ca02c", "#1f77b4", "#9467bd", "#ff7f0e"]
 
@@ -298,33 +298,43 @@ def _live_tab() -> html.Div:
     )
 
 
-def _read_gmo_account(symbol: str) -> str:
-    """Real GMO account readout (live positions + active orders) for ``symbol``.
+def _gmo_account_raw(symbol: str, *, force: bool) -> dict[str, Any]:
+    """Real GMO account (live positions + active orders) for ``symbol``, TTL-cached.
 
     Read-only and best-effort: if live reads are not configured (``USE_LIVE_API`` /
-    GMO keys) or the API errors, return a short note rather than raising — the tab
-    must still render. This is the AUTHORITATIVE account view (vs the simulated
-    desired book above it), so the panel shows what is actually on the exchange.
+    GMO keys) or the API errors, return ``{"note": <reason>}`` with empty lists — the
+    tab must still render. This is the AUTHORITATIVE account state (vs the simulated
+    desired book), consumed by BOTH the text panel and the chart overlay. Toggles
+    reuse the cache so they don't re-hit GMO; the Refresh button forces a re-read.
     """
+    now = time.monotonic()
+    hit = _LIVE_ACCT.get(symbol)
+    if not force and hit is not None and (now - hit[0]) < _LIVE_ACCT_TTL:
+        return hit[1]
+
     from src.execution.gmo_client import gmo_account_client_from_settings
 
+    data: dict[str, Any] = {"note": None, "positions": [], "orders": []}
     try:
         client = gmo_account_client_from_settings(get_settings())
-    except Exception as exc:  # not live / keys missing — degrade gracefully
-        return f"GMO account : live read off ({type(exc).__name__}) — need USE_LIVE_API + keys"
-    try:
-        positions = client.get_open_positions(symbol)
-        orders = client.get_active_orders(symbol)
-    except Exception as exc:  # GmoApiError or transport — never crash the tab
-        # Surface GMO's reason: e.g. ERR-5012 = key not permitted / IP not whitelisted
-        # for this account (the funded account uses the prod box's keys+IP, so run the
-        # viz there with .env.prod to see real positions).
-        return f"GMO account : read error — {exc}"
+        data["positions"] = client.get_open_positions(symbol)
+        data["orders"] = client.get_active_orders(symbol)
+    except Exception as exc:  # not live / key-IP / transport — never crash the tab
+        # e.g. ERR-5012 = key not permitted / IP not whitelisted; the funded account
+        # uses the prod box's keys+IP, so run the viz there (.env.prod) for real reads.
+        data["note"] = f"live read off — {exc}"
+    _LIVE_ACCT[symbol] = (now, data)
+    return data
 
-    lines = [
-        "── GMO ACCOUNT (live, authoritative) ──",
-        f"positions {len(positions)} · active orders {len(orders)}",
-    ]
+
+def _format_gmo_account(data: dict[str, Any]) -> str:
+    """Text block for the account section (mirrors the chart overlay)."""
+    lines = ["── GMO ACCOUNT (live, authoritative) ──"]
+    if data["note"]:
+        lines.append(data["note"])
+        return "\n".join(lines)
+    positions, orders = data["positions"], data["orders"]
+    lines.append(f"positions {len(positions)} · active orders {len(orders)}")
     for p in positions:
         pnl = p.get("lossGain")
         pnl_s = f"  pnl {float(pnl):,.0f}" if pnl is not None else ""
@@ -345,15 +355,42 @@ def _read_gmo_account(symbol: str) -> str:
     return "\n".join(lines)
 
 
-def _gmo_account_cached(symbol: str, *, force: bool) -> str:
-    """TTL-cached :func:`_read_gmo_account` so toggles don't re-hit GMO; Refresh forces."""
-    now = time.monotonic()
-    hit = _LIVE_ACCT.get(symbol)
-    if not force and hit is not None and (now - hit[0]) < _LIVE_ACCT_TTL:
-        return hit[1]
-    block = _read_gmo_account(symbol)
-    _LIVE_ACCT[symbol] = (now, block)
-    return block
+def _overlay_gmo_account(fig: Any, data: dict[str, Any]) -> None:
+    """Draw the REAL GMO order/position price levels on the price panel (row 1).
+
+    So the actual resting entry / stop / TP appear ON the chart, not only in text.
+    BUY green, SELL red; resting orders dashed, an open position's entry solid.
+    """
+    if data.get("note"):
+        return
+
+    def _price(x: Any) -> float | None:
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    for o in data["orders"]:
+        y = _price(o.get("price"))
+        if y is None:
+            continue
+        color = "#2ca02c" if str(o.get("side", "")).upper() == "BUY" else "#d62728"
+        tag = "entry" if str(o.get("settleType", "")).upper() == "OPEN" else "exit"
+        fig.add_hline(
+            y=y, line=dict(color=color, dash="dash", width=1.2), row=1, col=1,
+            annotation_text=f"GMO {tag} {o.get('side','?')} {y:g}",
+            annotation_position="right", annotation_font=dict(size=10, color=color),
+        )
+    for p in data["positions"]:
+        y = _price(p.get("price"))
+        if y is None:
+            continue
+        color = "#2ca02c" if str(p.get("side", "")).upper() == "BUY" else "#d62728"
+        fig.add_hline(
+            y=y, line=dict(color=color, width=1.8), row=1, col=1,
+            annotation_text=f"GMO POS {p.get('side','?')} {y:g}",
+            annotation_position="right", annotation_font=dict(size=10, color=color),
+        )
 
 
 def _format_live_status(
@@ -855,10 +892,13 @@ def _register_callbacks(app: dash.Dash) -> None:
 
         fig = build_chart(win, show_bb=show_bb, show_rsi=show_rsi, trade_groups=groups)
 
+        acct = _gmo_account_raw(symbol, force=force)
+        _overlay_gmo_account(fig, acct)  # draw REAL order/position levels on the chart
+
         book_strat.reset()
         state = MultiSimulator(book_strat, size=size).live_state(bars)
         status = _format_live_status(name, symbol, slots, bars, state)
-        status += "\n\n" + _gmo_account_cached(symbol, force=force)
+        status += "\n\n" + _format_gmo_account(acct)
         return fig, status
 
     # Reuse the Backtest tab's clientside interactions verbatim (figure stays in
