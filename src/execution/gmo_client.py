@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import requests
@@ -42,10 +43,36 @@ LEVERAGE_MIN_SIZE: dict[str, float] = {
     "XRP_JPY": 10.0,
 }
 
+# GMO order-price tick (呼値): the price must be an exact multiple of this, else the
+# exchange rejects with ERR-5115 ("number of decimal digits is invalid. price"). The
+# strategy computes raw float levels (e.g. an XRP density-box edge at 171.99597…),
+# so we MUST snap to the tick before sending. Values read off GMO's kline granularity:
+# XRP_JPY quotes to 0.001, BTC_JPY to whole yen. ETH_JPY is whole-yen too but is not
+# traded live (monitor-only), so treat it as best-known, not verified against a fill.
+LEVERAGE_PRICE_TICK: dict[str, float] = {
+    "BTC_JPY": 1.0,
+    "ETH_JPY": 1.0,
+    "XRP_JPY": 0.001,
+}
+
 
 def _fmt(x: float) -> str:
     """Format a size/price for GMO (strings, no trailing zeros): 0.01, 10, 0.1."""
     return f"{x:.8f}".rstrip("0").rstrip(".")
+
+
+def _round_to_tick(symbol: str, price: float) -> float:
+    """Snap ``price`` to ``symbol``'s order-price tick (nearest), via Decimal.
+
+    Avoids float artifacts so the formatted string is a clean tick multiple. If the
+    symbol's tick is unknown the price is returned unchanged (fail-open — the exchange
+    still validates it).
+    """
+    tick = LEVERAGE_PRICE_TICK.get(symbol)
+    if not tick:
+        return price
+    d, t = Decimal(str(price)), Decimal(str(tick))
+    return float((d / t).to_integral_value(rounding=ROUND_HALF_UP) * t)
 
 
 class GmoApiError(RuntimeError):
@@ -210,13 +237,15 @@ class GmoClient:
             raise ValueError(f"side must be BUY or SELL, got {side!r}")
         et = execution_type.upper()
         body: dict[str, Any] = {"symbol": symbol, "side": s, "executionType": et, "size": _fmt(sz)}
+        px = price
         if et != "MARKET":
             if price is None:
                 raise ValueError(f"{et} order requires a price")
-            body["price"] = _fmt(price)
+            px = _round_to_tick(symbol, price)  # snap to 呼値 or GMO rejects (ERR-5115)
+            body["price"] = _fmt(px)
         if time_in_force:
             body["timeInForce"] = time_in_force
-        logger.warning("LIVE GMO OPEN -> {} {} {} {} @ {}", symbol, s, et, _fmt(sz), price)
+        logger.warning("LIVE GMO OPEN -> {} {} {} {} @ {}", symbol, s, et, _fmt(sz), px)
         return str(self._post("/v1/order", body))
 
     def close_position(
@@ -255,7 +284,7 @@ class GmoClient:
         if et != "MARKET":
             if price is None:
                 raise ValueError(f"{et} close requires a price")
-            body["price"] = _fmt(price)
+            body["price"] = _fmt(_round_to_tick(symbol, price))  # snap to 呼値 (ERR-5115)
         logger.warning("LIVE GMO CLOSE -> {} pos={} {} {} {}", symbol, position_id, s, et, _fmt(size))
         return str(self._post("/v1/closeOrder", body))
 

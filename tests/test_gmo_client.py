@@ -14,6 +14,7 @@ from src.execution.gmo_client import (
     GmoApiError,
     GmoClient,
     _fmt,
+    _round_to_tick,
     _unwrap,
     gmo_account_client_from_settings,
     gmo_trading_client_from_settings,
@@ -96,6 +97,22 @@ def test_fmt_strips_trailing_zeros() -> None:
     assert _fmt(0.01) == "0.01"
     assert _fmt(10.0) == "10"
     assert _fmt(0.1) == "0.1"
+
+
+def test_round_to_tick_snaps_price() -> None:
+    # regression: the raw density-box edge GMO rejected with ERR-5115 (too many
+    # decimals). XRP tick = 0.001, BTC = whole yen; unknown symbol passes through.
+    assert _round_to_tick("XRP_JPY", 171.99597916666664) == 171.996
+    assert _round_to_tick("XRP_JPY", 171.42328125) == 171.423
+    assert _round_to_tick("BTC_JPY", 9782950.104166668) == 9782950.0
+    assert _round_to_tick("FOO_JPY", 1.23456789) == 1.23456789
+
+
+def test_limit_order_price_snapped_to_tick() -> None:
+    # the whole point: a LIMIT entry sends a tick-valid price string, not 8 decimals.
+    c, sess = _trading({"status": 0, "data": "ORD3"})
+    c.send_order("XRP_JPY", "BUY", execution_type="LIMIT", price=171.99597916666664)
+    assert sess.body is not None and '"price": "171.996"' in sess.body
 
 
 def test_send_order_refuses_read_only() -> None:
