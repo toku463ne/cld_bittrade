@@ -200,6 +200,8 @@ def _strategy_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
 _LIVE_BARS_TTL = 90.0  # seconds
 _LIVE_BARS: dict[str, tuple[float, list[Bar]]] = {}
 _LIVE_DISPLAY_DAYS = 14
+_LIVE_ACCT_TTL = 8.0  # seconds — real GMO account read (positions + orders)
+_LIVE_ACCT: dict[str, tuple[float, str]] = {}
 # Per-component signal colours (cycled if a book has more components than colours).
 _COMPONENT_COLORS = ["#2ca02c", "#1f77b4", "#9467bd", "#ff7f0e"]
 
@@ -296,6 +298,64 @@ def _live_tab() -> html.Div:
     )
 
 
+def _read_gmo_account(symbol: str) -> str:
+    """Real GMO account readout (live positions + active orders) for ``symbol``.
+
+    Read-only and best-effort: if live reads are not configured (``USE_LIVE_API`` /
+    GMO keys) or the API errors, return a short note rather than raising — the tab
+    must still render. This is the AUTHORITATIVE account view (vs the simulated
+    desired book above it), so the panel shows what is actually on the exchange.
+    """
+    from src.execution.gmo_client import gmo_account_client_from_settings
+
+    try:
+        client = gmo_account_client_from_settings(get_settings())
+    except Exception as exc:  # not live / keys missing — degrade gracefully
+        return f"GMO account : live read off ({type(exc).__name__}) — need USE_LIVE_API + keys"
+    try:
+        positions = client.get_open_positions(symbol)
+        orders = client.get_active_orders(symbol)
+    except Exception as exc:  # GmoApiError or transport — never crash the tab
+        # Surface GMO's reason: e.g. ERR-5012 = key not permitted / IP not whitelisted
+        # for this account (the funded account uses the prod box's keys+IP, so run the
+        # viz there with .env.prod to see real positions).
+        return f"GMO account : read error — {exc}"
+
+    lines = [
+        "── GMO ACCOUNT (live, authoritative) ──",
+        f"positions {len(positions)} · active orders {len(orders)}",
+    ]
+    for p in positions:
+        pnl = p.get("lossGain")
+        pnl_s = f"  pnl {float(pnl):,.0f}" if pnl is not None else ""
+        lines.append(
+            f"  POS {str(p.get('side','?')):<4} {p.get('size','?')} @ {p.get('price','?')}"
+            f"{pnl_s}  id={p.get('positionId','?')}"
+        )
+    if not positions:
+        lines.append("  (no open positions)")
+    for o in orders:
+        lines.append(
+            f"  ORD {str(o.get('settleType','?')):<5} {str(o.get('side','?')):<4} "
+            f"{str(o.get('executionType','?')):<6} {o.get('size','?')} @ {o.get('price','?')}"
+            f"  id={o.get('orderId','?')}"
+        )
+    if not orders:
+        lines.append("  (no active orders)")
+    return "\n".join(lines)
+
+
+def _gmo_account_cached(symbol: str, *, force: bool) -> str:
+    """TTL-cached :func:`_read_gmo_account` so toggles don't re-hit GMO; Refresh forces."""
+    now = time.monotonic()
+    hit = _LIVE_ACCT.get(symbol)
+    if not force and hit is not None and (now - hit[0]) < _LIVE_ACCT_TTL:
+        return hit[1]
+    block = _read_gmo_account(symbol)
+    _LIVE_ACCT[symbol] = (now, block)
+    return block
+
+
 def _format_live_status(
     name: str, symbol: str, slots: int | None, bars: list[Bar], state: Any,
 ) -> str:
@@ -308,6 +368,7 @@ def _format_live_status(
         f"Last bar : {last}",
         f"Close    : {close:,.4f}".rstrip("0").rstrip("."),
         "",
+        "── DESIRED book (simulated, not your account) ──",
         f"open {len(state.positions)} · pending {len(state.pending_entries)} · "
         f"resting {len(state.working_orders)}",
     ]
@@ -796,7 +857,9 @@ def _register_callbacks(app: dash.Dash) -> None:
 
         book_strat.reset()
         state = MultiSimulator(book_strat, size=size).live_state(bars)
-        return fig, _format_live_status(name, symbol, slots, bars, state)
+        status = _format_live_status(name, symbol, slots, bars, state)
+        status += "\n\n" + _gmo_account_cached(symbol, force=force)
+        return fig, status
 
     # Reuse the Backtest tab's clientside interactions verbatim (figure stays in
     # the browser; same UX — zoom-autoscale, TP/SL hover, OHLC readout).
