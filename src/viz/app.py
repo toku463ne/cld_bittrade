@@ -370,27 +370,33 @@ def _overlay_gmo_account(fig: Any, data: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             return None
 
+    def _line(y: float, color: str, *, dash: str | None, label: str) -> None:
+        # Thick, labelled with a white box at the LEFT edge so it never blends into
+        # the EMAs/ATR or gets clipped at the right margin.
+        fig.add_hline(
+            y=y, line=dict(color=color, dash=dash, width=2.2), row=1, col=1,
+            annotation_text=label, annotation_position="top left",
+            annotation_font=dict(size=11, color=color),
+            annotation_bgcolor="rgba(255,255,255,0.85)", annotation_bordercolor=color,
+        )
+
     for o in data["orders"]:
         y = _price(o.get("price"))
         if y is None:
             continue
-        color = "#2ca02c" if str(o.get("side", "")).upper() == "BUY" else "#d62728"
-        tag = "entry" if str(o.get("settleType", "")).upper() == "OPEN" else "exit"
-        fig.add_hline(
-            y=y, line=dict(color=color, dash="dash", width=1.2), row=1, col=1,
-            annotation_text=f"GMO {tag} {o.get('side','?')} {y:g}",
-            annotation_position="right", annotation_font=dict(size=10, color=color),
-        )
+        side = str(o.get("side", "?")).upper()
+        color = "#2ca02c" if side == "BUY" else "#d62728"
+        tag = "ENTRY" if str(o.get("settleType", "")).upper() == "OPEN" else "EXIT"
+        _line(y, color, dash="dash",
+              label=f"◆ GMO {tag} {side} {o.get('size','?')} @ {y:g} (resting)")
     for p in data["positions"]:
         y = _price(p.get("price"))
         if y is None:
             continue
-        color = "#2ca02c" if str(p.get("side", "")).upper() == "BUY" else "#d62728"
-        fig.add_hline(
-            y=y, line=dict(color=color, width=1.8), row=1, col=1,
-            annotation_text=f"GMO POS {p.get('side','?')} {y:g}",
-            annotation_position="right", annotation_font=dict(size=10, color=color),
-        )
+        side = str(p.get("side", "?")).upper()
+        color = "#2ca02c" if side == "BUY" else "#d62728"
+        _line(y, color, dash=None,
+              label=f"▶ GMO POSITION {side} {p.get('size','?')} @ {y:g}")
 
 
 def _format_live_status(
