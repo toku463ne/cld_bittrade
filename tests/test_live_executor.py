@@ -135,7 +135,7 @@ def test_long_stop_through_market_clamps_to_market_close() -> None:
     # ABOVE market (peak - tiny band). It's impossible to rest there -> market close.
     pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=10460115.0,
                           current_stop=10743479.0, target=None, bars_held=49, time_stop_bars=120)
-    live = [{"positionId": 7, "side": "BUY", "size": "0.01"}]
+    live = [{"positionId": 7, "side": "BUY", "size": "0.001"}]
     c = _FakeClient(positions=live, orders=[])
     reconcile("BTC_JPY", _state([pos], last_price=10526968.0), c, execute=True)
     assert c.calls == ["close 7 SELL MARKET"]  # NOT a phantom STOP above market
@@ -144,7 +144,7 @@ def test_long_stop_through_market_clamps_to_market_close() -> None:
 def test_long_stop_through_market_cancels_resting_orders_first() -> None:
     pos = DesiredPosition(side=Side.LONG, entry_time=_T, entry_price=10460115.0,
                           current_stop=10743479.0, target=None, bars_held=49, time_stop_bars=120)
-    live = [{"positionId": 7, "side": "BUY", "size": "0.01"}]
+    live = [{"positionId": 7, "side": "BUY", "size": "0.001"}]
     orders = [{"orderId": 11, "settleType": "CLOSE", "executionType": "STOP", "price": "10427841.0", "side": "SELL"}]
     c = _FakeClient(positions=live, orders=orders)
     reconcile("BTC_JPY", _state([pos], last_price=10526968.0), c, execute=True)

@@ -19,7 +19,12 @@ from loguru import logger
 
 from src.config import get_settings
 from src.execution.auto_trader import _books
-from src.execution.gmo_client import fetch_status, gmo_account_client_from_settings
+from src.execution.gmo_client import (
+    LEVERAGE_MIN_SIZE,
+    check_min_sizes,
+    fetch_status,
+    gmo_account_client_from_settings,
+)
 from src.execution.live_bars import recent_bars
 from src.execution.order_log import record
 from src.logging_setup import configure_logging
@@ -84,6 +89,16 @@ def main() -> None:
             out.append(f"{name}/{symbol}: {len(bars)} bars, desired={len(state.positions)}open")
         return " | ".join(out)
 
+    def min_lot_sizes() -> str:
+        # LEVERAGE_MIN_SIZE is both the order size and the oversize cap — if it drifts
+        # above the exchange's minimum we silently trade a bigger lot than allowed
+        # (BTC was 10x the minimum until 2026-07-12). Assert it against GMO itself.
+        problems = check_min_sizes()
+        if problems:
+            raise RuntimeError("; ".join(problems))
+        lots = ", ".join(f"{k}={v:g}" for k, v in LEVERAGE_MIN_SIZE.items())
+        return f"min lots match the exchange ({lots})"
+
     def logs_writable() -> str:
         record("SELFCHECK", "selfcheck probe (ignore)", execute=False)
         from src.execution.order_log import log_path
@@ -94,6 +109,7 @@ def main() -> None:
         ("database+schema", database),
         ("gmo public", gmo_public),
         ("gmo private read", gmo_private),
+        ("min lot sizes", min_lot_sizes),
         ("bars + strategy", bars_and_strategy),
         ("logs writable", logs_writable),
     ):

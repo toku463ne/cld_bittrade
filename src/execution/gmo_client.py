@@ -35,11 +35,14 @@ PUBLIC_BASE = "https://api.coin.z.com/public"
 PRIVATE_BASE = "https://api.coin.z.com/private"
 _TIMEOUT = 10.0
 
-# GMO leverage minimum order sizes (取引数量) — VERIFY against the current GMO spec
-# before trading; not exposed via the API. These set the live "minimum amount".
+# GMO leverage minimum order sizes (取引数量). These are the live "minimum amount" AND
+# the hard cap in _guard_orders, so a too-large value here silently trades an oversized
+# lot — BTC sat at 0.01 (10x the real minimum) until 2026-07-12. They ARE published, per
+# symbol, by /public/v1/symbols (minOrderSize == sizeStep for every leverage symbol);
+# fetch_min_sizes() reads them and selfcheck asserts this table against the exchange.
 LEVERAGE_MIN_SIZE: dict[str, float] = {
-    "BTC_JPY": 0.01,
-    "ETH_JPY": 0.1,
+    "BTC_JPY": 0.001,
+    "ETH_JPY": 0.01,
     "XRP_JPY": 10.0,
 }
 
@@ -91,6 +94,42 @@ def fetch_status() -> str:
     r = requests.get(f"{PUBLIC_BASE}/v1/status", timeout=_TIMEOUT)
     r.raise_for_status()
     return str(_unwrap(r.json()).get("status"))
+
+
+def fetch_min_sizes() -> dict[str, float]:
+    """Exchange-published minimum order size per symbol (public, keyless).
+
+    The source of truth for :data:`LEVERAGE_MIN_SIZE` — see :func:`check_min_sizes`.
+    """
+    r = requests.get(f"{PUBLIC_BASE}/v1/symbols", timeout=_TIMEOUT)
+    r.raise_for_status()
+    return {
+        str(row["symbol"]): float(row["minOrderSize"])
+        for row in _unwrap(r.json())
+        if row.get("minOrderSize") is not None
+    }
+
+
+def check_min_sizes(live: dict[str, float] | None = None) -> list[str]:
+    """Drift between our :data:`LEVERAGE_MIN_SIZE` table and the exchange's own sizes.
+
+    Args:
+        live: Exchange sizes; fetched from GMO when omitted.
+
+    Returns:
+        One message per mismatching symbol — empty when the table is exact. A symbol
+        we permit but the exchange does not publish is also a mismatch (unknown lot).
+    """
+    live = fetch_min_sizes() if live is None else live
+    problems = []
+    for symbol, ours in LEVERAGE_MIN_SIZE.items():
+        theirs = live.get(symbol)
+        if theirs is None:
+            problems.append(f"{symbol}: not published by the exchange (ours {ours})")
+        elif abs(ours - theirs) > 1e-12:
+            over = " — OVERSIZED LOT" if ours > theirs else ""
+            problems.append(f"{symbol}: ours {ours:g} != exchange {theirs:g}{over}")
+    return problems
 
 
 def fetch_ticker(symbol: str) -> dict[str, Any]:
