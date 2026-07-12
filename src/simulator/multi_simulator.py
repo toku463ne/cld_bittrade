@@ -72,6 +72,7 @@ class LiveBookState:
     working_orders: list[tuple[Signal, float, int]]  # (signal, limit_price, expiry_idx)
     last_bar_time: datetime | None
     last_price: float | None = None  # last CLOSED-bar close — market ref for the live clamp
+    max_slots: int = 1  # the book's concurrency cap — an entry needs a FREE slot
 
 
 class MultiSimulator:
@@ -158,6 +159,7 @@ class MultiSimulator:
             working_orders=[(w.sig, w.limit_price, w.expiry_idx) for w in working],
             last_bar_time=last_ts,
             last_price=last_px,
+            max_slots=max(1, self.strategy.max_slots),
         )
 
     def _simulate(

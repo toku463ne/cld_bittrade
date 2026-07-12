@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from loguru import logger
 
 from src.core.types import Side, Signal
 from src.execution.live_executor import reconcile
@@ -51,9 +52,9 @@ class _FakeClient:
 
 
 def _state(positions: list[DesiredPosition], working: list[Any] = [], pending: list[Signal] = [],
-           last_price: float | None = None) -> LiveBookState:
+           last_price: float | None = None, max_slots: int = 1) -> LiveBookState:
     return LiveBookState(positions=positions, pending_entries=pending, working_orders=working,
-                         last_bar_time=_T, last_price=last_price)
+                         last_bar_time=_T, last_price=last_price, max_slots=max_slots)
 
 
 def _pos(side: Side, stop: float | None = 170.0) -> DesiredPosition:
@@ -201,3 +202,59 @@ def test_kill_switch_flattens(monkeypatch: Any) -> None:
     c = _FakeClient(positions=live, orders=[{"orderId": 1, "settleType": "OPEN"}])
     reconcile("XRP_JPY", _state([_pos(Side.LONG)]), c, execute=True)
     assert "cancel_bulk" in c.calls and any("close 9 SELL MARKET" == x for x in c.calls)
+
+
+# --- desired-holds / live-flat: the 2026-07-02 divergence (order 8663330572) ---------
+#
+# The strategy entered XRP LONG on the 07-01 16:00 bar while the box was still dry-run,
+# so live never held it. On the next hourly cycle the desired book was {1 open position,
+# 1 resting LIMIT} — but MultiSimulator can never fill that working order (its only slot
+# is taken: it fills a working order only while ``len(book) < max_slots``). The executor,
+# reading "live flat", sent it anyway. It escaped a phantom fill only because XRP rallied.
+
+
+def test_slot_blocked_resting_order_is_not_sent_when_strategy_already_holds() -> None:
+    # 1-slot book, strategy holds its one position, live flat -> the resting entry is for
+    # a slot the strategy itself cannot fill. Send nothing.
+    state = _state([_pos(Side.LONG)], working=[(_sig(Side.LONG), 171.996, 999)])
+    c = _FakeClient(positions=[], orders=[])
+    acts = reconcile("XRP_JPY", state, c, execute=True)
+    assert c.calls == []
+    assert not any("entry" in a for a in acts)
+
+
+def test_slot_blocked_pending_market_entry_is_not_sent() -> None:
+    state = _state([_pos(Side.SHORT)], pending=[_sig(Side.SHORT)])
+    c = _FakeClient(positions=[], orders=[])
+    reconcile("XRP_JPY", state, c, execute=True)
+    assert c.calls == []
+
+
+def test_slot_blocked_cancels_a_phantom_entry_order_already_resting() -> None:
+    # A slot-blocked entry sent by an earlier (buggy) run must be cleaned up, not renewed.
+    state = _state([_pos(Side.LONG)], working=[(_sig(Side.LONG), 171.996, 999)])
+    c = _FakeClient(positions=[], orders=[{"orderId": 8663330572, "settleType": "OPEN", "side": "BUY"}])
+    acts = reconcile("XRP_JPY", state, c, execute=True)
+    assert c.calls == ["cancel_bulk"]
+    assert any("cancel stale entry" in a for a in acts)
+
+
+def test_free_slot_still_places_entry_while_holding() -> None:
+    # Multi-slot book with a spare slot: the entry is legitimate and must still be sent.
+    state = _state([_pos(Side.LONG)], working=[(_sig(Side.LONG), 171.996, 999)], max_slots=2)
+    c = _FakeClient(positions=[], orders=[])
+    reconcile("XRP_JPY", state, c, execute=True)
+    assert c.calls == ["send_order BUY LIMIT"]
+
+
+def test_desired_holds_live_flat_warns_instead_of_claiming_in_sync() -> None:
+    state = _state([_pos(Side.LONG)])  # holding in shadow, nothing to place
+    c = _FakeClient(positions=[], orders=[])
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="WARNING")
+    try:
+        acts = reconcile("XRP_JPY", state, c, execute=True)
+    finally:
+        logger.remove(sink)
+    assert c.calls == [] and acts == []
+    assert any("OUT OF SYNC" in line for line in lines)

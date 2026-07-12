@@ -180,3 +180,13 @@ def test_density_multi_stall_exit_fires_in_new_box() -> None:
     out = strat.dynamic_exit(pos, bar, i=5, entry_idx=0)
     assert out is not None
     assert out[0] is ExitReason.TRAIL_STOP
+
+
+def test_live_state_carries_the_slot_cap() -> None:
+    # The live executor gates entries on state.max_slots — it must be the strategy's own
+    # cap, not a default, or it would send entries for slots the sim cannot fill.
+    n = 5
+    bars = _bars([100.0] * n, [100.5] * n, [99.5] * n)
+    state = MultiSimulator(_EveryBarLong(), size=0.001).live_state(bars)
+    assert state.max_slots == _EveryBarLong.max_slots == 3
+    assert len(state.positions) == 3  # book full at the cap

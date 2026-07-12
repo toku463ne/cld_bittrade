@@ -163,18 +163,35 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
             do(f"CLOSE pos {pid} {live_side.name} (strategy exit)",
                lambda: client.close_position(symbol, pid, _close_side(live["side"]), psize, execution_type="MARKET"))
     else:
-        # Flat. First clean up any leftover CLOSE order — after a resting stop or TP
-        # filled intrabar (position gone), its OCO partner is left dangling.
+        # Flat on the exchange. First clean up any leftover CLOSE order — after a
+        # resting stop or TP filled intrabar (position gone), its OCO partner is left
+        # dangling.
         if close_orders:
             do(f"cancel leftover close order(s) {symbol} (position already closed)",
                lambda: client.cancel_bulk(symbol))
-        # Then place the desired entry if any, else clean up stray entry orders.
+        # The strategy may be HOLDING a position this account never opened (it entered
+        # while we were dry-run / the box was down / a cycle was missed). We do NOT
+        # adopt it mid-flight — entering now at an arbitrary price is a different trade
+        # from the one the backtest measured. But we must not pretend to be in sync:
+        # say so, and — crucially — treat its slot as TAKEN. Its resting orders below
+        # are for slots the strategy itself cannot fill (MultiSimulator only fills a
+        # working order while ``len(book) < max_slots``); sending them live would open a
+        # position the strategy declined.
+        slots_free = state.max_slots - len(state.positions)
+        if state.positions:
+            logger.warning(
+                "OUT OF SYNC {}: strategy holds {} position(s) this account does not "
+                "(entered while dry-run/down) — NOT adopting mid-flight; live stays flat "
+                "for that trade. {} of {} slot(s) free for new entries.",
+                symbol, len(state.positions), max(0, slots_free), state.max_slots)
+        # Place the desired entry if a slot is genuinely free, else clean up stray orders.
         entry: tuple[Side, str, float | None] | None = None
-        if state.working_orders:
-            sig, price, _ = state.working_orders[0]
-            entry = (sig.side, "LIMIT", price)
-        elif state.pending_entries:
-            entry = (state.pending_entries[0].side, "MARKET", None)
+        if slots_free > 0:
+            if state.working_orders:
+                sig, price, _ = state.working_orders[0]
+                entry = (sig.side, "LIMIT", price)
+            elif state.pending_entries:
+                entry = (state.pending_entries[0].side, "MARKET", None)
         if entry is not None:
             side, etype, eprice = entry
             gmo_side = "BUY" if side == Side.LONG else "SELL"
@@ -190,5 +207,8 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
             do(f"cancel stale entry order(s) {symbol} (no signal)", lambda: client.cancel_bulk(symbol))
 
     if not actions:
-        logger.info("  {} in sync (desired == live)", symbol)
+        if live is None and state.positions:
+            logger.info("  {} no actions — out of sync (see warning above)", symbol)
+        else:
+            logger.info("  {} in sync (desired == live)", symbol)
     return actions
