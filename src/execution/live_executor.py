@@ -647,8 +647,16 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
                symbol, gmo_side, execution_type=etype, price=price))
 
     if not actions:
-        if pairing.desired_only and not positions:
-            logger.info("  {} no actions — out of sync (see warning above)", symbol)
+        # With N slots a book can be partly matched and partly unadopted, so the 1-slot
+        # test (live entirely flat) would claim "in sync" while the OUT OF SYNC warning
+        # sat directly above it. Never report sync while any desired position is
+        # unadopted — during an incident that pair of lines is actively misleading.
+        if pairing.desired_only:
+            logger.info("  {} no actions — {} of {} desired position(s) NOT adopted "
+                        "(see warning above); {} matched", symbol,
+                        len(pairing.desired_only),
+                        len(pairing.desired_only) + len(pairing.matched),
+                        len(pairing.matched))
         else:
             logger.info("  {} in sync (desired == live)", symbol)
     return actions
