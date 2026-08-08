@@ -34,6 +34,11 @@ from src.config import Settings, get_settings
 PUBLIC_BASE = "https://api.coin.z.com/public"
 PRIVATE_BASE = "https://api.coin.z.com/private"
 _TIMEOUT = 10.0
+# Minimum gap between private POSTs. A 1-slot cycle issues ~3; a 6-slot cycle can issue
+# ~24 (up to 2 exits x 6 positions, plus entries and cancels), which is enough to meet
+# GMO's per-second private rate limit. Reconcile is idempotent, so a throttled — or even
+# truncated — cycle self-heals on the next hourly run.
+_MIN_POST_INTERVAL = 0.2
 
 # GMO leverage minimum order sizes (取引数量). These are the live "minimum amount" AND
 # the hard cap in _guard_orders, so a too-large value here silently trades an oversized
@@ -162,6 +167,7 @@ class GmoClient:
         self._secret = api_secret.encode("utf-8")
         self.allow_orders = allow_orders
         self._session = requests.Session()
+        self._last_post = 0.0  # monotonic stamp for the private-POST throttle
 
     # ---- signing + transport ------------------------------------------------
 
@@ -185,7 +191,15 @@ class GmoClient:
         return _unwrap(resp.json())
 
     def _post(self, path: str, body: dict[str, Any]) -> Any:
-        """Signed POST (the body IS signed). Used by the order phase."""
+        """Signed POST (the body IS signed). Used by the order phase.
+
+        Throttled to ``_MIN_POST_INTERVAL`` between calls — a multi-slot cycle can emit
+        an order of magnitude more POSTs than the 1-slot one this client was built for.
+        """
+        gap = time.monotonic() - self._last_post
+        if gap < _MIN_POST_INTERVAL:
+            time.sleep(_MIN_POST_INTERVAL - gap)
+        self._last_post = time.monotonic()
         payload = json.dumps(body)
         resp = self._session.post(
             PRIVATE_BASE + path,
@@ -333,8 +347,45 @@ class GmoClient:
             raise PermissionError("Order cancel disabled (allow_orders=False).")
         self._post("/v1/cancelOrder", {"orderId": int(order_id)})
 
+    def cancel_orders(self, order_ids: list[int]) -> None:
+        """Cancel SEVERAL orders by id (``POST /v1/cancelOrders``) — surgical, batched.
+
+        The multi-slot executor's workhorse: with N positions a symbol-wide
+        :meth:`cancel_bulk` would strip every *other* slot's protective stop, so all
+        non-kill-switch cleanup goes through this. Batching one POST instead of N also
+        keeps a busy cycle inside the private rate limit.
+
+        Args:
+            order_ids: Orders to cancel. Empty is a no-op.
+
+        Raises:
+            PermissionError: If ``allow_orders`` is False.
+        """
+        if not self.allow_orders:
+            raise PermissionError("Order cancel disabled (allow_orders=False).")
+        ids = [int(o) for o in order_ids]
+        if not ids:
+            return
+        try:
+            self._post("/v1/cancelOrders", {"orderIds": ids})
+        except (GmoApiError, requests.HTTPError) as e:
+            # Partial-failure semantics of /v1/cancelOrders are not documented per-id;
+            # fall back to one-by-one so a single bad id (already filled/cancelled)
+            # cannot block the rest. Cleanup must always converge.
+            logger.warning("cancelOrders batch failed ({}) — falling back per id", e)
+            for oid in ids:
+                try:
+                    self._post("/v1/cancelOrder", {"orderId": oid})
+                except (GmoApiError, requests.HTTPError) as e2:
+                    logger.warning("cancel_order {} failed: {}", oid, e2)
+
     def cancel_bulk(self, symbol: str) -> None:
-        """Cancel all active orders for ``symbol`` (``POST /v1/cancelBulkOrder``)."""
+        """Cancel ALL active orders for ``symbol`` (``POST /v1/cancelBulkOrder``).
+
+        Symbol-wide and therefore **kill-switch only** once the book can hold more than
+        one position — it does not discriminate between slots. Use :meth:`cancel_orders`
+        for every other cleanup path.
+        """
         if not self.allow_orders:
             raise PermissionError("Order cancel disabled (allow_orders=False).")
         self._post("/v1/cancelBulkOrder", {"symbols": [symbol]})

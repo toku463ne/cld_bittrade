@@ -34,6 +34,7 @@ from src.execution.gmo_client import (
 from src.execution.live_bars import recent_bars
 from src.execution.live_executor import reconcile
 from src.execution.order_log import snapshot
+from src.execution.risk import book_within_notional_cap, peak_exposure_jpy
 from src.logging_setup import configure_logging
 from src.simulator import MultiSimulator
 from src.simulator.multi_simulator import LiveBookState
@@ -52,17 +53,45 @@ DEFAULT_BOOKS: list[tuple[str, str, int | None]] = [
 ]
 
 
+def exec_max_slots() -> int:
+    """Largest book the executor is authorised to trade this deploy (``EXEC_MAX_SLOTS``).
+
+    Defaults to **1** — byte-for-byte today's behaviour — so raising the live slot count
+    is a deliberate env change per rollout step, never a side effect of new code.
+    """
+    try:
+        return max(1, int(os.environ.get("EXEC_MAX_SLOTS", "1")))
+    except ValueError:
+        logger.warning("EXEC_MAX_SLOTS={!r} is not an int — falling back to 1",
+                       os.environ.get("EXEC_MAX_SLOTS"))
+        return 1
+
+
 def _books() -> list[tuple[str, str, int | None]]:
-    """Parse AUTO_BOOKS (``name:symbol[:slots],...``), else the defaults."""
+    """Parse AUTO_BOOKS (``name:symbol[:slots],...``), else the defaults.
+
+    When ``EXEC_MAX_SLOTS > 1`` the slot count becomes **mandatory** on every entry: an
+    omitted ``:slots`` silently inherits the strategy class default (``density_pullback``
+    = 12), which must never be what authorises a live book's size.
+
+    Raises:
+        ValueError: On a malformed entry, or an implicit slot count while multi-slot
+            execution is enabled.
+    """
     raw = os.environ.get("AUTO_BOOKS", "").strip()
     if not raw:
         return DEFAULT_BOOKS
+    require_slots = exec_max_slots() > 1
     out: list[tuple[str, str, int | None]] = []
     for item in raw.split(","):
         parts = item.split(":")
         if len(parts) < 2:
             raise ValueError(f"bad AUTO_BOOKS entry {item!r} (need name:symbol[:slots])")
         slots = int(parts[2]) if len(parts) > 2 and parts[2] else None
+        if slots is None and require_slots:
+            raise ValueError(
+                f"AUTO_BOOKS entry {item!r} omits :slots while EXEC_MAX_SLOTS>1 — set it "
+                "explicitly (the strategy default would decide the live book's size)")
         out.append((parts[0], parts[1], slots))
     return out
 
@@ -79,11 +108,20 @@ def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookStat
     logger.info("{} [{}]: {} bars to {}; desired book = {} open, {} pending, {} resting",
                 strategy_name, symbol, len(bars), bars[-1].timestamp,
                 len(state.positions), len(state.pending_entries), len(state.working_orders))
+
+    # Startup exposure ceiling: a book whose FULL occupancy would breach the configured
+    # cap must refuse to run rather than discover it mid-cycle with positions already on.
+    ok, msg = book_within_notional_cap(symbol, state.max_slots, bars[-1].close)
+    if not ok:
+        raise RuntimeError(f"exposure cap: {msg}")
+    logger.info("  {}", msg)
     # Per-run heartbeat — the desired book even when flat, for dense offline analysis.
     snapshot({
         "strategy": strategy_name,
         "symbol": symbol,
         "slots": slots,
+        "max_slots": state.max_slots,
+        "peak_notional": round(peak_exposure_jpy(symbol, state.max_slots, bars[-1].close)),
         "bar_time": str(state.last_bar_time),
         "close": bars[-1].close,
         "n_open": len(state.positions),
@@ -148,7 +186,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Auto-trader: reconcile desired book to GMO.")
     ap.add_argument("--execute", action="store_true",
                     help="Actually place/cancel/close orders (needs USE_LIVE_API + ALLOW_ORDERS). "
-                         "1-slot books only; default and multi-slot books are dry-run.")
+                         "Books up to EXEC_MAX_SLOTS (default 1) execute; larger ones are dry-run.")
     args = ap.parse_args()
 
     settings = get_settings()
@@ -164,16 +202,17 @@ def main() -> None:
             if not settings.use_live_api:
                 _report(symbol, state, live=False)  # no exchange read possible
                 continue
-            if slots == 1:
-                # The live executor handles the single-slot case (entry/stop/close).
+            # Authorise off state.max_slots (what the sim actually ran), never the parsed
+            # `slots` — a book with no explicit count would otherwise slip past on None.
+            book_slots = state.max_slots
+            if book_slots <= exec_max_slots():
                 exec_here = want_exec
                 client = gmo_trading_client_from_settings() if exec_here else gmo_account_client_from_settings()
                 reconcile(symbol, state, client, execute=exec_here)
             else:
-                # Multi-slot books are monitor-only (the executor is 1-slot).
                 if want_exec:
-                    logger.warning("{} [{}]: {}-slot book — executor is 1-slot, MONITOR-ONLY here",
-                                   name, symbol, slots)
+                    logger.warning("{} [{}]: {}-slot book > EXEC_MAX_SLOTS={} — MONITOR-ONLY here",
+                                   name, symbol, book_slots, exec_max_slots())
                 _report(symbol, state, live=True)
         except Exception as e:  # noqa: BLE001 — one book failing must not kill the rest
             logger.error("{} [{}] failed: {}", name, symbol, e)

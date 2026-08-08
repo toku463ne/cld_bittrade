@@ -27,6 +27,11 @@ from src.execution.gmo_client import (
 )
 from src.execution.live_bars import recent_bars
 from src.execution.order_log import record
+from src.execution.risk import (
+    book_within_notional_cap,
+    peak_exposure_jpy,
+    required_margin_jpy,
+)
 from src.logging_setup import configure_logging
 from src.simulator import MultiSimulator
 from src.strategy.registry import get_strategy
@@ -99,6 +104,41 @@ def main() -> None:
         lots = ", ".join(f"{k}={v:g}" for k, v in LEVERAGE_MIN_SIZE.items())
         return f"min lots match the exchange ({lots})"
 
+    def exposure_budget() -> str:
+        # Peak exposure is max_slots x min lot x price. At 1 slot that was a rounding
+        # error; at 6 it is a number someone has to sign off, so surface it here and
+        # fail if a book would breach MAX_BOOK_NOTIONAL_JPY or outrun the free margin.
+        out: list[str] = []
+        problems: list[str] = []
+        available: float | None = None
+        if s.use_live_api:
+            try:
+                available = float(gmo_account_client_from_settings()
+                                  .get_margin().get("availableAmount", 0.0))
+            except Exception as e:  # noqa: BLE001 - reported, not fatal to the whole check
+                problems.append(f"margin read failed: {e}")
+        total_required = 0.0
+        for name, symbol, slots in _books():
+            bars = recent_bars(symbol)
+            if not bars:
+                problems.append(f"{name}/{symbol}: no bars")
+                continue
+            strat = get_strategy(name)
+            if slots is not None:
+                strat.max_slots = slots
+            ok, msg = book_within_notional_cap(symbol, strat.max_slots, bars[-1].close)
+            total_required += required_margin_jpy(
+                peak_exposure_jpy(symbol, strat.max_slots, bars[-1].close))
+            (out if ok else problems).append(msg)
+        if available is not None:
+            need = total_required * 1.5
+            out.append(f"peak margin need ~{need:,.0f} JPY vs available {available:,.0f}")
+            if available < need:
+                problems.append(f"free margin {available:,.0f} < peak need {need:,.0f} JPY")
+        if problems:
+            raise RuntimeError("; ".join(problems))
+        return " | ".join(out)
+
     def logs_writable() -> str:
         record("SELFCHECK", "selfcheck probe (ignore)", execute=False)
         from src.execution.order_log import log_path
@@ -111,6 +151,7 @@ def main() -> None:
         ("gmo private read", gmo_private),
         ("min lot sizes", min_lot_sizes),
         ("bars + strategy", bars_and_strategy),
+        ("exposure budget", exposure_budget),
         ("logs writable", logs_writable),
     ):
         results.append(_check(name, fn))

@@ -52,15 +52,61 @@ trade**, switch to one slot, min size: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:
    ```
    (needs `ALLOW_ORDERS=true`.)
 4. **Enable auto-execution** — deliberate edits:
-   - `.env.prod`: set `ALLOW_ORDERS=true`, and switch to the 1-slot book the executor
-     trades: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1` (the dry-run both-full-slots
-     config is monitor-only and would place nothing).
+   - `.env.prod`: set `ALLOW_ORDERS=true`, and switch to the 1-slot book:
+     `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:1` (the dry-run both-full-slots config
+     exceeds `EXEC_MAX_SLOTS=1` and so is monitor-only — it would place nothing). To go
+     beyond one slot later, follow "Changing the slot count".
    - service: add `--execute` to the `ExecStart` line, then reload:
      ```bash
      sudo sed -i 's#auto_trader$#auto_trader --execute#' /etc/systemd/system/btc-autotrader.service
      sudo systemctl daemon-reload
      ```
 5. **Run once, watch**: `sudo systemctl start btc-autotrader.service` then check the log.
+
+## Changing the slot count
+
+Slots — not lot size — are how this book scales capital: lot increases are forbidden
+until the benchmark passes, while the backtest *modelled* concurrency. PnL saturates at
+**6 slots** (99% for `density_pullback`; 12 wastes 2-3x the capital — `portfolio.md`).
+Peak exposure is exactly `slots x min lot x price`, so at 0.001 BTC six slots is ~63k JPY
+notional; six XRP slots ~12k.
+
+**Step 0 — settle the exchange semantics first (blocking).**
+**P1 is ANSWERED (2026-08-06): one settle order per 建玉, second returns `ERR-200`** — see
+the execution-fidelity note above; the executor now rests the STOP only. Still open, and
+still worth a two-position manual probe on XRP before step 2: **P2** does `/v1/activeOrders`
+name the settle target (if it does, exit attribution becomes a direct join instead of the
+slot matching in `_assign_close_orders`); **P3** the active-order and private-rate ceilings
+(6 slots ⇒ up to 12 resting orders — 6 stops + 6 entries — and ~18 POSTs per cycle vs ~3
+at 1 slot; the client now throttles to 5/s). Confirm a surgical `cancel_order` on one
+position leaves the other's stop intact, then flatten.
+
+**Step 1 — dry-run differential.** `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:6` with
+`EXEC_MAX_SLOTS` unset. Several days. Check `orders.jsonl` for: no bulk cancels, at most
+one place-action per (position, exit type) per cycle, entries never exceeding free slots,
+and `peak_notional` in `heartbeat.jsonl` matching the hand calculation.
+
+**Step 2 — 2 slots live on XRP** (`:2` + `EXEC_MAX_SLOTS=2`), the cheapest place to be
+wrong (~2k JPY/slot). At least a week / 4 round trips. Verify against GMO's execution
+history that each position got its own stop, that a ratchet on one slot left the other's
+orders untouched, and that the correct 建玉 was closed on a strategy exit.
+
+**Step 3 — 6 slots**, XRP first, then `density_pullback:BTC_JPY:6` after a clean week.
+
+Rollback at any step is one env edit (`EXEC_MAX_SLOTS=1`) — no code revert — plus `KILL`
+for an emergency flatten.
+
+**Shrinking a book** (e.g. 6 → 2) while more positions are open than the new cap trips
+the anomaly halt and would freeze the book, exits included. Set `LIVE_DRAIN_OK=1` to
+downgrade that one case to **drain mode**: exits are still maintained and unmatched
+positions closed, but no new entries are placed. Unset it once occupancy is back within
+the new cap.
+
+**Guardrails.** `MAX_BOOK_NOTIONAL_JPY` (per book) is asserted at startup and in
+`selfcheck` — a book whose full occupancy would breach it refuses to run. Free margin is
+checked every cycle and gates **entries only**; exits, cancels, ratchets and the kill
+switch are never blocked by margin state. A hard ceiling of 8 slots is compiled in, so a
+mis-typed `AUTO_BOOKS` cannot authorise an unbounded book.
 
 ## Emergency stop
 
@@ -72,14 +118,42 @@ sudo systemctl stop btc-autotrader.timer
 
 ## Known v1 limitations (the executor)
 
-- **1 slot only.** The executor handles `density_pullback_xrp:XRP_JPY:1`. Multi-slot
-  books (e.g. `combo_dp_ver`) run monitor-only.
-- **Execution fidelity.** Entry (resting LIMIT), stop (resting STOP) and take-profit
-  (resting LIMIT) all fill INTRABAR at the exact strategy levels — exchange-handled,
-  no polling needed, matching the backtest. Only the non-price exits (time-stop, and
-  bar-evaluated exits like a box stall) act at the hourly reconcile via market close;
-  those are inherently 1h-granular, so hourly is correct. The hourly loop just
-  maintains the resting orders (ratchet stop updates, OCO leftover cleanup).
+- **Slots are gated by `EXEC_MAX_SLOTS` (default 1).** The executor holds N positions,
+  but only books whose `max_slots <= EXEC_MAX_SLOTS` execute; larger ones stay
+  monitor-only. Default 1 = the original single-position behaviour, so raising the live
+  slot count is always a deliberate env change. See "Changing the slot count" below.
+- **Execution fidelity: the take-profit is 1h-granular, not intrabar.** GMO permits
+  exactly **one resting settle order per 建玉** — the first reserves the whole position
+  (`orderdSize` on `/v1/openPositions`). Confirmed live **2026-08-06 07:05** (BTC pos
+  `289850034`): the STOP was accepted and the TP that followed returned
+  `ERR-200 "There are open positions that the settlement quantity exceeds the settable
+  quantity"`. So the backtest's OCO stop+target pair does not exist on this venue.
+
+  The **protective STOP takes the slot** (protection first — never invert this) and
+  fills intrabar at the exact ratchet level, as does the entry LIMIT. The **take-profit
+  is realised at the hourly reconcile**: the simulator drops the position on the bar its
+  target is touched, and the next reconcile market-closes it — up to an hour later, at
+  whatever price is then available. The non-price exits (time-stop, box stall) were
+  always 1h-granular.
+
+  **Measured cost (`src/backtest/analysis/tp_next_open_ab.py`, 2026-08-08): small.**
+  Re-running both live books with the target realised at the next bar's open instead of
+  intrabar: `density_pullback` IS eqSharpe +1.370 → +1.349, OOS +0.505 → +0.492, 98.3% of
+  IS PnL retained; `density_pullback_xrp` +0.721 → +0.722 / +2.047 → +2.053, 100.5%
+  retained. Walk-forward stays 5/6 for both and ship gate A still passes. The reason it
+  is small: only ~8.6% of trades exit on a target at all — these are trail-ride books
+  whose dominant exits are ratchet stops and time stops. Do not let this gate a rollout.
+
+  Before the fix this rejection also **aborted the rest of that book's cycle** (entries
+  and orphan cleanup were skipped) and never reached `orders.jsonl` — only the journal.
+  Action failures are now contained and recorded.
+- **Never hand-run the trader twice inside one bar.** A pending **MARKET** entry leaves
+  no resting artifact on the exchange, so a second run before the simulator advances a
+  bar re-sends it — and the freshly-filled position looks unwanted to the desired book
+  (0 open + 1 pending), so it gets closed and re-entered. Churn plus double exposure.
+  This is not new to multi-slot (the 1-slot executor behaved identically); the hourly
+  HH:05 timer is what keeps it safe. Re-running to *inspect* is fine only without
+  `--execute`. Pinned by `test_known_hazard_market_entry_repeats_if_rerun_inside_the_same_bar`.
 - **Logs for analysis.** Two JSONL files in `logs/`:
   - `orders.jsonl` — every *action* (entry/stop/TP/close/cancel): `ts, symbol, execute,
     action, result`. Low-frequency (only when something fires).
