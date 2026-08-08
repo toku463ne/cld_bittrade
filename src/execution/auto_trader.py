@@ -122,6 +122,27 @@ def _books() -> list[tuple[str, str, int | None]]:
     return out
 
 
+def _phantom_warning(fields: dict[str, Any]) -> str | None:
+    """The phantom-slot warning for one heartbeat row, or None when there is nothing to say.
+
+    Split out as a pure function because the honest message depends on THREE states that
+    are easy to conflate — and a log line that misreports the book's state is the exact
+    failure that hid the 2026-08-08 incident for a day.
+    """
+    n = fields.get("n_unadopted") or 0
+    if not n:
+        return None
+    slots = fields["max_slots"]
+    if fields.get("phantoms_ignored"):
+        return (f"{n} desired position(s) have NO live 建玉 (phantoms), but their slots are "
+                f"RELEASED by LIVE_IGNORE_PHANTOM_SLOTS — live exposure is still capped at "
+                f"{slots} slot(s). Unset the flag once this reaches 0.")
+    blocked = " — so the book can open NOTHING" if n >= slots else ""
+    return (f"{n} of {slots} slot(s) held by phantoms (desired positions with NO live "
+            f"建玉){blocked}. They free as they exit the replay, or set "
+            f"LIVE_IGNORE_PHANTOM_SLOTS=1 to release them now.")
+
+
 def _heartbeat_fields(strategy_name: str, symbol: str, slots: int | None,
                       state: LiveBookState, entries_allowed: bool) -> dict[str, Any]:
     """The DESIRED-book half of one heartbeat row.
@@ -310,11 +331,9 @@ def main() -> None:
                 fields = _heartbeat_fields(name, symbol, slots, state, entries_allowed)
                 fields.update(sync)
                 snapshot(fields)
-                if fields["n_unadopted"]:
-                    logger.warning(
-                        "{} [{}]: {} desired position(s) have NO live 建玉 (phantoms) — they "
-                        "hold a slot until they exit the replay, so the book runs "
-                        "UNDER-sized", name, symbol, fields["n_unadopted"])
+                warning = _phantom_warning(fields)
+                if warning:
+                    logger.warning("{} [{}]: {}", name, symbol, warning)
 
 
 if __name__ == "__main__":
