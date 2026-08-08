@@ -953,6 +953,41 @@ def test_match_positions_never_loses_or_duplicates_a_position() -> None:
             assert (d.side is Side.LONG) == (str(lv["side"]).upper() == "BUY")
 
 
+def test_phantom_position_does_not_steal_the_real_positions_slot() -> None:
+    # Regression: the live BTC incident of 2026-08-08. Raising the book 1 -> 2 slots made
+    # the stateless replay retroactively "hold" a 45h-old position the 1-slot bot had
+    # never opened (phantom). Sort-and-zip then handed that phantom the ONE real 建玉 —
+    # so the executor put the phantom's stop on the real position and, five bars later,
+    # market-closed it on the phantom's trail while the real stop never applied.
+    from src.execution.live_executor import _match_positions
+
+    phantom = _pos(Side.LONG, stop=10_286_474.06, entry=10_200_472.03, hours=0)
+    real = _pos(Side.LONG, stop=10_142_003.21, entry=10_271_097.86, hours=44)
+    live = [_live(289951619, "BUY", size="0.001", price="10271097", hours=45)]
+
+    p = _match_positions([phantom, real], live)
+
+    assert [d.entry_price for d, _ in p.matched] == [real.entry_price], (
+        "the live 建玉 must pair with the position actually entered at its price/time"
+    )
+    assert p.matched[0][1]["positionId"] == 289951619
+    assert [d.entry_price for d in p.desired_only] == [phantom.entry_price]
+    assert not p.live_only, "a real position must never be left unmatched (it gets closed)"
+
+
+def test_matching_degrades_to_oldest_first_without_usable_keys() -> None:
+    # With no timestamp and no price there is no signal to match on, so the pairing must
+    # fall back to exactly the previous behaviour rather than becoming arbitrary.
+    from src.execution.live_executor import _match_positions
+
+    desired = [_pos(Side.LONG, entry=100.0, hours=0), _pos(Side.LONG, entry=200.0, hours=5)]
+    live = [{"positionId": 7, "side": "BUY", "size": "10", "price": "0", "timestamp": ""}]
+
+    p = _match_positions(desired, live)
+    assert [d.entry_price for d, _ in p.matched] == [100.0]  # oldest wins the tie
+    assert [d.entry_price for d in p.desired_only] == [200.0]
+
+
 def test_close_order_assignment_never_loses_or_reuses_an_order() -> None:
     import random
 
