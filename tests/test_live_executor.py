@@ -1140,3 +1140,26 @@ def test_known_hazard_market_entry_repeats_if_rerun_inside_the_same_bar() -> Non
     # looks unwanted (closed) and the entry is re-sent. Same behaviour as the 1-slot
     # executor; it is why the trader must fire once per bar.
     assert ex.calls, "hazard disappeared — update docs/deploy.md if this was fixed"
+
+
+def test_exposure_cap_blocks_entries_but_never_exits() -> None:
+    # A book over MAX_BOOK_NOTIONAL_JPY must stop adding risk WITHOUT stranding the risk
+    # already on: an exposure cap that leaves live positions unratcheted is worse than
+    # the exposure it prevents. Same principle as the fail-soft AUTO_BOOKS parsing.
+    desired = [_pos(Side.LONG, stop=100.0)]
+    live = [_live(1, "BUY")]
+    working = [(_sig(Side.LONG), 170.0, 999)]
+    c = _FakeClient(positions=live, orders=[])
+    reconcile("XRP_JPY", _state(desired, working=working, max_slots=3, last_price=190.0),
+              c, execute=True, allow_entries=False)
+    assert c.calls == ["close 1 SELL STOP @ 100"]  # stop maintained, entry withheld
+
+
+def test_exposure_cap_still_cleans_up_stale_and_orphaned_orders() -> None:
+    # Cleanup is never rationed — a blocked book must not accumulate stray orders.
+    orders = [{"orderId": 55, "settleType": "OPEN", "side": "BUY", "price": "200.0"},
+              _close_order(66, "LIMIT", "250.0", "SELL")]
+    c = _FakeClient(positions=[], orders=orders)
+    reconcile("XRP_JPY", _state([], max_slots=3, last_price=190.0), c, execute=True,
+              allow_entries=False)
+    assert "cancel_orders [66]" in c.calls and "cancel_orders [55]" in c.calls
