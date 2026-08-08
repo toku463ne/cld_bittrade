@@ -200,6 +200,8 @@ def _strategy_dropdown(id_: str, value: str | None = None) -> dcc.Dropdown:
 _LIVE_BARS_TTL = 90.0  # seconds
 _LIVE_BARS: dict[str, tuple[float, list[Bar]]] = {}
 _LIVE_DISPLAY_DAYS = 14
+_LIVE_ACCT_TTL = 8.0  # seconds — real GMO account read (positions + orders)
+_LIVE_ACCT: dict[str, tuple[float, dict[str, Any]]] = {}
 # Per-component signal colours (cycled if a book has more components than colours).
 _COMPONENT_COLORS = ["#2ca02c", "#1f77b4", "#9467bd", "#ff7f0e"]
 
@@ -296,6 +298,107 @@ def _live_tab() -> html.Div:
     )
 
 
+def _gmo_account_raw(symbol: str, *, force: bool) -> dict[str, Any]:
+    """Real GMO account (live positions + active orders) for ``symbol``, TTL-cached.
+
+    Read-only and best-effort: if live reads are not configured (``USE_LIVE_API`` /
+    GMO keys) or the API errors, return ``{"note": <reason>}`` with empty lists — the
+    tab must still render. This is the AUTHORITATIVE account state (vs the simulated
+    desired book), consumed by BOTH the text panel and the chart overlay. Toggles
+    reuse the cache so they don't re-hit GMO; the Refresh button forces a re-read.
+    """
+    now = time.monotonic()
+    hit = _LIVE_ACCT.get(symbol)
+    if not force and hit is not None and (now - hit[0]) < _LIVE_ACCT_TTL:
+        return hit[1]
+
+    from src.execution.gmo_client import gmo_account_client_from_settings
+
+    data: dict[str, Any] = {"note": None, "positions": [], "orders": []}
+    try:
+        client = gmo_account_client_from_settings(get_settings())
+        data["positions"] = client.get_open_positions(symbol)
+        data["orders"] = client.get_active_orders(symbol)
+    except Exception as exc:  # not live / key-IP / transport — never crash the tab
+        # e.g. ERR-5012 = key not permitted / IP not whitelisted; the funded account
+        # uses the prod box's keys+IP, so run the viz there (.env.prod) for real reads.
+        data["note"] = f"live read off — {exc}"
+    _LIVE_ACCT[symbol] = (now, data)
+    return data
+
+
+def _format_gmo_account(data: dict[str, Any]) -> str:
+    """Text block for the account section (mirrors the chart overlay)."""
+    lines = ["── GMO ACCOUNT (live, authoritative) ──"]
+    if data["note"]:
+        lines.append(data["note"])
+        return "\n".join(lines)
+    positions, orders = data["positions"], data["orders"]
+    lines.append(f"positions {len(positions)} · active orders {len(orders)}")
+    for p in positions:
+        pnl = p.get("lossGain")
+        pnl_s = f"  pnl {float(pnl):,.0f}" if pnl is not None else ""
+        lines.append(
+            f"  POS {str(p.get('side','?')):<4} {p.get('size','?')} @ {p.get('price','?')}"
+            f"{pnl_s}  id={p.get('positionId','?')}"
+        )
+    if not positions:
+        lines.append("  (no open positions)")
+    for o in orders:
+        lines.append(
+            f"  ORD {str(o.get('settleType','?')):<5} {str(o.get('side','?')):<4} "
+            f"{str(o.get('executionType','?')):<6} {o.get('size','?')} @ {o.get('price','?')}"
+            f"  id={o.get('orderId','?')}"
+        )
+    if not orders:
+        lines.append("  (no active orders)")
+    return "\n".join(lines)
+
+
+def _overlay_gmo_account(fig: Any, data: dict[str, Any]) -> None:
+    """Draw the REAL GMO order/position price levels on the price panel (row 1).
+
+    So the actual resting entry / stop / TP appear ON the chart, not only in text.
+    BUY green, SELL red; resting orders dashed, an open position's entry solid.
+    """
+    if data.get("note"):
+        return
+
+    def _price(x: Any) -> float | None:
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    def _line(y: float, color: str, *, dash: str | None, label: str) -> None:
+        # Thick, labelled with a white box at the LEFT edge so it never blends into
+        # the EMAs/ATR or gets clipped at the right margin.
+        fig.add_hline(
+            y=y, line=dict(color=color, dash=dash, width=2.2), row=1, col=1,
+            annotation_text=label, annotation_position="top left",
+            annotation_font=dict(size=11, color=color),
+            annotation_bgcolor="rgba(255,255,255,0.85)", annotation_bordercolor=color,
+        )
+
+    for o in data["orders"]:
+        y = _price(o.get("price"))
+        if y is None:
+            continue
+        side = str(o.get("side", "?")).upper()
+        color = "#2ca02c" if side == "BUY" else "#d62728"
+        tag = "ENTRY" if str(o.get("settleType", "")).upper() == "OPEN" else "EXIT"
+        _line(y, color, dash="dash",
+              label=f"◆ GMO {tag} {side} {o.get('size','?')} @ {y:g} (resting)")
+    for p in data["positions"]:
+        y = _price(p.get("price"))
+        if y is None:
+            continue
+        side = str(p.get("side", "?")).upper()
+        color = "#2ca02c" if side == "BUY" else "#d62728"
+        _line(y, color, dash=None,
+              label=f"▶ GMO POSITION {side} {p.get('size','?')} @ {y:g}")
+
+
 def _format_live_status(
     name: str, symbol: str, slots: int | None, bars: list[Bar], state: Any,
 ) -> str:
@@ -308,6 +411,7 @@ def _format_live_status(
         f"Last bar : {last}",
         f"Close    : {close:,.4f}".rstrip("0").rstrip("."),
         "",
+        "── DESIRED book (simulated, not your account) ──",
         f"open {len(state.positions)} · pending {len(state.pending_entries)} · "
         f"resting {len(state.working_orders)}",
     ]
@@ -794,9 +898,14 @@ def _register_callbacks(app: dash.Dash) -> None:
 
         fig = build_chart(win, show_bb=show_bb, show_rsi=show_rsi, trade_groups=groups)
 
+        acct = _gmo_account_raw(symbol, force=force)
+        _overlay_gmo_account(fig, acct)  # draw REAL order/position levels on the chart
+
         book_strat.reset()
         state = MultiSimulator(book_strat, size=size).live_state(bars)
-        return fig, _format_live_status(name, symbol, slots, bars, state)
+        status = _format_live_status(name, symbol, slots, bars, state)
+        status += "\n\n" + _format_gmo_account(acct)
+        return fig, status
 
     # Reuse the Backtest tab's clientside interactions verbatim (figure stays in
     # the browser; same UX — zoom-autoscale, TP/SL hover, OHLC readout).

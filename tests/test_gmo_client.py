@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 from typing import Any
 
 import pytest
 
 from src.config import Settings
 from src.execution.gmo_client import (
+    LEVERAGE_MIN_SIZE,
     PRIVATE_BASE,
     GmoApiError,
     GmoClient,
     _fmt,
+    _round_to_tick,
     _unwrap,
+    check_min_sizes,
     gmo_account_client_from_settings,
     gmo_trading_client_from_settings,
 )
@@ -98,6 +102,22 @@ def test_fmt_strips_trailing_zeros() -> None:
     assert _fmt(0.1) == "0.1"
 
 
+def test_round_to_tick_snaps_price() -> None:
+    # regression: the raw density-box edge GMO rejected with ERR-5115 (too many
+    # decimals). XRP tick = 0.001, BTC = whole yen; unknown symbol passes through.
+    assert _round_to_tick("XRP_JPY", 171.99597916666664) == 171.996
+    assert _round_to_tick("XRP_JPY", 171.42328125) == 171.423
+    assert _round_to_tick("BTC_JPY", 9782950.104166668) == 9782950.0
+    assert _round_to_tick("FOO_JPY", 1.23456789) == 1.23456789
+
+
+def test_limit_order_price_snapped_to_tick() -> None:
+    # the whole point: a LIMIT entry sends a tick-valid price string, not 8 decimals.
+    c, sess = _trading({"status": 0, "data": "ORD3"})
+    c.send_order("XRP_JPY", "BUY", execution_type="LIMIT", price=171.99597916666664)
+    assert sess.body is not None and '"price": "171.996"' in sess.body
+
+
 def test_send_order_refuses_read_only() -> None:
     c, _ = _client(None)
     with pytest.raises(PermissionError):
@@ -116,7 +136,7 @@ def _trading(payload: Any) -> tuple[GmoClient, _CapturingSession]:
 def test_send_order_caps_per_symbol() -> None:
     c, _ = _trading({"status": 0, "data": "ORD1"})
     with pytest.raises(ValueError):
-        c.send_order("BTC_JPY", "BUY", size=0.1)  # 10x the 0.01 cap
+        c.send_order("BTC_JPY", "BUY", size=0.01)  # 10x the 0.001 cap
     with pytest.raises(ValueError):
         c.send_order("FOO_JPY", "BUY")  # not in the permitted set
     oid = c.send_order("BTC_JPY", "SELL")  # min lot, short open
@@ -183,3 +203,37 @@ def test_trading_factory_needs_both_gates() -> None:
     object.__setattr__(s, "allow_orders", True)
     c = gmo_trading_client_from_settings(s)
     assert c.allow_orders is True
+
+
+# --- min-lot table vs the exchange (GMO /public/v1/symbols) -------------------------
+#
+# LEVERAGE_MIN_SIZE is the order size AND the oversize cap in _guard_orders, so a value
+# above the exchange's own minimum silently trades a bigger lot than the min-lot rule
+# allows. BTC sat at 0.01 — 10x GMO's real 0.001 — until 2026-07-12, i.e. the first live
+# BTC order would have been ten min-lots. These pin the table; selfcheck asserts it
+# against the live endpoint.
+
+_GMO_PUBLISHED = {"BTC_JPY": 0.001, "ETH_JPY": 0.01, "XRP_JPY": 10.0}
+
+
+def test_min_lot_table_matches_the_exchange() -> None:
+    assert LEVERAGE_MIN_SIZE == _GMO_PUBLISHED
+    assert check_min_sizes(_GMO_PUBLISHED) == []
+
+
+def test_check_min_sizes_flags_an_oversized_lot() -> None:
+    # The 2026-07-12 bug: our table 10x the exchange minimum.
+    problems = check_min_sizes({**_GMO_PUBLISHED, "BTC_JPY": 0.0001})
+    assert len(problems) == 1
+    assert "BTC_JPY" in problems[0] and "OVERSIZED LOT" in problems[0]
+
+
+def test_check_min_sizes_flags_an_unpublished_symbol() -> None:
+    problems = check_min_sizes({k: v for k, v in _GMO_PUBLISHED.items() if k != "ETH_JPY"})
+    assert len(problems) == 1 and "not published" in problems[0]
+
+
+def test_send_order_uses_the_min_lot_by_default() -> None:
+    c, sess = _trading({"status": 0, "data": "ORD1"})
+    c.send_order("BTC_JPY", "BUY")
+    assert json.loads(sess.body or "{}")["size"] == "0.001"  # exchange minimum, not 0.01

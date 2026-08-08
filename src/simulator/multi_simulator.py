@@ -38,6 +38,7 @@ class _Slot:
     entry_time: datetime
     cfg: ExitConfig
     swap: float = 0.0  # accrued daily-swap/funding cost (JPY) while held
+    tp_deferred: bool = False  # target touched; exit lands next bar (tp_at_next_open)
 
 
 @dataclass(slots=True)
@@ -72,6 +73,7 @@ class LiveBookState:
     working_orders: list[tuple[Signal, float, int]]  # (signal, limit_price, expiry_idx)
     last_bar_time: datetime | None
     last_price: float | None = None  # last CLOSED-bar close — market ref for the live clamp
+    max_slots: int = 1  # the book's concurrency cap — an entry needs a FREE slot
 
 
 class MultiSimulator:
@@ -110,6 +112,7 @@ class MultiSimulator:
         fee_rate: float = DEFAULT_FEE_RATE,
         daily_swap_rate: float = 0.0,
         burst_cost_mult: float = 1.0,
+        tp_at_next_open: bool = False,
     ) -> None:
         if daily_swap_rate < 0.0:
             raise ValueError("daily_swap_rate must be >= 0")
@@ -121,6 +124,7 @@ class MultiSimulator:
         self.fee_rate = fee_rate
         self.daily_swap_rate = daily_swap_rate
         self.burst_cost_mult = burst_cost_mult
+        self.tp_at_next_open = tp_at_next_open
 
     def run(self, bars: list[Bar]) -> SimResult:
         """Run the multi-position simulation over ``bars`` (closes open book at end)."""
@@ -158,6 +162,7 @@ class MultiSimulator:
             working_orders=[(w.sig, w.limit_price, w.expiry_idx) for w in working],
             last_bar_time=last_ts,
             last_price=last_px,
+            max_slots=max(1, self.strategy.max_slots),
         )
 
     def _simulate(
@@ -211,6 +216,17 @@ class MultiSimulator:
             # 1. Exits on the current bar (static config, then the dynamic hook).
             survivors: list[_Slot] = []
             for slot in book:
+                # A target touched on the PREVIOUS bar under ``tp_at_next_open``: the
+                # exit lands here, at this bar's open. Takes precedence over any other
+                # exit — the open is the first price of the bar, so nothing can fill
+                # ahead of it.
+                if slot.tp_deferred:
+                    trade = self._close(slot, bar, bar.open, ExitReason.TAKE_PROFIT,
+                                        i - slot.entry_idx)
+                    trades.append(trade)
+                    realised += trade.pnl
+                    swap_open -= slot.swap
+                    continue
                 result = evaluate_exit(slot.pos, bar, slot.cfg)
                 if result is None:
                     result = self.strategy.dynamic_exit(slot.pos, bar, i, slot.entry_idx)
@@ -219,6 +235,17 @@ class MultiSimulator:
                     survivors.append(slot)
                 else:
                     reason, exit_price = result
+                    if self.tp_at_next_open and reason is ExitReason.TAKE_PROFIT:
+                        # GMO allows ONE resting settle order per position and the
+                        # protective STOP holds it (ERR-200, confirmed 2026-08-06), so a
+                        # target touch is NOT filled intrabar. The strategy drops the
+                        # position at this bar's close; the hourly reconcile market-closes
+                        # it ~5 min into the next bar. The slot stays occupied meanwhile —
+                        # which is also live-accurate, and can block an entry.
+                        slot.tp_deferred = True
+                        slot.pos.bars_held += 1
+                        survivors.append(slot)
+                        continue
                     trade = self._close(slot, bar, exit_price, reason, i - slot.entry_idx)
                     trades.append(trade)
                     realised += trade.pnl

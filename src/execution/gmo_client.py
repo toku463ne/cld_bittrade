@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import requests
@@ -33,19 +34,53 @@ from src.config import Settings, get_settings
 PUBLIC_BASE = "https://api.coin.z.com/public"
 PRIVATE_BASE = "https://api.coin.z.com/private"
 _TIMEOUT = 10.0
+# Minimum gap between private POSTs. A 1-slot cycle issues ~3; a 6-slot cycle can issue
+# ~24 (up to 2 exits x 6 positions, plus entries and cancels), which is enough to meet
+# GMO's per-second private rate limit. Reconcile is idempotent, so a throttled — or even
+# truncated — cycle self-heals on the next hourly run.
+_MIN_POST_INTERVAL = 0.2
 
-# GMO leverage minimum order sizes (取引数量) — VERIFY against the current GMO spec
-# before trading; not exposed via the API. These set the live "minimum amount".
+# GMO leverage minimum order sizes (取引数量). These are the live "minimum amount" AND
+# the hard cap in _guard_orders, so a too-large value here silently trades an oversized
+# lot — BTC sat at 0.01 (10x the real minimum) until 2026-07-12. They ARE published, per
+# symbol, by /public/v1/symbols (minOrderSize == sizeStep for every leverage symbol);
+# fetch_min_sizes() reads them and selfcheck asserts this table against the exchange.
 LEVERAGE_MIN_SIZE: dict[str, float] = {
-    "BTC_JPY": 0.01,
-    "ETH_JPY": 0.1,
+    "BTC_JPY": 0.001,
+    "ETH_JPY": 0.01,
     "XRP_JPY": 10.0,
+}
+
+# GMO order-price tick (呼値): the price must be an exact multiple of this, else the
+# exchange rejects with ERR-5115 ("number of decimal digits is invalid. price"). The
+# strategy computes raw float levels (e.g. an XRP density-box edge at 171.99597…),
+# so we MUST snap to the tick before sending. Values read off GMO's kline granularity:
+# XRP_JPY quotes to 0.001, BTC_JPY to whole yen. ETH_JPY is whole-yen too but is not
+# traded live (monitor-only), so treat it as best-known, not verified against a fill.
+LEVERAGE_PRICE_TICK: dict[str, float] = {
+    "BTC_JPY": 1.0,
+    "ETH_JPY": 1.0,
+    "XRP_JPY": 0.001,
 }
 
 
 def _fmt(x: float) -> str:
     """Format a size/price for GMO (strings, no trailing zeros): 0.01, 10, 0.1."""
     return f"{x:.8f}".rstrip("0").rstrip(".")
+
+
+def _round_to_tick(symbol: str, price: float) -> float:
+    """Snap ``price`` to ``symbol``'s order-price tick (nearest), via Decimal.
+
+    Avoids float artifacts so the formatted string is a clean tick multiple. If the
+    symbol's tick is unknown the price is returned unchanged (fail-open — the exchange
+    still validates it).
+    """
+    tick = LEVERAGE_PRICE_TICK.get(symbol)
+    if not tick:
+        return price
+    d, t = Decimal(str(price)), Decimal(str(tick))
+    return float((d / t).to_integral_value(rounding=ROUND_HALF_UP) * t)
 
 
 class GmoApiError(RuntimeError):
@@ -64,6 +99,42 @@ def fetch_status() -> str:
     r = requests.get(f"{PUBLIC_BASE}/v1/status", timeout=_TIMEOUT)
     r.raise_for_status()
     return str(_unwrap(r.json()).get("status"))
+
+
+def fetch_min_sizes() -> dict[str, float]:
+    """Exchange-published minimum order size per symbol (public, keyless).
+
+    The source of truth for :data:`LEVERAGE_MIN_SIZE` — see :func:`check_min_sizes`.
+    """
+    r = requests.get(f"{PUBLIC_BASE}/v1/symbols", timeout=_TIMEOUT)
+    r.raise_for_status()
+    return {
+        str(row["symbol"]): float(row["minOrderSize"])
+        for row in _unwrap(r.json())
+        if row.get("minOrderSize") is not None
+    }
+
+
+def check_min_sizes(live: dict[str, float] | None = None) -> list[str]:
+    """Drift between our :data:`LEVERAGE_MIN_SIZE` table and the exchange's own sizes.
+
+    Args:
+        live: Exchange sizes; fetched from GMO when omitted.
+
+    Returns:
+        One message per mismatching symbol — empty when the table is exact. A symbol
+        we permit but the exchange does not publish is also a mismatch (unknown lot).
+    """
+    live = fetch_min_sizes() if live is None else live
+    problems = []
+    for symbol, ours in LEVERAGE_MIN_SIZE.items():
+        theirs = live.get(symbol)
+        if theirs is None:
+            problems.append(f"{symbol}: not published by the exchange (ours {ours})")
+        elif abs(ours - theirs) > 1e-12:
+            over = " — OVERSIZED LOT" if ours > theirs else ""
+            problems.append(f"{symbol}: ours {ours:g} != exchange {theirs:g}{over}")
+    return problems
 
 
 def fetch_ticker(symbol: str) -> dict[str, Any]:
@@ -96,6 +167,7 @@ class GmoClient:
         self._secret = api_secret.encode("utf-8")
         self.allow_orders = allow_orders
         self._session = requests.Session()
+        self._last_post = 0.0  # monotonic stamp for the private-POST throttle
 
     # ---- signing + transport ------------------------------------------------
 
@@ -119,7 +191,15 @@ class GmoClient:
         return _unwrap(resp.json())
 
     def _post(self, path: str, body: dict[str, Any]) -> Any:
-        """Signed POST (the body IS signed). Used by the order phase."""
+        """Signed POST (the body IS signed). Used by the order phase.
+
+        Throttled to ``_MIN_POST_INTERVAL`` between calls — a multi-slot cycle can emit
+        an order of magnitude more POSTs than the 1-slot one this client was built for.
+        """
+        gap = time.monotonic() - self._last_post
+        if gap < _MIN_POST_INTERVAL:
+            time.sleep(_MIN_POST_INTERVAL - gap)
+        self._last_post = time.monotonic()
         payload = json.dumps(body)
         resp = self._session.post(
             PRIVATE_BASE + path,
@@ -210,13 +290,15 @@ class GmoClient:
             raise ValueError(f"side must be BUY or SELL, got {side!r}")
         et = execution_type.upper()
         body: dict[str, Any] = {"symbol": symbol, "side": s, "executionType": et, "size": _fmt(sz)}
+        px = price
         if et != "MARKET":
             if price is None:
                 raise ValueError(f"{et} order requires a price")
-            body["price"] = _fmt(price)
+            px = _round_to_tick(symbol, price)  # snap to 呼値 or GMO rejects (ERR-5115)
+            body["price"] = _fmt(px)
         if time_in_force:
             body["timeInForce"] = time_in_force
-        logger.warning("LIVE GMO OPEN -> {} {} {} {} @ {}", symbol, s, et, _fmt(sz), price)
+        logger.warning("LIVE GMO OPEN -> {} {} {} {} @ {}", symbol, s, et, _fmt(sz), px)
         return str(self._post("/v1/order", body))
 
     def close_position(
@@ -255,7 +337,7 @@ class GmoClient:
         if et != "MARKET":
             if price is None:
                 raise ValueError(f"{et} close requires a price")
-            body["price"] = _fmt(price)
+            body["price"] = _fmt(_round_to_tick(symbol, price))  # snap to 呼値 (ERR-5115)
         logger.warning("LIVE GMO CLOSE -> {} pos={} {} {} {}", symbol, position_id, s, et, _fmt(size))
         return str(self._post("/v1/closeOrder", body))
 
@@ -265,8 +347,45 @@ class GmoClient:
             raise PermissionError("Order cancel disabled (allow_orders=False).")
         self._post("/v1/cancelOrder", {"orderId": int(order_id)})
 
+    def cancel_orders(self, order_ids: list[int]) -> None:
+        """Cancel SEVERAL orders by id (``POST /v1/cancelOrders``) — surgical, batched.
+
+        The multi-slot executor's workhorse: with N positions a symbol-wide
+        :meth:`cancel_bulk` would strip every *other* slot's protective stop, so all
+        non-kill-switch cleanup goes through this. Batching one POST instead of N also
+        keeps a busy cycle inside the private rate limit.
+
+        Args:
+            order_ids: Orders to cancel. Empty is a no-op.
+
+        Raises:
+            PermissionError: If ``allow_orders`` is False.
+        """
+        if not self.allow_orders:
+            raise PermissionError("Order cancel disabled (allow_orders=False).")
+        ids = [int(o) for o in order_ids]
+        if not ids:
+            return
+        try:
+            self._post("/v1/cancelOrders", {"orderIds": ids})
+        except (GmoApiError, requests.HTTPError) as e:
+            # Partial-failure semantics of /v1/cancelOrders are not documented per-id;
+            # fall back to one-by-one so a single bad id (already filled/cancelled)
+            # cannot block the rest. Cleanup must always converge.
+            logger.warning("cancelOrders batch failed ({}) — falling back per id", e)
+            for oid in ids:
+                try:
+                    self._post("/v1/cancelOrder", {"orderId": oid})
+                except (GmoApiError, requests.HTTPError) as e2:
+                    logger.warning("cancel_order {} failed: {}", oid, e2)
+
     def cancel_bulk(self, symbol: str) -> None:
-        """Cancel all active orders for ``symbol`` (``POST /v1/cancelBulkOrder``)."""
+        """Cancel ALL active orders for ``symbol`` (``POST /v1/cancelBulkOrder``).
+
+        Symbol-wide and therefore **kill-switch only** once the book can hold more than
+        one position — it does not discriminate between slots. Use :meth:`cancel_orders`
+        for every other cleanup path.
+        """
         if not self.allow_orders:
             raise PermissionError("Order cancel disabled (allow_orders=False).")
         self._post("/v1/cancelBulkOrder", {"symbols": [symbol]})
