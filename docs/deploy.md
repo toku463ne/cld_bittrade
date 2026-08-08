@@ -102,6 +102,22 @@ downgrade that one case to **drain mode**: exits are still maintained and unmatc
 positions closed, but no new entries are placed. Unset it once occupancy is back within
 the new cap.
 
+**Growing a book** (e.g. 1 → 2) has the mirror-image failure. The desired book is a
+stateless replay, so at the new slot count it retroactively "holds" positions the
+smaller book never opened — **phantoms**: desired positions with no live 建玉. They are
+never adopted mid-flight (entering now at an arbitrary price is a different trade from
+the one the backtest measured), but they still reserve a slot, and a book whose every
+slot is phantom opens **nothing**. Watch `n_unadopted` in `logs/heartbeat.jsonl`; the
+`WARNING` naming the count is on every affected run.
+
+This normally clears itself once the phantoms exit the replay window — for a book at
+~20% occupancy that is a day or two. To resume immediately, set
+`LIVE_IGNORE_PHANTOM_SLOTS=1`: phantoms stop reserving live slots. Live exposure is
+still capped at `slots` by the independent live-exposure bound, so this costs
+trade-for-trade correspondence with the backtest, **not** risk containment. Unset it
+once `n_unadopted` is back to 0. (Happened live 2026-08-08: a manual 1 → 2 change left
+BTC at 2/2 phantoms with `room=0`.)
+
 **Guardrails.** `MAX_BOOK_NOTIONAL_JPY` (per book) is asserted at startup and in
 `selfcheck` — a book whose full occupancy would breach it refuses to run. Free margin is
 checked every cycle and gates **entries only**; exits, cancels, ratchets and the kill

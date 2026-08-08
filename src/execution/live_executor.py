@@ -25,6 +25,9 @@ Safety:
   slots, an oversized or stub-sized position, an unknown symbol) logs CRITICAL and takes
   NO actions. ``LIVE_DRAIN_OK=1`` downgrades the over-slots case to drain mode so
   shrinking a book winds it down instead of freezing it.
+- **Phantom slots**: a desired position with no live 建玉 reserves a slot, so a book
+  whose every slot is phantom opens nothing. ``LIVE_IGNORE_PHANTOM_SLOTS=1`` releases
+  those slots for live entries (exposure stays capped at ``slots``).
 - **Kill switch**: a ``KILL`` file in the repo root (or ``KILL_SWITCH=1``) → cancel
   everything and flatten, then stop.
 - **Every action failure is recorded.** ``do()`` never lets an order rejection vanish:
@@ -81,6 +84,15 @@ def _close_side(position_side: str) -> str:
 def _drain_ok() -> bool:
     """True if ``LIVE_DRAIN_OK=1`` — downgrade the over-slots halt to drain mode."""
     return os.environ.get("LIVE_DRAIN_OK", "").strip() in {"1", "true", "yes", "on"}
+
+
+def _ignore_phantom_slots() -> bool:
+    """True if ``LIVE_IGNORE_PHANTOM_SLOTS=1`` — phantoms stop reserving live slots.
+
+    The mirror image of :func:`_drain_ok`: that one unfreezes a book holding MORE live
+    positions than the strategy wants, this one unfreezes a book holding FEWER.
+    """
+    return os.environ.get("LIVE_IGNORE_PHANTOM_SLOTS", "").strip() in {"1", "true", "yes", "on"}
 
 
 def effective_slots(state: LiveBookState) -> int:
@@ -722,7 +734,24 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
     else:
         # Two independent bounds: the strategy's own book (a slot it declined must never
         # be filled live) and live exposure (positions + resting entries are both risk).
-        room = max(0, min(slots - len(state.positions),
+        #
+        # A desired position with no 建玉 — a phantom, see :func:`_match_positions` —
+        # reserves a slot under the FIRST bound while holding no live capital. When every
+        # slot is phantom the book cannot open anything at all: on 2026-08-08 a manual
+        # 1->2 slot change left BTC at 2/2 phantoms and room=0, frozen. That normally
+        # clears itself once the phantoms exit the replay (this book runs ~20% occupancy),
+        # so the default is deliberately unchanged. ``LIVE_IGNORE_PHANTOM_SLOTS=1`` lets
+        # an operator stop phantoms reserving live slots and resume now. Live exposure is
+        # still capped at ``slots`` by the SECOND bound, so the flag trades trade-for-trade
+        # correspondence with the backtest for capacity — never risk.
+        held = len(state.positions)
+        if _ignore_phantom_slots() and pairing.desired_only:
+            held = len(pairing.matched)
+            note(phantoms_ignored=True)
+            logger.warning("{}: LIVE_IGNORE_PHANTOM_SLOTS set — {} phantom slot(s) released "
+                           "for live entries (exposure still capped at {} slot(s))",
+                           symbol, len(pairing.desired_only), slots)
+        room = max(0, min(slots - held,
                           slots - (len(positions) + n_kept)))
         n_allowed, why = entry_budget(symbol, room, state.last_price, client)
         room = n_allowed
