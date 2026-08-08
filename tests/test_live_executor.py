@@ -995,6 +995,62 @@ def test_sync_reports_the_live_counts_that_expose_a_phantom() -> None:
     assert not sync.get("halted")
 
 
+def _phantom_blocked_book() -> tuple[LiveBookState, _FakeClient]:
+    """The 2026-08-08 stuck state: a 2-slot book whose BOTH slots are phantom, live flat.
+
+    The strategy also wants a resting entry, so the only thing standing between the book
+    and a live order is whether phantoms reserve slots.
+    """
+    phantoms = [_pos(Side.LONG, entry=170.0, hours=0), _pos(Side.LONG, entry=171.0, hours=1)]
+    working = [(_sig(Side.LONG), 169.0, 99)]
+    state = _state(phantoms, working=working, max_slots=2, last_price=190.0)
+    return state, _FakeClient(positions=[], orders=[])
+
+
+def test_phantom_slots_block_entries_by_default() -> None:
+    # Default must stay byte-for-byte today's behaviour: the book stays frozen until the
+    # phantoms age out of the replay. Unfreezing is an operator decision, never implicit.
+    state, c = _phantom_blocked_book()
+    sync: dict[str, Any] = {}
+
+    reconcile("XRP_JPY", state, c, execute=True, sync=sync)
+
+    assert c.calls == [], "a phantom-only book must not open anything by default"
+    assert sync["n_unadopted"] == 2
+    assert not sync.get("phantoms_ignored")
+
+
+def test_ignore_phantom_slots_releases_them_but_still_caps_exposure(monkeypatch: Any) -> None:
+    monkeypatch.setenv("LIVE_IGNORE_PHANTOM_SLOTS", "1")
+    state, c = _phantom_blocked_book()
+    sync: dict[str, Any] = {}
+
+    reconcile("XRP_JPY", state, c, execute=True, sync=sync)
+
+    assert c.calls == ["send_order BUY LIMIT @ 169"], "the flag must unfreeze the book"
+    assert sync["phantoms_ignored"] is True
+
+    # ...but the live-exposure bound is independent and still binds: same phantom book,
+    # now with both live slots already occupied, must still place nothing.
+    busy = _FakeClient(positions=[_live(1, "BUY", price="170.0"), _live(2, "BUY", price="171.0")],
+                       orders=[])
+    reconcile("XRP_JPY", state, busy, execute=True, sync={})
+    assert [x for x in busy.calls if x.startswith("send_order")] == []
+
+
+def test_ignore_phantom_slots_is_a_no_op_without_phantoms(monkeypatch: Any) -> None:
+    # The flag may be left set for a while, so it must not quietly change a healthy book.
+    monkeypatch.setenv("LIVE_IGNORE_PHANTOM_SLOTS", "1")
+    sync: dict[str, Any] = {}
+    c = _FakeClient(positions=[], orders=[])
+
+    reconcile("XRP_JPY", _state([], working=[(_sig(Side.LONG), 169.0, 99)], max_slots=2,
+                                last_price=190.0), c, execute=True, sync=sync)
+
+    assert c.calls == ["send_order BUY LIMIT @ 169"]
+    assert not sync.get("phantoms_ignored"), "nothing was released — do not claim otherwise"
+
+
 def test_sync_records_an_anomaly_halt() -> None:
     # A halt takes NO actions, so without this the heartbeat row for a frozen book is
     # indistinguishable from a healthy idle one.

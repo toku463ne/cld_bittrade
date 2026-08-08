@@ -160,6 +160,7 @@ def _heartbeat_fields(strategy_name: str, symbol: str, slots: int | None,
         "n_live_only": None,   # 建玉 the strategy no longer wants — being closed
         "anomaly": None,
         "halted": False,
+        "phantoms_ignored": False,  # LIVE_IGNORE_PHANTOM_SLOTS released a reserved slot
     }
 
 
