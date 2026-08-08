@@ -975,6 +975,40 @@ def test_phantom_position_does_not_steal_the_real_positions_slot() -> None:
     assert not p.live_only, "a real position must never be left unmatched (it gets closed)"
 
 
+def test_sync_reports_the_live_counts_that_expose_a_phantom() -> None:
+    # The heartbeat used to carry only the DESIRED book, so "n_open: 2" could mean
+    # 1 real + 1 phantom — or, during 2026-08-08 10:05-14:05, zero real positions.
+    # These counts are what make that legible without the journal.
+    phantom = _pos(Side.LONG, stop=10_286_474.06, entry=10_200_472.03, hours=0)
+    real = _pos(Side.LONG, stop=10_142_003.21, entry=10_271_097.86, hours=44)
+    c = _FakeClient(positions=[_live(289951619, "BUY", size="10", price="10271097",
+                                     hours=45)], orders=[])
+
+    sync: dict[str, Any] = {}
+    reconcile("XRP_JPY", _state([phantom, real], max_slots=2, last_price=10_268_114.0),
+              c, execute=False, sync=sync)
+
+    assert sync["n_live_open"] == 1      # what the account really holds
+    assert sync["n_matched"] == 1
+    assert sync["n_unadopted"] == 1      # the phantom — holds a slot, has no 建玉
+    assert sync["n_live_only"] == 0
+    assert not sync.get("halted")
+
+
+def test_sync_records_an_anomaly_halt() -> None:
+    # A halt takes NO actions, so without this the heartbeat row for a frozen book is
+    # indistinguishable from a healthy idle one.
+    c = _FakeClient(positions=[_live(i, "BUY") for i in (1, 2, 3)], orders=[])  # 3 > 2 slots
+
+    sync: dict[str, Any] = {}
+    acts = reconcile("XRP_JPY", _state([], max_slots=2), c, execute=True, sync=sync)
+
+    assert acts and acts[0].startswith("HALT:")
+    assert sync["halted"] is True
+    assert "3 positions > 2 slot" in sync["anomaly"]
+    assert sync["n_live_open"] == 3, "counts read before the halt must still be reported"
+
+
 def test_matching_degrades_to_oldest_first_without_usable_keys() -> None:
     # With no timestamp and no price there is no signal to match on, so the pairing must
     # fall back to exactly the previous behaviour rather than becoming arbitrary.

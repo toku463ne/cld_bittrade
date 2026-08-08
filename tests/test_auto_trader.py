@@ -10,7 +10,74 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.execution.auto_trader import DEFAULT_BOOKS, _books, exec_max_slots
+from datetime import datetime, timezone
+
+from src.core.types import Side
+from src.execution.auto_trader import (
+    DEFAULT_BOOKS,
+    _books,
+    _heartbeat_fields,
+    exec_max_slots,
+)
+from src.simulator.multi_simulator import DesiredPosition, LiveBookState
+
+
+def test_heartbeat_separates_the_desired_book_from_the_unread_live_one() -> None:
+    """``n_open`` is INTENT; the live counts stay None until the exchange is read.
+
+    Reading ``n_open`` as the live position count is exactly what hid the 2026-08-08
+    mis-pairing for a day — the strategy held 1 position the account did not.
+    ``None`` (never read) must stay distinguishable from ``0`` (read, found nothing).
+    """
+    t = datetime(2026, 8, 8, 15, 0, tzinfo=timezone.utc)
+    pos = DesiredPosition(side=Side.LONG, entry_time=t, entry_price=10_271_097.86,
+                          current_stop=10_142_003.21, target=None, bars_held=5,
+                          time_stop_bars=None)
+    state = LiveBookState(positions=[pos], pending_entries=[], working_orders=[],
+                          last_bar_time=t, last_price=10_268_114.0, max_slots=2)
+
+    f = _heartbeat_fields("density_pullback", "BTC_JPY", 2, state, True)
+
+    assert f["n_open"] == 1  # desired
+    for key in ("n_live_open", "n_matched", "n_unadopted", "n_live_only", "anomaly"):
+        assert f[key] is None, f"{key} must be None until the exchange is actually read"
+    assert f["halted"] is False
+
+
+def test_every_live_side_key_reconcile_writes_is_declared_in_the_heartbeat() -> None:
+    """``main()`` merges reconcile's ``sync`` over the heartbeat fields.
+
+    The merge is a blind ``dict.update``, so a key written on only one side would
+    either add an undeclared column or leave a declared one stuck at None forever —
+    silently, in the one file used for offline analysis. Pin them together.
+    """
+    from src.execution.live_executor import reconcile
+
+    class _Client:
+        def __init__(self, positions: list[dict[str, Any]]) -> None:
+            self._positions = positions
+
+        def get_open_positions(self, symbol: str) -> list[dict[str, Any]]:
+            return self._positions
+
+        def get_active_orders(self, symbol: str) -> list[dict[str, Any]]:
+            return []
+
+    t = datetime(2026, 8, 8, 15, 0, tzinfo=timezone.utc)
+    state = LiveBookState(positions=[], pending_entries=[], working_orders=[],
+                          last_bar_time=t, last_price=170.0, max_slots=1)
+    declared = set(_heartbeat_fields("s", "XRP_JPY", 1, state, True))
+
+    written: set[str] = set()
+    for positions in ([],                                        # healthy, flat
+                      [{"positionId": i, "side": "BUY", "size": "10", "price": "170",
+                        "timestamp": t.isoformat()} for i in (1, 2)]):  # anomaly halt
+        sync: dict[str, Any] = {}
+        reconcile("XRP_JPY", state, _Client(positions), execute=False, sync=sync)
+        written |= set(sync)
+
+    assert written, "reconcile reported nothing — the probe itself is broken"
+    assert written <= declared, f"undeclared heartbeat key(s): {sorted(written - declared)}"
 
 
 def test_unset_falls_back_to_the_default_books(monkeypatch: Any) -> None:
