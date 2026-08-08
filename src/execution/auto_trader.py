@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 from collections import Counter
+from typing import Any
 
 from loguru import logger
 
@@ -121,6 +122,47 @@ def _books() -> list[tuple[str, str, int | None]]:
     return out
 
 
+def _heartbeat_fields(strategy_name: str, symbol: str, slots: int | None,
+                      state: LiveBookState, entries_allowed: bool) -> dict[str, Any]:
+    """The DESIRED-book half of one heartbeat row.
+
+    The live-side counts are filled in separately by :func:`live_executor.reconcile`
+    (see :func:`main`) and default to ``None`` = "the exchange was never read this
+    run", which is deliberately distinct from ``0`` = "read it, found nothing".
+    Reading a bare ``n_open`` as the live position count is what hid the 2026-08-08
+    mis-pairing for a day: it is the strategy's *intent*, and can include positions
+    this account never opened.
+    """
+    price = state.last_price or 0.0
+    return {
+        "strategy": strategy_name,
+        "symbol": symbol,
+        "slots": slots,
+        "max_slots": state.max_slots,
+        "peak_notional": round(peak_exposure_jpy(symbol, state.max_slots, price)),
+        "bar_time": str(state.last_bar_time),
+        "close": state.last_price,
+        "n_open": len(state.positions),
+        "n_pending": len(state.pending_entries),
+        "n_resting": len(state.working_orders),
+        "positions": [
+            {"side": p.side.name, "entry": p.entry_price, "stop": p.current_stop,
+             "target": p.target, "held": p.bars_held}
+            for p in state.positions
+        ],
+        "resting": [{"side": s.side.name, "price": pr} for s, pr, _ in state.working_orders],
+        "entries_allowed": entries_allowed,
+        # --- live side (None until the exchange is actually read) ---
+        "n_live_open": None,   # 建玉 the account really holds
+        "n_live_orders": None,
+        "n_matched": None,     # desired positions paired to a real 建玉
+        "n_unadopted": None,   # desired positions with NO 建玉 — phantoms; they hold a slot
+        "n_live_only": None,   # 建玉 the strategy no longer wants — being closed
+        "anomaly": None,
+        "halted": False,
+    }
+
+
 def _desired(strategy_name: str, symbol: str, slots: int | None) -> tuple[LiveBookState, bool]:
     """Replay the strategy on recent closed bars -> its current desired book.
 
@@ -152,31 +194,21 @@ def _desired(strategy_name: str, symbol: str, slots: int | None) -> tuple[LiveBo
         logger.critical("EXPOSURE CAP {}: {} — maintaining existing positions but "
                         "placing NO new entries. Raise MAX_BOOK_NOTIONAL_JPY or lower "
                         ":slots.", symbol, msg)
-    # Per-run heartbeat — the desired book even when flat, for dense offline analysis.
-    snapshot({
-        "strategy": strategy_name,
-        "symbol": symbol,
-        "slots": slots,
-        "max_slots": state.max_slots,
-        "peak_notional": round(peak_exposure_jpy(symbol, state.max_slots, bars[-1].close)),
-        "bar_time": str(state.last_bar_time),
-        "close": bars[-1].close,
-        "n_open": len(state.positions),
-        "n_pending": len(state.pending_entries),
-        "n_resting": len(state.working_orders),
-        "positions": [
-            {"side": p.side.name, "entry": p.entry_price, "stop": p.current_stop,
-             "target": p.target, "held": p.bars_held}
-            for p in state.positions
-        ],
-        "resting": [{"side": s.side.name, "price": pr} for s, pr, _ in state.working_orders],
-        "entries_allowed": entries_allowed,
-    })
     return state, entries_allowed
 
 
-def _report(symbol: str, state: LiveBookState, *, live: bool) -> None:
-    """Log the desired book, the live book, and the intended reconcile actions."""
+def _report(symbol: str, state: LiveBookState, *, live: bool,
+            sync: dict[str, Any] | None = None) -> None:
+    """Log the desired book, the live book, and the intended reconcile actions.
+
+    Args:
+        symbol: GMO leverage symbol.
+        state: The strategy's desired book.
+        live: Whether the exchange can be read at all.
+        sync: Optional dict filled in place with the live-side counts, mirroring
+            :func:`live_executor.reconcile` so a monitor-only book still gets a
+            truthful heartbeat. No pairing runs here, so only the raw counts appear.
+    """
     last_idx = "now"
     # --- desired ---
     for p in state.positions:
@@ -198,6 +230,8 @@ def _report(symbol: str, state: LiveBookState, *, live: bool) -> None:
     client = gmo_account_client_from_settings()
     live_positions = client.get_open_positions(symbol)
     live_orders = client.get_active_orders(symbol)
+    if sync is not None:
+        sync.update(n_live_open=len(live_positions), n_live_orders=len(live_orders))
     live_pos = Counter(
         Side.LONG if str(p.get("side")).upper() == "BUY" else Side.SHORT for p in live_positions
     )
@@ -244,6 +278,12 @@ def main() -> None:
         books = []
 
     for name, symbol, slots in books:
+        # The heartbeat is written in `finally` so a book that throws mid-reconcile still
+        # leaves a row carrying whatever the exchange read managed to learn. A silent gap
+        # in heartbeat.jsonl is indistinguishable from "the timer never fired".
+        state: LiveBookState | None = None
+        entries_allowed = True
+        sync: dict[str, Any] = {}
         try:
             state, entries_allowed = _desired(name, symbol, slots)
             if not settings.use_live_api:
@@ -256,14 +296,24 @@ def main() -> None:
                 exec_here = want_exec
                 client = gmo_trading_client_from_settings() if exec_here else gmo_account_client_from_settings()
                 reconcile(symbol, state, client, execute=exec_here,
-                          allow_entries=entries_allowed)
+                          allow_entries=entries_allowed, sync=sync)
             else:
                 if want_exec:
                     logger.warning("{} [{}]: {}-slot book > EXEC_MAX_SLOTS={} — MONITOR-ONLY here",
                                    name, symbol, book_slots, exec_max_slots())
-                _report(symbol, state, live=True)
+                _report(symbol, state, live=True, sync=sync)
         except Exception as e:  # noqa: BLE001 — one book failing must not kill the rest
             logger.error("{} [{}] failed: {}", name, symbol, e)
+        finally:
+            if state is not None:
+                fields = _heartbeat_fields(name, symbol, slots, state, entries_allowed)
+                fields.update(sync)
+                snapshot(fields)
+                if fields["n_unadopted"]:
+                    logger.warning(
+                        "{} [{}]: {} desired position(s) have NO live 建玉 (phantoms) — they "
+                        "hold a slot until they exit the replay, so the book runs "
+                        "UNDER-sized", name, symbol, fields["n_unadopted"])
 
 
 if __name__ == "__main__":

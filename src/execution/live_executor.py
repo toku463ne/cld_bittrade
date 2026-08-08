@@ -549,7 +549,7 @@ def _entry_plan(
 
 
 def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: bool,
-              allow_entries: bool = True) -> list[str]:
+              allow_entries: bool = True, sync: dict[str, Any] | None = None) -> list[str]:
     """Compute (and, if ``execute``, perform) the actions to match desired -> live.
 
     Args:
@@ -560,6 +560,11 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
         allow_entries: ``False`` blocks NEW positions while still maintaining exits,
             ratchets and cleanup — used when the book would breach its exposure cap.
             Exits are never gated: stopping new risk must not strand existing risk.
+        sync: Optional dict filled **in place** with the live-side counts as they are
+            learned (``n_live_open``, ``n_live_orders``, ``n_matched``, ``n_unadopted``,
+            ``n_live_only``, ``anomaly``, ``halted``). Written incrementally rather
+            than returned so that whatever was learned before an exception still
+            reaches the caller's heartbeat — the moment you most want to see it.
 
     Returns:
         Human-readable action descriptions (what was done / would be done). A failed
@@ -568,6 +573,11 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
     min_lot = LEVERAGE_MIN_SIZE.get(symbol, 0.0)
     slots = effective_slots(state)
     actions: list[str] = []
+
+    def note(**kw: Any) -> None:
+        """Record live-side diagnostics for the caller's heartbeat (no-op if unwanted)."""
+        if sync is not None:
+            sync.update(kw)
 
     def do(desc: str, fn: Callable[..., Any], *, critical: bool = False) -> bool:
         """Run one action, recording it whether it succeeds or fails.
@@ -597,9 +607,11 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
 
     positions = client.get_open_positions(symbol)
     orders = client.get_active_orders(symbol)
+    note(n_live_open=len(positions), n_live_orders=len(orders))
 
     # --- kill switch: flatten everything, then stop ---
     if kill_switch_active():
+        note(halted=True, anomaly="kill switch")
         logger.warning("KILL SWITCH ACTIVE — cancelling orders and flattening {}", symbol)
         if orders:
             do(f"cancel ALL orders {symbol}", lambda: client.cancel_bulk(symbol))
@@ -628,15 +640,19 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
     reason, drainable = _anomaly_reason(symbol, positions, slots, min_lot)
     draining = False
     if reason is not None:
+        note(anomaly=reason)
         if drainable and _drain_ok():
             logger.warning("DRAINING {}: {} — LIVE_DRAIN_OK set: maintaining exits and "
                            "closing unmatched, no new entries", symbol, reason)
             draining = True
         else:
+            note(halted=True)
             logger.critical("ANOMALY {}: {} — HALTING, no actions taken", symbol, reason)
             return [f"HALT: {reason}"]
 
     pairing = _match_positions(state.positions, positions)
+    note(n_matched=len(pairing.matched), n_unadopted=len(pairing.desired_only),
+         n_live_only=len(pairing.live_only))
     close_orders = [o for o in orders if str(o.get("settleType", "")).upper() == "CLOSE"]
     open_orders = [o for o in orders if str(o.get("settleType", "")).upper() == "OPEN"]
     # Anything that is neither falls through both buckets: never cancelled, never counted
