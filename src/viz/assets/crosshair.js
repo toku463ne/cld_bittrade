@@ -55,30 +55,53 @@
     function hide() { xtag.style.display = "none"; ytag.style.display = "none"; }
     gd.addEventListener("mouseleave", hide);
 
+    // The price panel's ACTUAL rendered plot rectangle (the top subplot's drag
+    // layer), in viewport coords. Interpolating the axis range against this rect —
+    // measured in the SAME frame as the cursor (getBoundingClientRect / clientX,Y) —
+    // avoids mixing viewport pixels with Plotly's internal SVG _offset/_length,
+    // which diverge on a responsive (width:100%) chart and made the price tag read
+    // ~1 unit low. Topmost drag layer = price panel (it sits above ATR/RSI).
+    function priceRect() {
+      var ds = gd.querySelectorAll(".nsewdrag");
+      var best = null, bestTop = Infinity;
+      for (var i = 0; i < ds.length; i++) {
+        var r = ds[i].getBoundingClientRect();
+        if (r.height > 0 && r.top < bestTop) { bestTop = r.top; best = r; }
+      }
+      return best;
+    }
+
     gd.addEventListener("mousemove", function (e) {
       var fl = gd._fullLayout;
       var xa = fl && fl.xaxis;
       var ya = fl && fl.yaxis; // price panel (top subplot)
-      if (!xa || !ya || xa._offset == null || ya._offset == null) { hide(); return; }
+      var rect = priceRect();
+      if (!xa || !ya || !ya.range || !rect) { hide(); return; }
+
+      // Only show within the price panel's plotting rectangle (viewport coords).
+      if (e.clientX < rect.left || e.clientX > rect.right ||
+          e.clientY < rect.top || e.clientY > rect.bottom) { hide(); return; }
+
+      // Linear interpolation across the rendered rect: top edge = range[1] (high).
+      var fracX = (e.clientX - rect.left) / rect.width;
+      var fracY = (e.clientY - rect.top) / rect.height;
+      var yval = ya.range[1] + fracY * (ya.range[0] - ya.range[1]);
+      // x is a date axis: convert its range to linear ms, then interpolate.
+      var xr0, xr1;
+      try { xr0 = xa.r2l(xa.range[0]); xr1 = xa.r2l(xa.range[1]); }
+      catch (err) { xr0 = xr1 = null; }
+      var xval = (xr0 != null && xr1 != null) ? (xr0 + fracX * (xr1 - xr0)) : null;
 
       var bb = gd.getBoundingClientRect();
-      var px = e.clientX - bb.left;
-      var py = e.clientY - bb.top;
-      var xLo = xa._offset, xHi = xa._offset + xa._length;
-      var yLo = ya._offset, yHi = ya._offset + ya._length;
-
-      // Only show within the price panel's plotting rectangle.
-      if (px < xLo || px > xHi || py < yLo || py > yHi) { hide(); return; }
-
-      var xval, yval;
-      try { xval = xa.p2d(px); yval = ya.p2d(py); }
-      catch (err) { hide(); return; }
+      var px = e.clientX - bb.left, py = e.clientY - bb.top;
 
       // Date tag just below the price panel (stays in view), on the vertical line.
-      xtag.textContent = fmtDate(xval);
-      xtag.style.left = px + "px";
-      xtag.style.top = (yHi + 1) + "px";
-      xtag.style.display = "block";
+      if (xval != null) {
+        xtag.textContent = fmtDate(xval);
+        xtag.style.left = px + "px";
+        xtag.style.top = (rect.bottom - bb.top + 1) + "px";
+        xtag.style.display = "block";
+      }
 
       // Price tag flush against the RIGHT edge, on the horizontal line.
       ytag.textContent = fmtPrice(yval);
