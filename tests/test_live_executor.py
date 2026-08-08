@@ -1163,3 +1163,38 @@ def test_exposure_cap_still_cleans_up_stale_and_orphaned_orders() -> None:
     reconcile("XRP_JPY", _state([], max_slots=3, last_price=190.0), c, execute=True,
               allow_entries=False)
     assert "cancel_orders [66]" in c.calls and "cancel_orders [55]" in c.calls
+
+
+def test_partly_adopted_book_never_reports_itself_in_sync() -> None:
+    # Reproduces the live 2026-08-08 05:56 cycle: raising :slots 1->2 mid-flight made the
+    # simulator's replay take a trade live never took, so one desired position is matched
+    # and one is unadopted. The summary line must not contradict the OUT OF SYNC warning.
+    desired = [_pos(Side.LONG, stop=100.0, entry=180.0, hours=0),
+               _pos(Side.LONG, stop=101.0, entry=181.0, hours=1)]
+    live = [_live(1, "BUY", price="180.0", hours=0)]
+    orders = [_close_order(11, "STOP", "100.0", "SELL")]  # already correct -> no actions
+    c = _FakeClient(positions=live, orders=orders)
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="INFO")
+    try:
+        acts = reconcile("XRP_JPY", _state(desired, max_slots=2, last_price=190.0),
+                         c, execute=True)
+    finally:
+        logger.remove(sink)
+    assert c.calls == [] and acts == []
+    assert not any("in sync (desired == live)" in x for x in lines), lines
+    assert any("NOT adopted" in x for x in lines), lines
+
+
+def test_fully_matched_book_still_reports_in_sync() -> None:
+    desired = [_pos(Side.LONG, stop=100.0)]
+    live = [_live(1, "BUY")]
+    orders = [_close_order(11, "STOP", "100.0", "SELL")]
+    c = _FakeClient(positions=live, orders=orders)
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="INFO")
+    try:
+        reconcile("XRP_JPY", _state(desired, max_slots=2, last_price=190.0), c, execute=True)
+    finally:
+        logger.remove(sink)
+    assert any("in sync (desired == live)" in x for x in lines), lines
