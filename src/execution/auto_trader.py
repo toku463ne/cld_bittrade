@@ -121,8 +121,14 @@ def _books() -> list[tuple[str, str, int | None]]:
     return out
 
 
-def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookState:
-    """Replay the strategy on recent closed bars -> its current desired book."""
+def _desired(strategy_name: str, symbol: str, slots: int | None) -> tuple[LiveBookState, bool]:
+    """Replay the strategy on recent closed bars -> its current desired book.
+
+    Returns:
+        ``(state, entries_allowed)``. ``entries_allowed`` is False when the book's peak
+        occupancy would breach ``MAX_BOOK_NOTIONAL_JPY`` — the book is still reconciled
+        (exits, ratchets, cleanup) but opens nothing new.
+    """
     bars = recent_bars(symbol)
     if not bars:
         raise RuntimeError(f"no bars fetched for {symbol}")
@@ -134,12 +140,18 @@ def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookStat
                 strategy_name, symbol, len(bars), bars[-1].timestamp,
                 len(state.positions), len(state.pending_entries), len(state.working_orders))
 
-    # Startup exposure ceiling: a book whose FULL occupancy would breach the configured
-    # cap must refuse to run rather than discover it mid-cycle with positions already on.
-    ok, msg = book_within_notional_cap(symbol, state.max_slots, bars[-1].close)
-    if not ok:
-        raise RuntimeError(f"exposure cap: {msg}")
-    logger.info("  {}", msg)
+    # Exposure ceiling. A breach must STOP NEW EXPOSURE, not abandon the book: skipping
+    # it would leave already-open positions without a ratchet or orphan cleanup, and an
+    # exposure cap that strands live positions is worse than the exposure it prevents.
+    # (Same reasoning as the fail-soft AUTO_BOOKS parsing above.) The likely trigger is
+    # raising :slots without raising the cap — e.g. BTC at 6 slots peaks near 61k JPY.
+    entries_allowed, msg = book_within_notional_cap(symbol, state.max_slots, bars[-1].close)
+    if entries_allowed:
+        logger.info("  {}", msg)
+    else:
+        logger.critical("EXPOSURE CAP {}: {} — maintaining existing positions but "
+                        "placing NO new entries. Raise MAX_BOOK_NOTIONAL_JPY or lower "
+                        ":slots.", symbol, msg)
     # Per-run heartbeat — the desired book even when flat, for dense offline analysis.
     snapshot({
         "strategy": strategy_name,
@@ -158,8 +170,9 @@ def _desired(strategy_name: str, symbol: str, slots: int | None) -> LiveBookStat
             for p in state.positions
         ],
         "resting": [{"side": s.side.name, "price": pr} for s, pr, _ in state.working_orders],
+        "entries_allowed": entries_allowed,
     })
-    return state
+    return state, entries_allowed
 
 
 def _report(symbol: str, state: LiveBookState, *, live: bool) -> None:
@@ -232,7 +245,7 @@ def main() -> None:
 
     for name, symbol, slots in books:
         try:
-            state = _desired(name, symbol, slots)
+            state, entries_allowed = _desired(name, symbol, slots)
             if not settings.use_live_api:
                 _report(symbol, state, live=False)  # no exchange read possible
                 continue
@@ -242,7 +255,8 @@ def main() -> None:
             if book_slots <= exec_max_slots():
                 exec_here = want_exec
                 client = gmo_trading_client_from_settings() if exec_here else gmo_account_client_from_settings()
-                reconcile(symbol, state, client, execute=exec_here)
+                reconcile(symbol, state, client, execute=exec_here,
+                          allow_entries=entries_allowed)
             else:
                 if want_exec:
                     logger.warning("{} [{}]: {}-slot book > EXEC_MAX_SLOTS={} — MONITOR-ONLY here",

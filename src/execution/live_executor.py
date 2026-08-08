@@ -474,7 +474,8 @@ def _entry_plan(
     return to_place, unused, n_kept
 
 
-def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: bool) -> list[str]:
+def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: bool,
+              allow_entries: bool = True) -> list[str]:
     """Compute (and, if ``execute``, perform) the actions to match desired -> live.
 
     Args:
@@ -482,6 +483,9 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
         state: The strategy's desired book (up to ``state.max_slots`` positions).
         client: A GMO client — read for the live state; order-capable iff ``execute``.
         execute: When ``True`` actually send orders; else log intended actions only.
+        allow_entries: ``False`` blocks NEW positions while still maintaining exits,
+            ratchets and cleanup — used when the book would breach its exposure cap.
+            Exits are never gated: stopping new risk must not strand existing risk.
 
     Returns:
         Human-readable action descriptions (what was done / would be done). A failed
@@ -622,9 +626,9 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
         do(f"cancel stale entry order(s) {stale_ids} {symbol} (no signal / wrong level)",
            lambda ids=stale_ids: client.cancel_orders(ids))
 
-    if draining:
+    if draining or not allow_entries:
         room = 0
-        why = "draining"
+        why = "draining" if draining else "exposure cap reached"
     else:
         # Two independent bounds: the strategy's own book (a slot it declined must never
         # be filled live) and live exposure (positions + resting entries are both risk).
