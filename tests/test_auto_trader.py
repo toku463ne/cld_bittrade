@@ -44,6 +44,30 @@ def test_heartbeat_separates_the_desired_book_from_the_unread_live_one() -> None
     assert f["halted"] is False
 
 
+def test_phantom_warning_tells_the_truth_in_each_of_the_three_states() -> None:
+    """A log line that misreports the book's state is what hid the 2026-08-08 incident."""
+    from src.execution.auto_trader import _phantom_warning
+
+    def row(**kw: Any) -> dict[str, Any]:
+        return {"max_slots": 2, "n_unadopted": 0, "phantoms_ignored": False, **kw}
+
+    assert _phantom_warning(row()) is None  # healthy: say nothing
+
+    partial = _phantom_warning(row(n_unadopted=1))
+    assert partial is not None and "1 of 2 slot(s)" in partial
+    assert "NOTHING" not in partial, "one free slot left — the book still trades"
+
+    frozen = _phantom_warning(row(n_unadopted=2))
+    assert frozen is not None and "can open NOTHING" in frozen, (
+        "every slot phantom is a freeze, not merely a smaller book"
+    )
+
+    released = _phantom_warning(row(n_unadopted=2, phantoms_ignored=True))
+    assert released is not None and "RELEASED" in released
+    assert "NOTHING" not in released, "the slots were released — do not still call it blocked"
+    assert "capped at 2 slot(s)" in released, "must reassure that exposure is still bounded"
+
+
 def test_every_live_side_key_reconcile_writes_is_declared_in_the_heartbeat() -> None:
     """``main()`` merges reconcile's ``sync`` over the heartbeat fields.
 
