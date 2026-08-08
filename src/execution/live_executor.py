@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,11 @@ from src.simulator.multi_simulator import DesiredPosition, LiveBookState
 _STOP_MOVE_FRAC = 0.001  # re-place the protective stop only if it moved > 0.1%
 _ENTRY_MOVE_FRAC = 0.001  # treat a resting entry as "still the desired one" within 0.1%
 _HARD_SLOT_CEILING = 8  # config can never authorise more live slots than this
+# Position-pairing cost weights: 1 hour of entry-time drift is treated as equally
+# suspicious as 1% of entry-price drift. Both are ~"one bar" on the 1h books this
+# runs, and a genuine pair scores ~0 on BOTH, so the exact ratio is not delicate.
+_PAIR_HOUR_WEIGHT = 1.0
+_PAIR_PCT_WEIGHT = 1.0
 
 
 def kill_switch_active(repo_root: Path | None = None) -> bool:
@@ -158,20 +164,77 @@ def _live_sort_key(p: dict[str, Any]) -> tuple[str, float]:
     return str(p.get("timestamp", "") or ""), price
 
 
+def _live_opened_at(p: dict[str, Any]) -> datetime | None:
+    """Parse a live position's open timestamp (UTC), or None when absent/unreadable."""
+    raw = str(p.get("timestamp", "") or "").strip()
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+
+
+def _pair_cost(dp: DesiredPosition, lp: dict[str, Any]) -> float:
+    """How badly a desired position fits a live 建玉 — lower is a better match.
+
+    Both signals are *entry* facts, fixed for the position's whole life, so a genuine
+    pair scores ~0 forever: the live fill lands within a bar or two of the desired
+    entry bar, and at (for a limit entry, exactly) the desired price. Either signal
+    alone identifies the pair; summing them means an unreadable timestamp or price
+    degrades the match rather than breaking it.
+
+    Returns:
+        The weighted distance, or ``inf`` when neither signal is usable.
+    """
+    parts: list[float] = []
+
+    opened = _live_opened_at(lp)
+    if opened is not None and dp.entry_time is not None:
+        want = dp.entry_time
+        if want.tzinfo is None:
+            want = want.replace(tzinfo=timezone.utc)
+        parts.append(abs((opened - want).total_seconds()) / 3600.0 * _PAIR_HOUR_WEIGHT)
+
+    try:
+        px = float(lp.get("price", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px > 0 and dp.entry_price > 0:
+        parts.append(abs(px - dp.entry_price) / dp.entry_price * 100.0 * _PAIR_PCT_WEIGHT)
+
+    return sum(parts) if parts else float("inf")
+
+
 def _match_positions(
     desired: list[DesiredPosition], live: list[dict[str, Any]]
 ) -> Pairing:
-    """Pair desired against live positions, per side, by sort-and-zip.
+    """Pair desired against live positions, per side, best-first by entry similarity.
 
-    Both keys — desired ``(entry_time, entry_price)`` and live ``(timestamp, price)`` —
-    are fixed for a position's whole life, so every cycle reproduces the same pairing
-    without any stored state. A persisted slot→positionId map would be authoritative
-    only while correct and would go wrong exactly at restarts and manual interventions.
+    Pairing is recomputed from scratch every cycle off facts that never change for a
+    position's life (desired ``(entry_time, entry_price)`` vs live
+    ``(timestamp, price)``), so no state is persisted. A stored slot→positionId map
+    would be authoritative only while correct and would go wrong exactly at restarts
+    and manual interventions.
 
-    The failure mode is bounded: if two same-side positions are swapped, each gets the
-    other's stop/target. Both levels still rest, so aggregate risk is unchanged — and
-    the sim makes same-bar same-side positions genuinely interchangeable anyway
-    (``random_hedge._stop`` is keyed ``(entry_idx, side)``, so they share a stop).
+    Assignment is best-first over all candidate pairs by :func:`_pair_cost`, **not**
+    positional zip. Zip was wrong whenever the two sides differed in length: it sorted
+    both by entry time and truncated the surplus off the END, so the *oldest* desired
+    positions won the live 建玉 and the newest were reported unadopted. The surplus is
+    a position the bot never opened — and that phantom is typically the OLD one (it
+    predates the downtime, or a slot increase made a stateless replay retroactively
+    "hold" a trade the smaller book never took). So zip systematically paired
+    backwards in precisely the situation the "not adopting mid-flight" guard exists
+    for. Live on 2026-08-08: raising BTC 1→2 slots conjured a 45h-old phantom, which
+    took the real 建玉's slot, put its own (wrong) stop on it, and then market-closed
+    it 5 bars in on the phantom's trail while the real position's stop never applied.
+
+    Cardinality is unchanged — every same-side pair is a candidate, so this still
+    matches ``min(len(desired), len(live))`` positions and only *which* maps to which
+    differs. That matters: an unmatched live position is closed as a strategy exit, so
+    the matcher must never leave one out to avoid a bad pairing. When no cost signal
+    is usable at all the edges tie and it degrades to exactly the old sort-and-zip.
 
     Args:
         desired: The strategy's desired positions.
@@ -182,14 +245,25 @@ def _match_positions(
     """
     out = Pairing()
     for side, gmo_side in ((Side.LONG, "BUY"), (Side.SHORT, "SELL")):
+        # Pre-sorting makes cost ties resolve oldest-first — i.e. identical to the
+        # previous behaviour — so a total absence of usable keys changes nothing.
         d = sorted((p for p in desired if p.side is side),
                    key=lambda p: (p.entry_time, p.entry_price))
         lv = sorted((p for p in live if str(p.get("side", "")).upper() == gmo_side),
                     key=_live_sort_key)
-        for dp, lp in zip(d, lv):
-            out.matched.append((dp, lp))
-        out.desired_only.extend(d[len(lv):])
-        out.live_only.extend(lv[len(d):])
+        edges = sorted((_pair_cost(dp, lp), di, li)
+                       for di, dp in enumerate(d)
+                       for li, lp in enumerate(lv))
+        used_d: set[int] = set()
+        used_l: set[int] = set()
+        for _cost, di, li in edges:
+            if di in used_d or li in used_l:
+                continue
+            used_d.add(di)
+            used_l.add(li)
+            out.matched.append((d[di], lv[li]))
+        out.desired_only.extend(dp for i, dp in enumerate(d) if i not in used_d)
+        out.live_only.extend(lp for i, lp in enumerate(lv) if i not in used_l)
     return out
 
 
