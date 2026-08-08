@@ -70,29 +70,54 @@ def exec_max_slots() -> int:
 def _books() -> list[tuple[str, str, int | None]]:
     """Parse AUTO_BOOKS (``name:symbol[:slots],...``), else the defaults.
 
-    When ``EXEC_MAX_SLOTS > 1`` the slot count becomes **mandatory** on every entry: an
-    omitted ``:slots`` silently inherits the strategy class default (``density_pullback``
-    = 12), which must never be what authorises a live book's size.
+    **Fails soft on purpose.** This runs before the per-book try in :func:`main`, so
+    raising here would abort the whole run — and the safety-critical job of the trader is
+    maintaining exits on positions that are already open. A config typo must never be the
+    reason a live position stops being managed. Bad entries are therefore logged CRITICAL
+    and dropped, or clamped to the safest interpretation, and the remaining books run.
 
-    Raises:
-        ValueError: On a malformed entry, or an implicit slot count while multi-slot
-            execution is enabled.
+    When ``EXEC_MAX_SLOTS > 1`` an omitted ``:slots`` would silently inherit the strategy
+    class default (``density_pullback`` = 12), which must never decide a live book's size.
+    Such an entry is **clamped to 1 slot** — the conservative reading that still keeps the
+    book's positions maintained. If the live account holds more than that, the executor's
+    anomaly halt catches it loudly rather than trading on a guess.
+
+    Returns:
+        The usable books; possibly empty if every entry was unusable.
     """
     raw = os.environ.get("AUTO_BOOKS", "").strip()
     if not raw:
         return DEFAULT_BOOKS
-    require_slots = exec_max_slots() > 1
+    cap = exec_max_slots()
     out: list[tuple[str, str, int | None]] = []
     for item in raw.split(","):
         parts = item.split(":")
-        if len(parts) < 2:
-            raise ValueError(f"bad AUTO_BOOKS entry {item!r} (need name:symbol[:slots])")
-        slots = int(parts[2]) if len(parts) > 2 and parts[2] else None
-        if slots is None and require_slots:
-            raise ValueError(
-                f"AUTO_BOOKS entry {item!r} omits :slots while EXEC_MAX_SLOTS>1 — set it "
-                "explicitly (the strategy default would decide the live book's size)")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            logger.critical("AUTO_BOOKS entry {!r} is malformed (need name:symbol[:slots])"
+                            " — SKIPPED, this book is NOT being managed", item)
+            continue
+        slots: int | None = None
+        if len(parts) > 2 and parts[2]:
+            try:
+                slots = int(parts[2])
+            except ValueError:
+                logger.critical("AUTO_BOOKS entry {!r} has a non-numeric slot count — "
+                                "SKIPPED, this book is NOT being managed", item)
+                continue
+            if slots < 1:
+                logger.critical("AUTO_BOOKS entry {!r} has slots < 1 — SKIPPED", item)
+                continue
+        if slots is None and cap > 1:
+            logger.critical(
+                "AUTO_BOOKS entry {!r} omits :slots while EXEC_MAX_SLOTS={} — CLAMPING "
+                "this book to 1 slot. The strategy default would otherwise decide the "
+                "live book's size. Set the slot count explicitly.", item, cap)
+            slots = 1
         out.append((parts[0], parts[1], slots))
+    if not out:
+        logger.critical("AUTO_BOOKS={!r} yielded no usable book — NOTHING is being "
+                        "managed this run (open positions keep only the exits already "
+                        "resting on the exchange)", raw)
     return out
 
 
@@ -196,7 +221,16 @@ def main() -> None:
         logger.warning("--execute given but ALLOW_ORDERS=false -> DRY-RUN reconcile (no orders).")
     logger.warning("AUTO-TRADER ({}) — live_read={}", "EXECUTE" if want_exec else "DRY-RUN", settings.use_live_api)
 
-    for name, symbol, slots in _books():
+    # Belt-and-braces: _books() already fails soft, but this call sits outside the
+    # per-book try below, so ANY escape here would kill the run and stop every book
+    # being maintained — the one outcome this loop must never have.
+    try:
+        books = _books()
+    except Exception as e:  # noqa: BLE001 - config parsing must not abort the run
+        logger.critical("AUTO_BOOKS parsing failed ({}) — NO books this run", e)
+        books = []
+
+    for name, symbol, slots in books:
         try:
             state = _desired(name, symbol, slots)
             if not settings.use_live_api:
