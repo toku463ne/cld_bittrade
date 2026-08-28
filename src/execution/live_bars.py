@@ -208,5 +208,7 @@ def recent_bars(symbol: str, *, days: int = 25, interval: str = "1hour") -> list
         )
     out.sort(key=lambda b: b.timestamp)
     _prune_cache()
-    current_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    # Same ``now`` as the day boundary above: two clock reads could straddle an hour
+    # rollover and cut a bar the day walk had just decided to include.
+    current_hour = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
     return [b for b in out if b.timestamp < current_hour]

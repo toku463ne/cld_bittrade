@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -191,3 +191,151 @@ def test_prune_drops_only_stale_entries(cache: Path, calls: list[date]) -> None:
         "BTC_JPY", "1hour", live_bars._trading_day(_NOW) - timedelta(days=1)
     )
     assert fresh.exists()
+
+
+# --------------------------------------------------------------------------------
+# Continuity under an advancing clock.
+#
+# Everything above tests the cache's mechanics at one frozen instant, and every one of
+# those tests can be satisfied by a cache that is internally consistent but wrong about
+# where the vendor's day ends. The 2026-08-16 incident was exactly that: each run looked
+# fine in isolation, and the damage only showed as a shape — a series missing the same
+# five JST hours every day, and a newest bar that stopped advancing between midnight and
+# 06:00 JST. These tests assert the shape directly, so they hold whatever the bucket
+# boundary turns out to be.
+# --------------------------------------------------------------------------------
+
+
+class _Clock:
+    """A mutable JST clock the feed and the fake API both read."""
+
+    def __init__(self, start: datetime) -> None:
+        self.now = start
+
+    def tick(self, hours: int = 1) -> None:
+        self.now += timedelta(hours=hours)
+
+
+@pytest.fixture()
+def clock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    """Advancing clock + a cache that persists across runs, as on the live box."""
+    c = _Clock(datetime(2026, 8, 20, 6, 0, tzinfo=live_bars._JST))
+    monkeypatch.setenv("KLINE_CACHE", str(tmp_path))
+    monkeypatch.setattr(live_bars.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(live_bars, "_now_jst", lambda: c.now)
+
+    def fake(_session: Any, _symbol: str, _interval: str, day: date) -> list[dict[str, str]]:
+        return _bucket(day, now=c.now)
+
+    monkeypatch.setattr(live_bars, "_fetch_klines", fake)
+    return c
+
+
+def _sweep(
+    clock: _Clock, hours: int, *, days: int = 5
+) -> list[tuple[datetime, list[Any]]]:
+    """Run the hourly reconcile ``hours`` times → ``(run time, that run's bars)``."""
+    runs = []
+    for _ in range(hours):
+        runs.append((clock.now, live_bars.recent_bars("BTC_JPY", days=days)))
+        clock.tick()
+    return runs
+
+
+def test_the_series_never_has_a_missing_hour(clock: _Clock) -> None:
+    """No gaps, across every hour of three days — the invariant that actually broke.
+
+    A cache that freezes a day early leaves a five-hour hole once per day, and because
+    the completed day is never re-fetched the hole is permanent. Nothing raises; the
+    strategy just replays a series whose value-area box spans the wrong window.
+    """
+    for now, bars in _sweep(clock, hours=72):
+        gaps = [
+            (a.timestamp, b.timestamp)
+            for a, b in zip(bars, bars[1:])
+            if b.timestamp - a.timestamp != timedelta(hours=1)
+        ]
+        assert not gaps, f"discontiguous series at {now:%Y-%m-%d %H:%M} JST: {gaps}"
+
+
+def test_every_completed_day_carries_all_24_hours(clock: _Clock) -> None:
+    """A systematically absent hour-of-day is the fingerprint of a day-boundary bug.
+
+    Checked **per day**, not over the window: the days already whole when the sweep
+    began mask the hole otherwise, and a union over five days is satisfied by a single
+    intact one. Under the calendar boundary each day cached mid-sweep loses 01:00–05:00
+    JST while its neighbours look perfect.
+    """
+    _now, bars = _sweep(clock, hours=72)[-1]
+    by_day: dict[date, set[int]] = {}
+    for b in bars:
+        jst = b.timestamp.astimezone(live_bars._JST)
+        by_day.setdefault(jst.date(), set()).add(jst.hour)
+
+    whole = sorted(by_day)[1:-1]  # first/last are clipped by the window edges
+    assert whole, "the sweep must span at least one full calendar day"
+    for day in whole:
+        missing = sorted(set(range(24)) - by_day[day])
+        assert not missing, f"{day} is missing JST hours {missing}"
+
+
+def test_the_newest_bar_advances_every_run(clock: _Clock) -> None:
+    """Each hourly run must see the hour that just closed — the book cannot go stale.
+
+    Under the calendar boundary the newest bar stalled at 00:00 JST for the six runs to
+    06:00 JST, so the 01:00–05:00 JST reconciles decided entries, stops and ratchets on
+    prices up to six hours old.
+    """
+    for now, bars in _sweep(clock, hours=72):
+        expected = (now - timedelta(hours=1)).astimezone(timezone.utc).replace(
+            minute=0, second=0, microsecond=0
+        )
+        assert bars[-1].timestamp == expected, (
+            f"at {now:%Y-%m-%d %H:%M} JST: newest bar is {bars[-1].timestamp}, "
+            f"expected the hour that just closed ({expected})"
+        )
+
+
+def test_the_cache_is_a_pure_optimisation(
+    clock: _Clock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warm cache must return byte-identical bars to a cold one at the same instant.
+
+    This is the property the cache commit was meant to preserve and the one that a
+    boundary error silently violates: the rate-limit saving must cost no data.
+    """
+    _sweep(clock, hours=30)  # warm the cache across a day rollover
+    warm = live_bars.recent_bars("BTC_JPY", days=5)
+
+    monkeypatch.setenv("KLINE_CACHE", str(tmp_path / "cold"))
+    cold = live_bars.recent_bars("BTC_JPY", days=5)
+
+    def key(bars: list[Any]) -> list[tuple[Any, ...]]:
+        return [(b.timestamp, b.open, b.high, b.low, b.close, b.volume) for b in bars]
+
+    assert key(warm) == key(cold)
+
+
+def test_a_day_is_fetched_at_most_twice(clock: _Clock, tmp_path: Path) -> None:
+    """The rate-limit win still holds: each day is live only while it accumulates.
+
+    Continuity is easy to buy by never caching. This pins the other side — over three
+    days the loop must not re-request a day it has already closed out.
+    """
+    seen: list[date] = []
+    original = live_bars._fetch_klines
+
+    def counted(session: Any, symbol: str, interval: str, day: date) -> list[dict[str, str]]:
+        seen.append(day)
+        return original(session, symbol, interval, day)
+
+    live_bars._fetch_klines = counted  # type: ignore[assignment]
+    try:
+        _sweep(clock, hours=72)
+    finally:
+        live_bars._fetch_klines = original  # type: ignore[assignment]
+
+    closed = [d for d in set(seen) if d < live_bars._trading_day(clock.now)]
+    for day in closed:
+        # 24 in-progress runs + the one that closes it; never more.
+        assert seen.count(day) <= 25, f"{day} was re-fetched {seen.count(day)} times"
