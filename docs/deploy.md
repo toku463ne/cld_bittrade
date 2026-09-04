@@ -68,8 +68,9 @@ trade**, switch to one slot, min size: `AUTO_BOOKS=density_pullback_xrp:XRP_JPY:
 Slots — not lot size — are how this book scales capital: lot increases are forbidden
 until the benchmark passes, while the backtest *modelled* concurrency. PnL saturates at
 **6 slots** (99% for `density_pullback`; 12 wastes 2-3x the capital — `portfolio.md`).
-Peak exposure is exactly `slots x min lot x price`, so at 0.001 BTC six slots is ~63k JPY
-notional; six XRP slots ~12k.
+Peak exposure is exactly `slots x min lot x price` — it therefore **moves with price**,
+which is what `MAX_BOOK_NOTIONAL_JPY` has to be sized for. Measured 2026-09-04 at six
+slots: BTC 76,172 JPY (0.001 x 12.70M), XRP 13,604 (10 x 226.7).
 
 **Step 0 — settle the exchange semantics first (blocking).**
 **P1 is ANSWERED (2026-08-06): one settle order per 建玉, second returns `ERR-200`** — see
@@ -93,8 +94,50 @@ orders untouched, and that the correct 建玉 was closed on a strategy exit.
 
 **Step 3 — 6 slots**, XRP first, then `density_pullback:BTC_JPY:6` after a clean week.
 
+> **Done 2026-09-04 — both books at once**, deviating from the XRP-first order above.
+> Measured 6-slot occupancy says the XRP-first probe cannot produce the evidence it is
+> meant to: XRP is flat **89%** of hours and holds >=3 positions only **2.6%**, so a clean
+> week on it would most likely observe nothing. BTC is the book that actually exercises
+> >=3 (**5.0%** of hours, ~2 days/month) and had already run two concurrent positions
+> cleanly — independent stops, independent stop-outs, 2026-09-01/02. **P3 stays open**,
+> but 6/6 occupancy is **0.37%** of hours — ~32 hours a year — so the 12-resting-order /
+> 18-POST ceiling is rare rather than routine (episode count not measured).
+
 Rollback at any step is one env edit (`EXEC_MAX_SLOTS=1`) — no code revert — plus `KILL`
 for an emergency flatten.
+
+**The three variables move together.** `AUTO_BOOKS`'s `:slots`, `EXEC_MAX_SLOTS` and
+`MAX_BOOK_NOTIONAL_JPY` all gate the same change, and moving only one leaves a state
+**worse than either endpoint**. Both half-edits fail silently:
+
+- **`:slots` > `EXEC_MAX_SLOTS`** -> `book_slots <= exec_max_slots()` is false, so
+  `reconcile()` is never called for that book. It goes **MONITOR-ONLY and stops
+  maintaining exits** — no ratchet, no strategy-exit close, no orphan cleanup. Open
+  positions keep only the stop already resting at the exchange, so risk is bounded but
+  the book is unmanaged. The one `MONITOR-ONLY` WARNING is the only sign, and it is
+  emitted only under `--execute`.
+- **`:slots` beyond what `MAX_BOOK_NOTIONAL_JPY` covers** -> `entries_allowed=false`:
+  exits are still maintained but the book places **no entries at all**. The cap is
+  per book, so it can silence the expensive book while the cheap one keeps trading —
+  the failure looks like an ordinary dry spell.
+
+Hit live **2026-09-04** going 2 -> 6: `AUTO_BOOKS` was edited alone, with the timer
+already restarted, leaving both books monitor-only while a BTC long was open.
+
+**Verify with a dry-run AFTER the edit** (`uv run --env-file .env.prod python -m
+src.execution.auto_trader`, no `--execute`, timer stopped). A dry-run from before the
+edit validates the OLD config and proves nothing — check the slot count it prints. Four
+things must hold, per book:
+
+1. `(N slots)` is the NEW count, in both the `MultiSimulated` and `peak notional` lines
+2. **no `MONITOR-ONLY` warning**
+3. `peak notional ... <= cap` (else `entries_allowed: false`)
+4. `in sync (desired == live)`, i.e. `n_unadopted: 0` in `logs/heartbeat.jsonl`
+
+Growing a book is safe to do while it is **near-flat** (check `n_open`): the phantom
+count below is what the replay retroactively holds, so the fewer positions in flight, the
+fewer phantoms the change can conjure. At the 2026-09-04 change the desired book was
+identical at 2 and 6 slots (1 open, same entry and stop) — zero phantoms.
 
 **Shrinking a book** (e.g. 6 → 2) while more positions are open than the new cap trips
 the anomaly halt and would freeze the book, exits included. Set `LIVE_DRAIN_OK=1` to
