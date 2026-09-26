@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from loguru import logger
@@ -66,6 +67,49 @@ def exec_max_slots() -> int:
         logger.warning("EXEC_MAX_SLOTS={!r} is not an int — falling back to 1",
                        os.environ.get("EXEC_MAX_SLOTS"))
         return 1
+
+
+# Bars are hourly (recent_bars' default interval); a bar's timestamp is its OPEN time.
+BAR_INTERVAL = timedelta(hours=1)
+MAX_BAR_AGE_MIN_DEFAULT = 90
+
+
+def max_bar_age_min() -> int:
+    """How long ago the newest bar may have CLOSED before the book is halted (``MAX_BAR_AGE_MIN``).
+
+    The run fires at HH:01, so on a healthy feed the newest closed bar closed about a
+    minute ago. The 90-minute default tolerates GMO publishing that bar late (the
+    replay then runs one bar behind) but not two missing bars. Fails soft to the
+    default. A value below 1 is clamped to 1 so the guard cannot be switched off by a typo.
+    """
+    raw = os.environ.get("MAX_BAR_AGE_MIN", str(MAX_BAR_AGE_MIN_DEFAULT))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("MAX_BAR_AGE_MIN={!r} is not an int — falling back to {}",
+                       raw, MAX_BAR_AGE_MIN_DEFAULT)
+        return MAX_BAR_AGE_MIN_DEFAULT
+
+
+def _bar_age(last_bar_time: datetime | None, now: datetime,
+             max_age_min: int) -> tuple[float | None, bool]:
+    """Minutes since the newest bar CLOSED, and whether that is too old to trade on.
+
+    ``recent_bars`` skips a day whose fetch fails, which is the right call for a
+    one-off glitch but also means the replay can run on bars that are days old
+    without raising any error. That happened in the 2026-09-06 to 09-21 DNS outage:
+    for two weeks every run replayed bars ending 09-06 20:00 and wrote a normal-looking
+    heartbeat. Reconciling a stale desired book against a LIVE account is dangerous.
+    If only the public kline endpoint failed, the stale replay would not contain real
+    positions opened since then, and reconcile would close them at MARKET.
+
+    Returns:
+        ``(age_minutes, stale)``. No bar time at all counts as stale.
+    """
+    if last_bar_time is None:
+        return None, True
+    age = (now - (last_bar_time + BAR_INTERVAL)).total_seconds() / 60.0
+    return round(age, 1), age > max_age_min
 
 
 def _books() -> list[tuple[str, str, int | None]]:
@@ -182,6 +226,9 @@ def _heartbeat_fields(strategy_name: str, symbol: str, slots: int | None,
         "anomaly": None,
         "halted": False,
         "phantoms_ignored": False,  # LIVE_IGNORE_PHANTOM_SLOTS released a reserved slot
+        # --- feed freshness (set by main before any exchange call) ---
+        "bar_age_min": None,  # minutes since the newest bar CLOSED
+        "stale": False,       # True -> book skipped this run: no reconcile, no orders
     }
 
 
@@ -308,6 +355,19 @@ def main() -> None:
         sync: dict[str, Any] = {}
         try:
             state, entries_allowed = _desired(name, symbol, slots)
+            age, stale = _bar_age(state.last_bar_time, datetime.now(timezone.utc),
+                                  max_bar_age_min())
+            sync.update(bar_age_min=age, stale=stale)
+            if stale:
+                # Leave the exchange untouched. The protective stops already resting on
+                # GMO keep guarding open positions, but trails stop ratcheting until the
+                # feed recovers. That is far safer than reconciling to a stale replay.
+                logger.critical(
+                    "{} [{}]: STALE BARS — newest bar {} closed {} min ago (> {} min). "
+                    "SKIPPING this book: no reconcile, no orders. Resting exchange stops "
+                    "still protect open positions. Check the kline fetch / network.",
+                    name, symbol, state.last_bar_time, age, max_bar_age_min())
+                continue
             if not settings.use_live_api:
                 _report(symbol, state, live=False)  # no exchange read possible
                 continue
