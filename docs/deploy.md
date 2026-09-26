@@ -231,6 +231,13 @@ sudo systemctl stop btc-autotrader.timer
   Reconciling that stale replay could close real positions at MARKET. While a book is
   skipped, stops already resting on GMO still protect its open positions, but trails
   stop ratcheting. Nothing to do once the feed recovers: the next run proceeds normally.
+- **Unreachable API fails fast.** If a kline request hits a transport error (DNS,
+  refused connection, timeout) 3 times in a row, the fetch gives up with an error for
+  that book. It no longer spends 6 backed-off retries on every uncached day and then
+  replays the cache. The run logs `ERROR ... failed: ...` for the book, writes no
+  heartbeat row for it, and takes seconds instead of the ~27 min per book seen in the
+  2026-09 outage. A run of books missing from `heartbeat.jsonl` while journal ERRORs
+  pile up means the box has lost the network.
 
   Send both (with the date range) for offline analysis — I cross-check the live action
   stream against the backtest. The authoritative *fill* record is GMO's execution

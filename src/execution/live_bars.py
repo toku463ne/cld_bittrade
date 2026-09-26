@@ -39,6 +39,12 @@ _DAY_START_HOUR_JST = 6
 _CACHE_DEFAULT = Path(__file__).resolve().parents[2] / "logs" / "kline_cache"
 _CACHE_KEEP_DAYS = 90  # prune beyond this so the cache cannot grow without bound
 _FETCH_SLEEP_S = 0.25  # public rate-limit courtesy, paid only on a real request
+# Transport failures (DNS, refused connection, timeout) allowed per request before the
+# run gives up. The importer's lenient default of 6 attempts with backoff, repeated for
+# every uncached day of every book, made each run of the 2026-09 DNS outage take about
+# 27 min per book and overrun the hourly timer. 3 attempts (3s + 6s backoff) still
+# absorbs a brief blip.
+_TRANSPORT_ATTEMPTS = 3
 
 
 def cache_dir() -> Path:
@@ -162,8 +168,20 @@ def _day_records(
 def _fetch(
     session: requests.Session, symbol: str, interval: str, day: date
 ) -> list[dict[str, str]]:
-    """Fetch one day from the API, paying the rate-limit courtesy sleep."""
-    records = _fetch_klines(session, symbol, interval, day) or []
+    """Fetch one day from the API, paying the rate-limit courtesy sleep.
+
+    A transport error that outlasts ``_TRANSPORT_ATTEMPTS`` is raised, not turned into
+    an empty day. An empty day is skipped by :func:`recent_bars`, so swallowing the
+    error let an unreachable API look like a quiet market while the replay ran on
+    whatever days were cached. The raise ends the whole fetch, so the auto-trader
+    logs this book as failed and skips it for this run.
+
+    Raises:
+        requests.RequestException: The API stayed unreachable.
+    """
+    records = _fetch_klines(
+        session, symbol, interval, day, max_transport_attempts=_TRANSPORT_ATTEMPTS
+    ) or []
     time.sleep(_FETCH_SLEEP_S)
     return records
 
