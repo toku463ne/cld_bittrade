@@ -220,6 +220,18 @@ sudo systemctl stop btc-autotrader.timer
     symbol, bar_time, close, n_open/pending/resting, positions[], resting[]`. Dense
     hourly time series of price vs. the desired book.
 
+    **A heartbeat row does not mean the run worked.** It is written even when the run
+    fails. A book is healthy when `stale` is false (`bar_age_min` is a few minutes) and
+    `n_live_open` is not None. The 2026-09-06 to 09-21 DNS outage wrote normal-looking
+    rows for two weeks, with `bar_time` frozen at 09-06 20:00.
+- **Stale-bars guard.** If the newest bar closed more than `MAX_BAR_AGE_MIN` (default 90)
+  minutes ago, the book is skipped: no reconcile, no orders, a CRITICAL `STALE BARS` log
+  line, and `stale: true` in the heartbeat. The kline fetch skips days it cannot get, so
+  without this guard a feed outage replays old bars without raising any error.
+  Reconciling that stale replay could close real positions at MARKET. While a book is
+  skipped, stops already resting on GMO still protect its open positions, but trails
+  stop ratcheting. Nothing to do once the feed recovers: the next run proceeds normally.
+
   Send both (with the date range) for offline analysis — I cross-check the live action
   stream against the backtest. The authoritative *fill* record is GMO's execution
   history (`get_latest_executions`); reconciling fills into the DB is a follow-up.
