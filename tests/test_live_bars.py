@@ -63,7 +63,8 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[date]:
     """Record every day actually fetched; serve that day's bucket as GMO would."""
     seen: list[date] = []
 
-    def fake(_session: Any, _symbol: str, _interval: str, day: date) -> list[dict[str, str]]:
+    def fake(_session: Any, _symbol: str, _interval: str, day: date,
+             **_k: Any) -> list[dict[str, str]]:
         seen.append(day)
         return _bucket(day)
 
@@ -224,7 +225,8 @@ def clock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Clock:
     monkeypatch.setattr(live_bars.time, "sleep", lambda _s: None)
     monkeypatch.setattr(live_bars, "_now_jst", lambda: c.now)
 
-    def fake(_session: Any, _symbol: str, _interval: str, day: date) -> list[dict[str, str]]:
+    def fake(_session: Any, _symbol: str, _interval: str, day: date,
+             **_k: Any) -> list[dict[str, str]]:
         return _bucket(day, now=c.now)
 
     monkeypatch.setattr(live_bars, "_fetch_klines", fake)
@@ -325,9 +327,10 @@ def test_a_day_is_fetched_at_most_twice(clock: _Clock, tmp_path: Path) -> None:
     seen: list[date] = []
     original = live_bars._fetch_klines
 
-    def counted(session: Any, symbol: str, interval: str, day: date) -> list[dict[str, str]]:
+    def counted(session: Any, symbol: str, interval: str, day: date,
+                **k: Any) -> list[dict[str, str]]:
         seen.append(day)
-        return original(session, symbol, interval, day)
+        return original(session, symbol, interval, day, **k)
 
     live_bars._fetch_klines = counted  # type: ignore[assignment]
     try:
@@ -339,3 +342,73 @@ def test_a_day_is_fetched_at_most_twice(clock: _Clock, tmp_path: Path) -> None:
     for day in closed:
         # 24 in-progress runs + the one that closes it; never more.
         assert seen.count(day) <= 25, f"{day} was re-fetched {seen.count(day)} times"
+
+
+# --- transport fail-fast (2026-09 DNS outage: ~27 min of retries per book per run) ---
+
+
+class _DeadSession:
+    """A session whose every request fails the way the outage's DNS lookups did."""
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def get(self, *_a: Any, **_k: Any) -> Any:
+        import requests
+
+        self.n += 1
+        raise requests.ConnectionError("Failed to resolve 'api.coin.z.com'")
+
+
+def test_importer_stays_lenient_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backtest importer still treats an unreachable day as a gap: no behaviour change."""
+    from src.data import import_gmo
+
+    monkeypatch.setattr(import_gmo.time, "sleep", lambda _s: None)
+    s = _DeadSession()
+    assert import_gmo._fetch_klines(s, "BTC_JPY", "1hour", date(2026, 9, 13)) is None  # type: ignore[arg-type]
+    assert s.n == import_gmo._MAX_RETRIES
+
+
+def test_transport_errors_raise_after_the_given_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import requests
+
+    from src.data import import_gmo
+
+    monkeypatch.setattr(import_gmo.time, "sleep", lambda _s: None)
+    s = _DeadSession()
+    with pytest.raises(requests.ConnectionError):
+        import_gmo._fetch_klines(s, "BTC_JPY", "1hour", date(2026, 9, 13),  # type: ignore[arg-type]
+                                 max_transport_attempts=3)
+    assert s.n == 3
+
+
+def test_recent_bars_raises_on_an_unreachable_api_instead_of_replaying_the_cache(
+    cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The outage: cached days existed, every fetch failed, and the replay ran on the cache.
+
+    The first uncached day must end the fetch with an error, after a few seconds of
+    retries rather than half an hour, and nothing may be written to the cache.
+    """
+    import requests
+
+    from src.data import import_gmo
+
+    monkeypatch.setattr(import_gmo.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(live_bars.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(live_bars, "_now_jst", lambda: _NOW)
+    # Warm the cache with the older days, as the box had before the outage.
+    monkeypatch.setattr(live_bars, "_fetch_klines",
+                        lambda _s, _sym, _i, day, **_k: _bucket(day))
+    live_bars.recent_bars("BTC_JPY", days=3)
+    n_cached = len(list(cache.glob("*.json")))
+    assert n_cached > 0
+
+    dead = _DeadSession()
+    monkeypatch.setattr(live_bars, "_fetch_klines", import_gmo._fetch_klines)
+    monkeypatch.setattr(live_bars.requests, "Session", lambda: dead)
+    with pytest.raises(requests.ConnectionError):
+        live_bars.recent_bars("BTC_JPY", days=3)
+    assert dead.n == live_bars._TRANSPORT_ATTEMPTS, "gave up on the first day, not after every day"
+    assert len(list(cache.glob("*.json"))) == n_cached

@@ -149,7 +149,8 @@ class ImportReport:
 
 
 def _fetch_klines(
-    session: requests.Session, symbol: str, interval: str, day: date
+    session: requests.Session, symbol: str, interval: str, day: date,
+    *, max_transport_attempts: int | None = None,
 ) -> list[dict[str, str]] | None:
     """Fetch one day's raw kline records, retrying throttled responses.
 
@@ -158,13 +159,19 @@ def _fetch_klines(
         symbol: GMO symbol (e.g. ``BTC_JPY``).
         interval: GMO interval string (e.g. ``1hour``).
         day: The day to fetch.
+        max_transport_attempts: When set, re-raise a transport error (DNS, refused
+            connection, timeout) once it has failed this many times in a row.
+            ``None`` keeps the importer's lenient behaviour: a day whose transport
+            errors outlast every retry is returned as ``None``, the same as a day
+            with no data.
 
     Returns:
         The list of raw kline dicts, or ``None`` if the day has no data after
         exhausting retries (treated as pre-inception / gap, not a hard error).
 
     Raises:
-        requests.RequestException: On a persistent transport-level error.
+        requests.RequestException: Only when ``max_transport_attempts`` is set, after
+            that many consecutive transport failures.
         ValueError: If the API returns an unexpected error status.
     """
     params = {"symbol": symbol, "interval": interval, "date": day.strftime("%Y%m%d")}
@@ -174,6 +181,8 @@ def _fetch_klines(
             resp = session.get(KLINES_URL, params=params, headers=_HEADERS, timeout=30)
         except requests.RequestException as exc:
             logger.warning("GMO GET {} failed (attempt {}): {}", day, attempt, exc)
+            if max_transport_attempts is not None and attempt >= max_transport_attempts:
+                raise
             time.sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_CAP_S)
             continue
