@@ -231,6 +231,22 @@ sudo systemctl stop btc-autotrader.timer
   Reconciling that stale replay could close real positions at MARKET. While a book is
   skipped, stops already resting on GMO still protect its open positions, but trails
   stop ratcheting. Nothing to do once the feed recovers: the next run proceeds normally.
+- **Dead-man's-switch alert (`HEALTHCHECK_URL`).** A run in which every book succeeded
+  on fresh bars, with none halted, POSTs a ping to this URL. When pings stop, the monitor
+  alerts you. That covers the box down, the network or DNS down (the 2026-09 outage,
+  where an alert sent from the box could never have gone out), the timer dead, a book
+  failing, stale, or anomaly-halted, and the kill switch on. Setup on healthchecks.io
+  (free):
+  1. Create a check with **Period 1 hour** and **Grace 3 hours**. The grace must exceed
+     GMO's ~2h Saturday maintenance (00:00-02:00 UTC), or it pages you every week.
+  2. Add an email, Discord or phone integration to the project.
+  3. Put `HEALTHCHECK_URL=https://hc-ping.com/<uuid>` in `.env.prod`. It takes effect
+     on the next hourly run. The journal logs `healthcheck ping sent` on success, or
+     `healthcheck ping WITHHELD: <reasons>` when a book was unhealthy.
+
+  Expect an alert about 4h after a problem starts (1h period + 3h grace). That is slower
+  than instant, but it has no false alarms. The September outage went unnoticed for two
+  weeks. Pause the check while you have the kill switch on deliberately.
 - **Unreachable API fails fast.** If a kline request hits a transport error (DNS,
   refused connection, timeout) 3 times in a row, the fetch gives up with an error for
   that book. It no longer spends 6 backed-off retries on every uncached day and then

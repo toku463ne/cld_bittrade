@@ -208,8 +208,17 @@ def test_max_bar_age_defaults_and_cannot_be_disabled_by_junk(monkeypatch: Any) -
     assert max_bar_age_min() == 1
 
 
-def _run_main_with_bars_ending(monkeypatch: Any, last_bar: datetime) -> tuple[list[Any], list[dict[str, Any]]]:
-    """Run ``main()`` for one live-execute book with the replay stubbed to end at ``last_bar``."""
+def _run_main(
+    monkeypatch: Any, last_bar: datetime, *,
+    books: list[tuple[str, str, int | None]] | None = None,
+    fail_book: str | None = None,
+    reconcile_sync: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[dict[str, Any]], list[str]]:
+    """Run ``main()`` for live-execute books with the replay stubbed to end at ``last_bar``.
+
+    Returns:
+        ``(reconcile calls, heartbeat rows, healthcheck pings)``.
+    """
     import sys
     from types import SimpleNamespace
 
@@ -219,30 +228,84 @@ def _run_main_with_bars_ending(monkeypatch: Any, last_bar: datetime) -> tuple[li
                           last_bar_time=last_bar, last_price=13_000_000.0, max_slots=1)
     reconciled: list[Any] = []
     rows: list[dict[str, Any]] = []
+    pings: list[str] = []
+
+    def desired(name: str, *_a: Any) -> tuple[LiveBookState, bool]:
+        if name == fail_book:
+            raise ConnectionError("Failed to resolve 'api.coin.z.com'")
+        return state, True
+
+    def fake_reconcile(*a: Any, sync: dict[str, Any], **_k: Any) -> None:
+        reconciled.append(a)
+        sync.update(reconcile_sync or {})
+
     monkeypatch.setattr(at, "get_settings", lambda: SimpleNamespace(
         allow_orders=True, use_live_api=True, log_level="INFO"))
     monkeypatch.setattr(at, "configure_logging", lambda _lvl: None)
-    monkeypatch.setattr(at, "_books", lambda: [("density_pullback", "BTC_JPY", 1)])
-    monkeypatch.setattr(at, "_desired", lambda *_a: (state, True))
+    monkeypatch.setattr(at, "_books", lambda: (
+        books if books is not None else [("density_pullback", "BTC_JPY", 1)]))
+    monkeypatch.setattr(at, "_desired", desired)
     monkeypatch.setattr(at, "gmo_trading_client_from_settings", lambda: object())
     monkeypatch.setattr(at, "gmo_account_client_from_settings", lambda: object())
-    monkeypatch.setattr(at, "reconcile", lambda *a, **k: reconciled.append(a))
+    monkeypatch.setattr(at, "reconcile", fake_reconcile)
     monkeypatch.setattr(at, "snapshot", rows.append)
+    monkeypatch.setattr(at, "healthcheck_ping", pings.append)
     monkeypatch.setattr(sys, "argv", ["auto_trader", "--execute"])
     monkeypatch.delenv("MAX_BAR_AGE_MIN", raising=False)
     at.main()
-    return reconciled, rows
+    return reconciled, rows, pings
+
+
+def _fresh() -> datetime:
+    """The bar a healthy HH:01 run would end on."""
+    return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
 
 
 def test_main_skips_reconcile_on_stale_bars_but_still_writes_the_heartbeat(monkeypatch: Any) -> None:
-    reconciled, rows = _run_main_with_bars_ending(
+    reconciled, rows, _ = _run_main(
         monkeypatch, datetime(2026, 9, 6, 20, 0, tzinfo=timezone.utc))
     assert reconciled == [], "a stale replay must never reach the exchange"
     assert len(rows) == 1 and rows[0]["stale"] is True and rows[0]["bar_age_min"] > 60
 
 
 def test_main_reconciles_on_fresh_bars(monkeypatch: Any) -> None:
-    fresh = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-    reconciled, rows = _run_main_with_bars_ending(monkeypatch, fresh)
+    reconciled, rows, _ = _run_main(monkeypatch, _fresh())
     assert len(reconciled) == 1
     assert rows[0]["stale"] is False
+
+
+# --- dead-man's switch: ping only when every book ran cleanly on fresh bars ---
+
+_TWO_BOOKS: list[tuple[str, str, int | None]] = [
+    ("density_pullback", "BTC_JPY", 6), ("density_pullback_xrp", "XRP_JPY", 6)]
+
+
+def test_a_fully_healthy_run_pings_once_with_every_book_in_the_summary(monkeypatch: Any) -> None:
+    _, _, pings = _run_main(monkeypatch, _fresh(), books=_TWO_BOOKS)
+    assert len(pings) == 1
+    assert "density_pullback BTC_JPY" in pings[0] and "density_pullback_xrp XRP_JPY" in pings[0]
+
+
+def test_the_september_outage_withholds_the_ping(monkeypatch: Any) -> None:
+    """Stale replay on every book: silence, so the monitor alerts."""
+    _, _, pings = _run_main(monkeypatch, datetime(2026, 9, 6, 20, 0, tzinfo=timezone.utc),
+                            books=_TWO_BOOKS)
+    assert pings == []
+
+
+def test_one_failed_book_withholds_the_ping_even_if_the_other_is_healthy(monkeypatch: Any) -> None:
+    reconciled, _, pings = _run_main(monkeypatch, _fresh(), books=_TWO_BOOKS,
+                                     fail_book="density_pullback_xrp")
+    assert len(reconciled) == 1, "the healthy book must still be managed"
+    assert pings == []
+
+
+def test_an_anomaly_halt_withholds_the_ping(monkeypatch: Any) -> None:
+    _, _, pings = _run_main(monkeypatch, _fresh(),
+                            reconcile_sync={"halted": True, "anomaly": "size mismatch"})
+    assert pings == []
+
+
+def test_no_usable_books_withholds_the_ping(monkeypatch: Any) -> None:
+    _, _, pings = _run_main(monkeypatch, _fresh(), books=[])
+    assert pings == []
