@@ -33,6 +33,7 @@ from src.execution.gmo_client import (
     gmo_account_client_from_settings,
     gmo_trading_client_from_settings,
 )
+from src.execution.healthcheck import ping as healthcheck_ping
 from src.execution.live_bars import recent_bars
 from src.execution.live_executor import reconcile
 from src.execution.order_log import snapshot
@@ -346,6 +347,11 @@ def main() -> None:
         logger.critical("AUTO_BOOKS parsing failed ({}) — NO books this run", e)
         books = []
 
+    # Dead-man's switch: ping only when EVERY book ran cleanly on fresh bars. Silence
+    # is the alert, so a failed or stale book just withholds the ping. An explicit
+    # failure signal would page every Saturday for GMO's scheduled maintenance.
+    problems: list[str] = [] if books else ["no usable books"]
+    summary: list[str] = []
     for name, symbol, slots in books:
         # The heartbeat is written in `finally` so a book that throws mid-reconcile still
         # leaves a row carrying whatever the exchange read managed to learn. A silent gap
@@ -367,7 +373,9 @@ def main() -> None:
                     "SKIPPING this book: no reconcile, no orders. Resting exchange stops "
                     "still protect open positions. Check the kline fetch / network.",
                     name, symbol, state.last_bar_time, age, max_bar_age_min())
+                problems.append(f"{name}: stale bars ({age} min)")
                 continue
+            summary.append(f"{name} {symbol} bar_age={age}min open={len(state.positions)}")
             if not settings.use_live_api:
                 _report(symbol, state, live=False)  # no exchange read possible
                 continue
@@ -379,6 +387,10 @@ def main() -> None:
                 client = gmo_trading_client_from_settings() if exec_here else gmo_account_client_from_settings()
                 reconcile(symbol, state, client, execute=exec_here,
                           allow_entries=entries_allowed, sync=sync)
+                if sync.get("halted"):
+                    # Anomaly halt or kill switch: the book is not being managed. That
+                    # needs a human, so the ping is withheld.
+                    problems.append(f"{name}: halted ({sync.get('anomaly')})")
             else:
                 if want_exec:
                     logger.warning("{} [{}]: {}-slot book > EXEC_MAX_SLOTS={} — MONITOR-ONLY here",
@@ -386,6 +398,7 @@ def main() -> None:
                 _report(symbol, state, live=True, sync=sync)
         except Exception as e:  # noqa: BLE001 — one book failing must not kill the rest
             logger.error("{} [{}] failed: {}", name, symbol, e)
+            problems.append(f"{name}: {type(e).__name__}")
         finally:
             if state is not None:
                 fields = _heartbeat_fields(name, symbol, slots, state, entries_allowed)
@@ -394,6 +407,11 @@ def main() -> None:
                 warning = _phantom_warning(fields)
                 if warning:
                     logger.warning("{} [{}]: {}", name, symbol, warning)
+
+    if problems:
+        logger.warning("healthcheck ping WITHHELD: {}", "; ".join(problems))
+    else:
+        healthcheck_ping("\n".join(summary))
 
 
 if __name__ == "__main__":
