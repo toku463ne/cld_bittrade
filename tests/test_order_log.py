@@ -29,3 +29,34 @@ def test_snapshot_writes_sibling_heartbeat(tmp_path: Path, monkeypatch: Any) -> 
     hb = tmp_path / "heartbeat.jsonl"  # sibling of orders.jsonl
     obj = json.loads(hb.read_text().strip())
     assert obj["symbol"] == "XRP_JPY" and obj["n_open"] == 0 and "ts" in obj
+
+
+def test_settle_order_owners_reads_only_successful_live_placements(
+        tmp_path: Path, monkeypatch: Any) -> None:
+    from src.execution.order_log import settle_order_owners
+
+    p = tmp_path / "orders.jsonl"
+    monkeypatch.setenv("ORDER_LOG", str(p))
+    record("BTC_JPY", "place protective STOP close BTC_JPY BUY @ 1.31686e+07 (pos 295008441)",
+           execute=True, result="9045381148")
+    record("BTC_JPY", "ratchet STOP -> 1.29435e+07 (pos 295008441: cancel 9045381148 + "
+           "replace)", execute=True, result="9052800000")
+    record("BTC_JPY", "place protective STOP close BTC_JPY BUY @ 1 (pos 5)",
+           execute=False, result=None)                                     # dry run
+    record("BTC_JPY", "FAILED: ratchet STOP -> 1 (pos 6: cancel 1 + replace)",
+           execute=True, result="ERROR: ERR-200")                          # failed
+    record("BTC_JPY", "ratchet STOP -> 1 (pos 7: cancel 1 + replace)",
+           execute=True, result=None)                                      # pre-fix line
+    record("BTC_JPY", "place LIMIT entry BTC_JPY SELL @ 1.3e+07", execute=True, result="42")
+    record("XRP_JPY", "place protective STOP close XRP_JPY SELL @ 234 (pos 8)",
+           execute=True, result="99")                                      # other symbol
+    with p.open("a") as f:
+        f.write("not json\n")
+    assert settle_order_owners("BTC_JPY") == {9045381148: 295008441, 9052800000: 295008441}
+
+
+def test_settle_order_owners_without_a_log_is_empty(tmp_path: Path, monkeypatch: Any) -> None:
+    from src.execution.order_log import settle_order_owners
+
+    monkeypatch.setenv("ORDER_LOG", str(tmp_path / "missing.jsonl"))
+    assert settle_order_owners("BTC_JPY") == {}
