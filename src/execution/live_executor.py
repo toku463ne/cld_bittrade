@@ -54,7 +54,7 @@ from loguru import logger
 
 from src.core.types import Side
 from src.execution.gmo_client import LEVERAGE_MIN_SIZE, GmoClient
-from src.execution.order_log import record
+from src.execution.order_log import record, settle_order_owners
 from src.execution.risk import entry_budget
 from src.simulator.multi_simulator import DesiredPosition, LiveBookState
 
@@ -283,6 +283,7 @@ def _assign_close_orders(
     matched: list[tuple[DesiredPosition, dict[str, Any]]],
     live_only: list[dict[str, Any]],
     close_orders: list[dict[str, Any]],
+    owners: dict[int, int] | None = None,
 ) -> tuple[dict[int, dict[str, dict[str, Any]]], list[dict[str, Any]]]:
     """Attribute each resting CLOSE order to the position it protects.
 
@@ -291,6 +292,22 @@ def _assign_close_orders(
     ``LIMIT`` slot, on the side that would close it. An order claims a free slot of its
     own ``(close side, executionType)``; price only *disambiguates* when several
     same-side positions compete for it.
+
+    Two facts narrow that guess before price is consulted:
+
+    - **Ownership record.** ``owners`` (from :func:`settle_order_owners`) holds the
+      position each order was placed for. A recorded order may claim only its own
+      position's slots, and does so ahead of every price match.
+    - **Reserved quantity.** A position whose ``orderdSize`` is reported as 0 has no
+      resting settle order, so it offers no slot at all. A row without the field is
+      treated as unknown and keeps its slots.
+
+    Price alone mis-assigned live on 2026-10-16 (BTC, 6 slots). Several shorts shared
+    one stop level, so a new position "claimed" an older one's stop and was left
+    without one. When a 48-bar recalc later moved a third position's stop, its resting
+    order fell to the slot this had freed: the executor cancelled the wrong position's
+    stop, and the market close of the right one failed ``ERR-200`` because its own stop
+    was still reserving it.
 
     Price is deliberately not a hard gate. The ratchet recomputes only every
     ``recalc_bars``, so a resting stop is routinely far from the newly desired level —
@@ -313,12 +330,15 @@ def _assign_close_orders(
     Returns:
         ``({positionId: {"STOP": order, "LIMIT": order}}, orphan_orders)``.
     """
+    owners = owners or {}
     # Exit slots: (positionId, type, expected close side, desired level or None=wildcard).
     slots: list[tuple[int, str, str, float | None]] = []
     for dp, lp in matched:
         try:
             pid = int(lp["positionId"])
         except (KeyError, TypeError, ValueError):
+            continue
+        if not _may_hold_settle_order(lp):
             continue
         cs = _close_side(str(lp.get("side", "")))
         if dp.current_stop is not None:
@@ -330,20 +350,29 @@ def _assign_close_orders(
             pid = int(lp["positionId"])
         except (KeyError, TypeError, ValueError):
             continue
+        if not _may_hold_settle_order(lp):
+            continue
         cs = _close_side(str(lp.get("side", "")))
         slots.append((pid, "STOP", cs, None))
         slots.append((pid, "LIMIT", cs, None))
 
-    # Candidate edges, cheapest first. inf = a wildcard (or unusable level): still a valid
-    # home for the order, but only after every priced match has been made.
+    # Candidate edges, cheapest first. -1 = a recorded owner, which beats any price.
+    # inf = a wildcard (or unusable level): still a valid home for the order, but only
+    # after every priced match has been made.
     edges: list[tuple[float, int, int]] = []
     for oi, o in enumerate(close_orders):
         etype = str(o.get("executionType", "")).upper()
         oside = str(o.get("side", "")).upper()
         px = _order_price(o)
-        for si, (_pid, t, cs, level) in enumerate(slots):
+        oid = _order_id(o)
+        owner = owners.get(oid) if oid is not None else None
+        for si, (pid, t, cs, level) in enumerate(slots):
             if t != etype or (oside and cs and oside != cs):
                 continue
+            if owner is not None:
+                if pid == owner:
+                    edges.append((-1.0, oi, si))
+                continue  # a recorded order never settles someone else's position
             dist = abs(px - level) / level if level is not None and level > 0 else float("inf")
             edges.append((dist, oi, si))
     edges.sort()
@@ -360,6 +389,18 @@ def _assign_close_orders(
         assigned.setdefault(pid, {})[etype] = close_orders[oi]
     orphans = [o for i, o in enumerate(close_orders) if i not in used_orders]
     return assigned, orphans
+
+
+def _may_hold_settle_order(lp: dict[str, Any]) -> bool:
+    """False only when GMO reports the position's reserved quantity as zero.
+
+    GMO lets one settle order reserve the whole 建玉 (see :func:`_maintain_exits`), so a
+    position with ``orderdSize == 0`` provably has no resting CLOSE order and must never
+    be handed one by price. A missing field is unknown, not zero.
+    """
+    if lp.get("orderdSize") in (None, ""):
+        return True
+    return _reserved(lp) > 0
 
 
 def _order_price(o: dict[str, Any]) -> float:
@@ -471,10 +512,12 @@ def _maintain_exits(
                                symbol, pid, cur, want)
             elif moved and sid is not None:
                 def _replace(want: float = want, sid: int = sid, pid: int = pid,
-                             close_s: str = close_s, psize: float = psize) -> None:
+                             close_s: str = close_s, psize: float = psize) -> str:
                     client.cancel_order(sid)  # cancel FIRST — never leave two stops resting
-                    client.close_position(symbol, pid, close_s, psize,
-                                          execution_type="STOP", price=want)
+                    # Return the new orderId so the order log records who owns it —
+                    # settle_order_owners() attributes this stop by it next cycle.
+                    return client.close_position(symbol, pid, close_s, psize,
+                                                 execution_type="STOP", price=want)
 
                 do(f"ratchet STOP -> {want:.6g} (pos {pid}: cancel {sid} + replace)",
                    _replace, critical=True)
@@ -678,7 +721,8 @@ def reconcile(symbol: str, state: LiveBookState, client: GmoClient, *, execute: 
                        "managed by the bot, review by hand: {}",
                        symbol, len(unknown), [_order_id(o) for o in unknown])
     exits_by_pid, orphan_closes = _assign_close_orders(pairing.matched, pairing.live_only,
-                                                       close_orders)
+                                                       close_orders,
+                                                       settle_order_owners(symbol))
 
     # --- 1. maintain each held position's exits ---
     for dp, lp in pairing.matched:

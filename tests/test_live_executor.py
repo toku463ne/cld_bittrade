@@ -11,6 +11,7 @@ from loguru import logger
 
 from src.core.types import Side, Signal
 from src.execution.live_executor import reconcile
+from src.execution.order_log import record
 from src.simulator.multi_simulator import DesiredPosition, LiveBookState
 
 _T = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -1323,3 +1324,120 @@ def test_fully_matched_book_still_reports_in_sync() -> None:
     finally:
         logger.remove(sink)
     assert any("in sync (desired == live)" in x for x in lines), lines
+
+
+# ===================== settle-order attribution (live 2026-10-16 BTC) ================
+#
+# Price-only attribution cross-wired stops when several shorts shared one stop level:
+# a fresh position "owned" an older one's stop and went unprotected for ~30h, and a
+# later recalc cancelled the wrong position's stop. These replay those cycles.
+
+_BTC_LAST = 12_849_800.0
+
+
+def _btc_short(stop: float, *, hours: int, entry: float) -> DesiredPosition:
+    return _pos(Side.SHORT, stop=stop, entry=entry, hours=hours)
+
+
+def _btc_live(pid: int, *, hours: int, price: float, reserved: bool) -> dict[str, Any]:
+    return _live(pid, "SELL", size="0.001", price=f"{price:.0f}", hours=hours,
+                 reserved="0.001" if reserved else "0")
+
+
+def test_unreserved_position_is_not_handed_a_twin_positions_stop() -> None:
+    # 2026-10-16 01:01: pos 4 filled at pos 2's exact entry and wants the same stop.
+    # Pos 4's own fill matches its desired entry exactly, so it pairs first and won the
+    # tie for pos 2's stop. Pos 2 then looked "reserved but unattributed" and got
+    # nothing, and pos 4 had no stop at all. GMO's orderdSize=0 says pos 4 owns no order.
+    desired = [_btc_short(13_269_438, hours=0, entry=13_089_148),
+               _btc_short(13_168_623, hours=10, entry=12_997_140),
+               _btc_short(13_185_119, hours=15, entry=13_013_636),
+               _btc_short(13_168_623, hours=17, entry=12_997_140)]
+    live = [_btc_live(1, hours=0, price=13_089_100, reserved=True),
+            _btc_live(2, hours=10, price=12_997_100, reserved=True),
+            _btc_live(3, hours=15, price=13_013_600, reserved=True),
+            _btc_live(4, hours=17, price=12_997_140, reserved=False)]
+    orders = [_close_order(11, "STOP", "13269438", "BUY"),
+              _close_order(12, "STOP", "13168623", "BUY"),
+              _close_order(13, "STOP", "13185119", "BUY")]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("BTC_JPY", _state(desired, max_slots=6, last_price=_BTC_LAST), c, execute=True)
+    assert c.calls == ["close 4 BUY STOP @ 1.31686e+07"]
+
+
+def test_trail_close_cancels_its_own_stop_not_a_neighbours() -> None:
+    # 2026-10-16 16:01: pos 1's recalc dropped its stop below market (-> market close).
+    # Its resting stop (11) was then nearer pos 2's level, so price attribution gave 11
+    # to pos 2: "ratchet pos 2: cancel 11" stripped pos 1's stop, and pos 1's CLOSE
+    # failed ERR-200 because 11 still reserved it when the close went out.
+    desired = [_btc_short(12_740_291, hours=0, entry=13_089_148),
+               _btc_short(13_168_623, hours=10, entry=12_997_140),
+               _btc_short(13_185_119, hours=15, entry=13_013_636),
+               _btc_short(13_168_623, hours=17, entry=12_997_140),
+               _btc_short(13_148_270, hours=22, entry=12_997_140),
+               _btc_short(13_210_672, hours=28, entry=12_997_140)]
+    live = [_btc_live(1, hours=0, price=13_089_100, reserved=True),
+            _btc_live(2, hours=10, price=12_997_100, reserved=True),
+            _btc_live(3, hours=15, price=13_013_600, reserved=True),
+            _btc_live(4, hours=17, price=12_997_140, reserved=False),
+            _btc_live(5, hours=22, price=12_997_100, reserved=True),
+            _btc_live(6, hours=28, price=12_997_100, reserved=True)]
+    orders = [_close_order(11, "STOP", "13269438", "BUY"),
+              _close_order(12, "STOP", "13168623", "BUY"),
+              _close_order(13, "STOP", "13185119", "BUY"),
+              _close_order(15, "STOP", "13148270", "BUY"),
+              _close_order(16, "STOP", "13210672", "BUY")]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("BTC_JPY", _state(desired, max_slots=6, last_price=_BTC_LAST), c, execute=True)
+    assert sorted(c.calls) == sorted(["cancel_orders [11]", "close 1 BUY MARKET",
+                                      "close 4 BUY STOP @ 1.31686e+07"])
+    assert c.calls.index("cancel_orders [11]") < c.calls.index("close 1 BUY MARKET")
+
+
+def test_recorded_owner_beats_a_misleading_price() -> None:
+    # Two reserved positions after a recalc: each one's resting stop now sits exactly at
+    # the OTHER's desired level. Price says "both correct, do nothing"; the order log
+    # says both are stale. The log is the truth: ratchet both.
+    record("XRP_JPY", "place protective STOP close XRP_JPY SELL @ 100 (pos 1)",
+           execute=True, result="11")
+    record("XRP_JPY", "place protective STOP close XRP_JPY SELL @ 119 (pos 2)",
+           execute=True, result="22")
+    desired = [_pos(Side.LONG, stop=119.0, hours=0), _pos(Side.LONG, stop=100.0, hours=5)]
+    live = [_live(1, "BUY", hours=0, reserved="10"), _live(2, "BUY", hours=5, reserved="10")]
+    orders = [_close_order(11, "STOP", "100.0", "SELL"), _close_order(22, "STOP", "119.0", "SELL")]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("XRP_JPY", _state(desired, max_slots=2, last_price=190.0), c, execute=True)
+    assert c.calls == ["cancel_order 11", "close 1 SELL STOP @ 119",
+                       "cancel_order 22", "close 2 SELL STOP @ 100"]
+
+
+def test_recorded_order_of_a_closed_position_is_orphaned_not_reassigned() -> None:
+    # Order 11 was placed for pos 9, which is gone. It must not be adopted as pos 1's
+    # stop just because it sits at pos 1's level.
+    record("XRP_JPY", "place protective STOP close XRP_JPY SELL @ 100 (pos 9)",
+           execute=True, result="11")
+    desired = [_pos(Side.LONG, stop=100.0)]
+    live = [_live(1, "BUY")]
+    orders = [_close_order(11, "STOP", "100.0", "SELL")]
+    c = _FakeClient(positions=live, orders=orders)
+    reconcile("XRP_JPY", _state(desired, max_slots=1, last_price=190.0), c, execute=True)
+    assert c.calls == ["close 1 SELL STOP @ 100", "cancel_orders [11]"]
+
+
+def test_ratchet_records_the_replacement_order_id(tmp_path: Path) -> None:
+    # The replacement's id must reach the order log, or the next cycle cannot
+    # attribute the new stop by ownership.
+    from src.execution.order_log import settle_order_owners
+
+    class _Ids(_FakeClient):
+        def close_position(self, symbol: str, pid: int, side: str, size: float,
+                           **kw: Any) -> str:
+            super().close_position(symbol, pid, side, size, **kw)
+            return "777"
+
+    desired = [_pos(Side.LONG, stop=150.0)]
+    live = [_live(1, "BUY")]
+    c = _Ids(positions=live, orders=[_close_order(11, "STOP", "90.0", "SELL")])
+    reconcile("XRP_JPY", _state(desired, max_slots=1, last_price=190.0), c, execute=True)
+    assert c.calls == ["cancel_order 11", "close 1 SELL STOP @ 150"]
+    assert settle_order_owners("XRP_JPY") == {777: 1}
