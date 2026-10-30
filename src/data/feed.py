@@ -167,6 +167,17 @@ class _LiveFeed:
             resp = self._session.get(
                 f"{REST_BASE}/getexecutions", params=params, timeout=10
             )
+            if resp.status_code == 400 and cursor is not None:
+                # bitFlyer only serves a bounded window of past executions; a
+                # ``before`` cursor older than that window returns 400. That is
+                # the end of available history, not a failure.
+                logger.info(
+                    "History exhausted after {} pages: before={} is past bitFlyer's "
+                    "retention window (HTTP 400).",
+                    pages,
+                    cursor,
+                )
+                break
             resp.raise_for_status()
             page: list[dict[str, Any]] = resp.json()
             if not page:
