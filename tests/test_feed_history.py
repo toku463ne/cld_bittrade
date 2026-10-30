@@ -1,8 +1,11 @@
-"""Tests for the mock feed's resumable pagination cursors (no DB)."""
+"""Tests for the feeds' resumable pagination cursors (no DB, no network)."""
 
 from __future__ import annotations
 
-from src.data.feed import _MockFeed
+import pytest
+import requests
+
+from src.data.feed import _LiveFeed, _MockFeed
 
 
 def _ids(execs: list[dict[str, object]]) -> list[int]:
@@ -46,3 +49,38 @@ def test_forward_cursor_collects_only_newer() -> None:
     ids = _ids(out)
     assert min(ids) > 19_990
     assert max(ids) == len(feed._api.ticks)  # newest available
+
+
+class _FakeResp:
+    def __init__(self, status: int, body: list[dict[str, object]]) -> None:
+        self.status_code = status
+        self._body = body
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error")
+
+    def json(self) -> list[dict[str, object]]:
+        return self._body
+
+
+class _FakeSession:
+    def __init__(self, resp: _FakeResp) -> None:
+        self._resp = resp
+
+    def get(self, *args: object, **kwargs: object) -> _FakeResp:
+        return self._resp
+
+
+def test_live_backward_cursor_past_retention_ends_history() -> None:
+    # bitFlyer returns 400 for a ``before`` older than its retention window.
+    feed = _LiveFeed("FX_BTC_JPY")
+    feed._session = _FakeSession(_FakeResp(400, []))  # type: ignore[assignment]
+    assert list(feed.iter_history(500, before=2643674473)) == []
+
+
+def test_live_400_without_cursor_still_raises() -> None:
+    feed = _LiveFeed("FX_BTC_JPY")
+    feed._session = _FakeSession(_FakeResp(400, []))  # type: ignore[assignment]
+    with pytest.raises(requests.HTTPError):
+        list(feed.iter_history(500))
