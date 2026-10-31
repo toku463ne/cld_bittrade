@@ -52,7 +52,7 @@ FEE_10BP = 0.0005  # per side -> 10 bp round-trip (cost-robustness check)
 
 def _eq(name: str, bars: list[Bar], fee: float) -> list[float]:
     """Equity path of a fresh ``name`` instance over ``bars`` at ``fee``/side."""
-    return MultiSimulator(get_strategy(name), fee_rate=fee).run(bars).equity_curve
+    return MultiSimulator(get_strategy(name), fee_rate=fee, tp_at_next_open=True).run(bars).equity_curve
 
 
 def _wf_positive(name: str, bars: list[Bar], ppy: float, folds: int = 6) -> int:
@@ -73,8 +73,8 @@ def compute_row(name: str, tf: Timeframe, product: str | None) -> dict[str, floa
     is_b, oos_b = split_lockbox(bars)
     full = [b for b in bars if pd.Timestamp(b.timestamp) < LOCKBOX_OOS_END]
 
-    in_res = MultiSimulator(get_strategy(name), fee_rate=FEE_4BP).run(is_b)
-    oo_res = MultiSimulator(get_strategy(name), fee_rate=FEE_4BP).run(oos_b)
+    in_res = MultiSimulator(get_strategy(name), fee_rate=FEE_4BP, tp_at_next_open=True).run(is_b)
+    oo_res = MultiSimulator(get_strategy(name), fee_rate=FEE_4BP, tp_at_next_open=True).run(oos_b)
     p_in, p_oo = portfolio_metrics(in_res.trades), portfolio_metrics(oo_res.trades)
 
     btc = np.diff([b.close for b in full])

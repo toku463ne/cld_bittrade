@@ -269,6 +269,7 @@ def _simulate(
         return MultiSimulator(
             strat, size=size, fee_rate=fee_rate,
             daily_swap_rate=daily_swap_rate, burst_cost_mult=burst_cost_mult,
+            tp_at_next_open=True,  # GMO: STOP holds the only settle slot; no resting TP
         ).run(bars)
     return Simulator(
         strat, size=size, fee_rate=fee_rate, burst_cost_mult=burst_cost_mult

@@ -90,7 +90,7 @@ fi
 # DATABASE_URL is in .env.prod, so it works whether or not the file pre-existed.
 "${UV_BIN}" run --env-file .env.prod alembic upgrade head
 
-log "7/7 hourly systemd timer (auto-trader, runs at HH:05)"
+log "7/7 hourly systemd timer (auto-trader, runs at HH:01)"
 sudo tee /etc/systemd/system/btc-autotrader.service >/dev/null <<UNIT
 [Unit]
 Description=BTC scalping bot auto-trader (one hourly run)
@@ -108,7 +108,11 @@ sudo tee /etc/systemd/system/btc-autotrader.timer >/dev/null <<'UNIT'
 Description=Run the auto-trader hourly (after the 1h bar closes)
 
 [Timer]
-OnCalendar=*-*-* *:05:00
+# :01 not :05 — limit entries only rest from the run, so every minute of lag is a
+# band the sim fills and live cannot (22.6% of BTC bars at :05 vs ~10% at :01).
+# AccuracySec=1s: the 1min default would eat the gain.
+OnCalendar=*-*-* *:01:00
+AccuracySec=1s
 Persistent=true
 
 [Install]
@@ -121,7 +125,7 @@ cat <<DONE
 
 === setup complete ===
 DB:      ${DB_USER}@localhost/${DB_NAME}  (password stored in .env.prod, chmod 600)
-Trader:  hourly at HH:05, currently DRY-RUN (ALLOW_ORDERS=false) — places NO orders.
+Trader:  hourly at HH:01, currently DRY-RUN (ALLOW_ORDERS=false) — places NO orders.
 
 Remaining steps (you do these):
   1. Put your GMO key/secret into ${REPO_DIR}/.env.prod (GMO_API_KEY / GMO_API_SECRET).

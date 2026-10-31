@@ -107,7 +107,7 @@ def run(strategy_name: str, tf: Timeframe, *, product: str | None) -> None:
 
     # Run the strategy over the FULL series (full warm-up/history); score only the
     # forward slice of the equity path and trades entered after the boundary.
-    res = MultiSimulator(get_strategy(strategy_name)).run(bars)
+    res = MultiSimulator(get_strategy(strategy_name), tp_at_next_open=True).run(bars)  # GMO: no resting TP
     fwd_curve = res.equity_curve[fwd_start:]
     fwd_trades = [t for t in res.trades if pd.Timestamp(t.entry_time) > boundary]
 
